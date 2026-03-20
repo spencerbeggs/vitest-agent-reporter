@@ -41,7 +41,7 @@
 		"**/.coverage": true,
 		"**/.rslib": true,
 		"**/.turbo": true,
-		"**/.vitest": true,
+		"**/.vitest": false,
 		"**/*.tsbuildinfo": true,
 		"**/dist": false,
 		"**/node_modules": false
