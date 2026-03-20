@@ -5,30 +5,23 @@ repository.
 
 ## Project Status
 
-This is a **base template repository** for developing and publishing Node.js
-modules to npm and GitHub Packages. It is not a working library — it contains
-placeholder source code in `src/` that should be replaced when starting a new
-project.
+`vitest-agent-reporter` is a Vitest reporter and plugin for LLM coding agents.
+Phase 1 is complete. Two primary exports:
 
-The design documentation system is available via Claude Code skills and agents
-but no design docs exist yet in this template.
+1. **`AgentReporter`** -- Vitest Reporter producing structured markdown
+   (console), persistent JSON (disk), and optional GFM (GitHub Actions)
+2. **`AgentPlugin`** -- Vitest plugin that injects `AgentReporter` with
+   three-environment detection (agent/CI/human), reporter chain management,
+   cache directory resolution, and coverage threshold extraction
 
-## Getting Started (After Cloning This Template)
+All data structures use Zod 4 schemas (`schemas.ts`) with `z.infer<>` types
+and `z.codec()` for JSON encode/decode. Schemas are part of the public API.
 
-When starting a new project from this template, follow this lifecycle:
+**Spec:** [GitHub Issue #1](https://github.com/spencerbeggs/vitest-agent-reporter/issues/1)
 
-1. **Rename the package** — Update `name` in `package.json` (e.g.,
-   `@spencerbeggs/my-new-lib`), update `repository.url` and `homepage`, and
-   update the `repo` field in `.changeset/config.json`
-2. **Replace placeholder code** — Delete the example `Foo`/`Bar` code in
-   `src/index.ts` and `src/index.test.ts`
-3. **Initialize design documentation** — Run `/design-init` to create your
-   first design document describing the library's architecture
-4. **Follow the design-first workflow** — Design docs → `/plan-create` →
-   implementation. This ensures Claude understands the full architecture before
-   writing code
-5. **Implement iteratively** — Use the plan to guide implementation, updating
-   design docs as the architecture evolves
+**For architecture details:**
+→ @./.claude/design/vitest-agent-reporter/architecture.md
+Load when working on reporter architecture, output formatting, or caching.
 
 ## Build Pipeline
 

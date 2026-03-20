@@ -3,7 +3,7 @@
 	"changelog": [
 		"@savvy-web/changesets/changelog",
 		{
-			"repo": "spencerbeggs/pnpm-module-template"
+			"repo": "spencerbeggs/vitest-agent-reporter"
 		}
 	],
 	"commit": false,
