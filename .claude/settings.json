@@ -1,0 +1,10 @@
+{
+	"plansDirectory": ".claude/plans",
+	"permissions": {
+		"allow": ["Write(./**)", "Edit(./**)", "mcp__playwright", "mcp__github"]
+	},
+	"enableAllProjectMcpServers": true,
+	"enabledPlugins": {
+		"workflow@savvy-web-claude-tools": true
+	}
+}

@@ -1,0 +1,72 @@
+name: Update pnpm Config Dependencies
+on:
+  # schedule:
+  #   - cron: 0 0,6,12,18 * * 1-5
+  #   - cron: 0 0 * * 0,6
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Run without making changes (for testing)
+        type: boolean
+        default: true
+      branch:
+        description: Branch name for dependency update PR
+        type: string
+        default: pnpm/config-deps
+      log-level:
+        description: Logging verbosity
+        type: choice
+        options:
+          - info
+          - debug
+        default: debug
+concurrency:
+  group: pnpm-update-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  pnpm-update:
+    name: Update Config Dependencies
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Setup Runtime
+        id: runtime
+        uses: savvy-web/workflow-runtime-action@main
+      - name: Update Config Dependencies
+        id: update
+        uses: savvy-web/pnpm-config-dependency-action@main
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          branch: ${{ inputs.branch || 'pnpm/config-deps' }}
+          dry-run: ${{ inputs.dry-run || false }}
+          log-level: ${{ inputs.log-level || 'info' }}
+          changesets: false
+          auto-merge: "squash"
+          config-dependencies: |
+            @savvy-web/pnpm-plugin-silk
+          dependencies: |
+            @savvy-web/*
+          run: |
+            pnpm savvy-commit init
+            pnpm savvy-lint init
+            pnpm savvy-changesets init
+            pnpm lint:fix
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Update Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Has Changes:** ${{ steps.update.outputs.has-changes }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Updates Count:** ${{ steps.update.outputs.updates-count }}" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ steps.update.outputs.pr-url }}" ]; then
+            echo "- **PR:** ${{ steps.update.outputs.pr-url }}" >> $GITHUB_STEP_SUMMARY
+          fi

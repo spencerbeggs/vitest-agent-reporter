@@ -1,0 +1,46 @@
+#!/usr/bin/env sh
+# Commit-msg hook with savvy-commit managed section
+# Custom hooks can go above or below the managed section
+
+# --- BEGIN SAVVY-COMMIT MANAGED SECTION ---
+# DO NOT EDIT between these markers - managed by savvy-commit
+# Skip managed section in CI environment
+if ! { [ -n "$CI" ] || [ -n "$GITHUB_ACTIONS" ]; }; then
+
+# Get repo root directory
+ROOT=$(git rev-parse --show-toplevel)
+
+# Detect package manager from package.json or lockfiles
+detect_pm() {
+  # Check packageManager field in package.json (e.g., "pnpm@9.0.0")
+  if [ -f "$ROOT/package.json" ]; then
+    pm=$(jq -r '.packageManager // empty' "$ROOT/package.json" 2>/dev/null | cut -d'@' -f1)
+    if [ -n "$pm" ]; then
+      echo "$pm"
+      return
+    fi
+  fi
+
+  # Fallback to lockfile detection
+  if [ -f "$ROOT/pnpm-lock.yaml" ]; then
+    echo "pnpm"
+  elif [ -f "$ROOT/yarn.lock" ]; then
+    echo "yarn"
+  elif [ -f "$ROOT/bun.lock" ]; then
+    echo "bun"
+  else
+    echo "npm"
+  fi
+}
+
+# Run commitlint via the detected package manager
+PM=$(detect_pm)
+case "$PM" in
+  pnpm) pnpm dlx commitlint --config "$ROOT/lib/configs/commitlint.config.ts" --edit "$1" ;;
+  yarn) yarn dlx commitlint --config "$ROOT/lib/configs/commitlint.config.ts" --edit "$1" ;;
+  bun)  bun x commitlint --config "$ROOT/lib/configs/commitlint.config.ts" --edit "$1" ;;
+  *)    npx --no -- commitlint --config "$ROOT/lib/configs/commitlint.config.ts" --edit "$1" ;;
+esac
+
+fi
+# --- END SAVVY-COMMIT MANAGED SECTION ---
