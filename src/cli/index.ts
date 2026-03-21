@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * CLI entry point for vitest-agent-reporter.
  *
@@ -6,7 +7,7 @@
 
 import { Command } from "@effect/cli";
 import { NodeContext, NodeRuntime } from "@effect/platform-node";
-import { Effect } from "effect";
+import { Cause, Console, Effect } from "effect";
 import { CliLive } from "../layers/CliLive.js";
 import { coverageCommand } from "./commands/coverage.js";
 import { historyCommand } from "./commands/history.js";
@@ -22,7 +23,16 @@ const cli = Command.run(rootCommand, {
 	version: "0.0.0",
 });
 
-export function runCli(): void {
-	const main = Effect.suspend(() => cli(process.argv)).pipe(Effect.provide(CliLive), Effect.provide(NodeContext.layer));
-	NodeRuntime.runMain(main);
-}
+const main = Effect.suspend(() => cli(process.argv)).pipe(
+	Effect.provide(CliLive),
+	Effect.provide(NodeContext.layer),
+	Effect.catchAllCause((cause) => {
+		const defects = Cause.defects(cause);
+		if (defects.length > 0) {
+			return Console.error(Cause.pretty(cause)).pipe(Effect.andThen(Effect.failCause(cause)));
+		}
+		return Effect.failCause(cause);
+	}),
+);
+
+NodeRuntime.runMain(main);

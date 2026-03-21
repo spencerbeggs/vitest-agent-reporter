@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { NodeFileSystem } from "@effect/platform-node";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CacheError } from "../errors/CacheError.js";
 import type { HistoryRecord } from "../schemas/History.js";
 import { CacheReader } from "../services/CacheReader.js";
@@ -328,6 +328,7 @@ describe("CacheReaderLive", () => {
 		fs.mkdirSync(historyDir, { recursive: true });
 		fs.writeFileSync(path.join(historyDir, "core.history.json"), "not valid json {{{");
 
+		const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
 		const layer = CacheReaderLive.pipe(Layer.provide(NodeFileSystem.layer));
 
 		const result = await Effect.runPromise(
@@ -340,7 +341,9 @@ describe("CacheReaderLive", () => {
 		expect(result.project).toBe("core");
 		expect(result.updatedAt).toBe("");
 		expect(result.tests).toEqual([]);
+		expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining("corrupt history file"));
 
+		stderrSpy.mockRestore();
 		fs.rmSync(tmpDir, { recursive: true });
 	});
 
