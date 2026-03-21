@@ -1,0 +1,84 @@
+/**
+ * Common schemas shared across multiple modules.
+ *
+ * Defines enums/literals and the ReportError struct used by
+ * both AgentReport and CacheManifest schemas.
+ *
+ * @packageDocumentation
+ */
+
+import { Schema } from "effect";
+
+// --- Shared Enums ---
+
+/**
+ * Possible states for an individual test case.
+ */
+export const TestState = Schema.Literal("passed", "failed", "skipped", "pending").annotations({
+	identifier: "TestState",
+});
+export type TestState = typeof TestState.Type;
+
+/**
+ * Overall outcome of a test run.
+ */
+export const TestRunReason = Schema.Literal("passed", "failed", "interrupted").annotations({
+	identifier: "TestRunReason",
+});
+export type TestRunReason = typeof TestRunReason.Type;
+
+/**
+ * Classification of a test's failure history across runs.
+ */
+export const TestClassification = Schema.Literal(
+	"stable",
+	"new-failure",
+	"persistent",
+	"flaky",
+	"recovered",
+).annotations({ identifier: "TestClassification" });
+export type TestClassification = typeof TestClassification.Type;
+
+/**
+ * Console output verbosity mode for AgentReporter.
+ */
+export const ConsoleOutputMode = Schema.Literal("failures", "full", "silent").annotations({
+	identifier: "ConsoleOutputMode",
+});
+export type ConsoleOutputMode = typeof ConsoleOutputMode.Type;
+
+/**
+ * Mode for the AgentPlugin environment detection.
+ */
+export const PluginMode = Schema.Literal("auto", "agent", "silent").annotations({
+	identifier: "PluginMode",
+});
+export type PluginMode = typeof PluginMode.Type;
+
+/**
+ * Console reporter strategy for AgentPlugin.
+ */
+export const ConsoleStrategy = Schema.Literal("own", "complement").annotations({
+	identifier: "ConsoleStrategy",
+});
+export type ConsoleStrategy = typeof ConsoleStrategy.Type;
+
+/**
+ * Supported package managers for run command generation.
+ */
+export const PackageManager = Schema.Literal("pnpm", "npm", "yarn", "bun").annotations({
+	identifier: "PackageManager",
+});
+export type PackageManager = typeof PackageManager.Type;
+
+// --- Report Error ---
+
+/**
+ * A single test or module error with optional stack trace and diff.
+ */
+export const ReportError = Schema.Struct({
+	message: Schema.String,
+	stack: Schema.optional(Schema.String),
+	diff: Schema.optional(Schema.String),
+}).annotations({ identifier: "ReportError" });
+export type ReportError = typeof ReportError.Type;

@@ -5,17 +5,23 @@
 
 A Vitest reporter for LLM coding agents. Produces structured markdown to
 console, persistent JSON to disk, and GFM summaries for GitHub Actions --
-so agents get actionable test feedback without the noise.
+so agents get actionable test feedback without the noise. Designed to
+complement Vitest 4.1's built-in `agent` reporter, adding persistent
+caching, coverage analysis, and CLI tooling on top.
 
 ## Features
 
-- **Zero-config agent detection** -- auto-detects Claude Code, Cursor, Cline,
-  Gemini CLI, Codex, and other agents via environment variables
-- **Compact failure output** -- failed tests with diffs and re-run commands,
-  nothing else
+- **Zero-config agent detection** -- uses [std-env](https://github.com/nicolo-ribaudo/std-env)
+  to detect Claude Code, Cursor, Gemini CLI, Codex, Devin, and other agents
+  automatically
+- **Complement or own** -- layers on top of Vitest's built-in `agent`
+  reporter by default, or takes over console output entirely
 - **Persistent JSON cache** -- per-project reports with a manifest for
   selective reading
-- **Coverage gaps** -- flags files below threshold with uncovered line ranges
+- **CLI bin** -- query test status, coverage gaps, and test landscape from
+  the command line
+- **Coverage gaps** -- flags files below threshold with uncovered line
+  ranges, with scoped coverage for partial test runs
 - **GitHub Actions GFM** -- writes structured summaries to
   `GITHUB_STEP_SUMMARY` automatically in CI
 
@@ -75,18 +81,42 @@ The plugin detects three environments and adapts behavior:
 
 | Environment | Detection | Console | JSON Cache | GFM Summary |
 | --- | --- | --- | --- | --- |
-| Agent | `CLAUDECODE`, `CURSOR_TRACE_ID`, `AI_AGENT`, etc. | Structured markdown (failures only) | Yes | No |
+| Agent | `std-env` agent detection | Vitest built-in or own markdown | Yes | Vitest built-in or own |
 | CI | `GITHUB_ACTIONS`, `CI=true` | Silent (existing reporters kept) | Yes | Yes |
 | Human | No agent/CI vars detected | Silent (existing reporters kept) | Yes | No |
 
-In **agent mode**, built-in console reporters (default, verbose, dot, etc.)
-are suppressed. Only the compact markdown output remains.
+In **agent mode** with `consoleStrategy: "complement"` (default), the plugin
+layers on top of Vitest's built-in `agent` reporter -- adding JSON cache and
+manifest while letting Vitest handle console suppression and GFM.
+
+In **agent mode** with `consoleStrategy: "own"`, built-in console reporters
+are suppressed and replaced with the compact markdown output (Phase 1
+behavior).
 
 In **CI mode**, your existing reporters stay active. The plugin adds GFM
 output to `GITHUB_STEP_SUMMARY` for job summary display.
 
 In **human mode**, the plugin runs silently -- JSON cache is written but
 console output is suppressed so your normal reporter works undisturbed.
+
+## CLI
+
+The package provides a `vitest-agent-reporter` CLI bin for querying cached
+test data:
+
+```bash
+# Show per-project pass/fail status
+npx vitest-agent-reporter status
+
+# Test landscape with file-to-test mapping
+npx vitest-agent-reporter overview
+
+# Coverage gap analysis (uses threshold from cached reports)
+npx vitest-agent-reporter coverage
+```
+
+All commands accept `--cache-dir, -d` to specify the cache directory. When
+omitted, the CLI checks common locations automatically.
 
 ## Cache and JSON Reports
 
@@ -157,13 +187,14 @@ Each report file contains structured test results:
 
 ```typescript
 AgentPlugin({
-  mode: "auto",       // "auto" | "agent" | "silent"
+  mode: "auto",              // "auto" | "agent" | "silent"
+  consoleStrategy: "complement", // "complement" | "own"
   reporter: {
     cacheDir: undefined,         // custom cache directory path
     coverageThreshold: 0,        // flag files below this % (0 = use vitest config)
     coverageConsoleLimit: 10,    // max low-coverage files in console output
     omitPassingTests: true,      // exclude passing tests from JSON reports
-    includeBareZero: false,      // skip files with all metrics at 0%
+    includeBareZero: false,      // include files with all metrics at 0%
     githubSummaryFile: undefined // override GITHUB_STEP_SUMMARY path
   },
 });
@@ -172,12 +203,24 @@ AgentPlugin({
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `mode` | `"auto"` `"agent"` `"silent"` | `"auto"` | Force a specific mode instead of auto-detecting |
+| `consoleStrategy` | `"complement"` `"own"` | `"complement"` | Layer on Vitest's agent reporter or take over console output |
 | `reporter.cacheDir` | `string` | Vite's cacheDir | Override the cache directory path |
 | `reporter.coverageThreshold` | `number` | `0` | Flag files below this coverage percentage |
 | `reporter.coverageConsoleLimit` | `number` | `10` | Max low-coverage files shown in console |
 | `reporter.omitPassingTests` | `boolean` | `true` | Exclude passing tests from JSON reports |
 | `reporter.includeBareZero` | `boolean` | `false` | Include files where all metrics are 0% |
 | `reporter.githubSummaryFile` | `string` | `GITHUB_STEP_SUMMARY` env var | Override the GFM output file path |
+
+### Console Strategy
+
+- **`"complement"`** (default) -- lets Vitest's built-in `agent` reporter
+  handle console suppression and GFM summaries. This reporter adds JSON
+  cache and manifest only. Does not strip any reporters from the chain.
+
+- **`"own"`** -- takes over console output entirely. Strips built-in
+  console reporters (including `agent`), uses this reporter's markdown
+  formatter, and writes its own GFM. This was the default behavior in
+  Phase 1.
 
 ### Cache Directory Resolution
 
@@ -208,7 +251,30 @@ export default defineConfig({
 });
 ```
 
-See [docs/reporter.md](./docs/reporter.md) for all `AgentReporterOptions`.
+See [AgentReporterOptions](#agentplugin-options) for all configuration options.
+
+## Programmatic Cache Access
+
+For consumers who want to read cached reports programmatically, the package
+exports `CacheReader` and `CacheReaderLive` (Effect services):
+
+```typescript
+import { CacheReader, CacheReaderLive, CacheError } from "vitest-agent-reporter";
+import { Effect, Layer } from "effect";
+import { NodeFileSystem } from "@effect/platform-node";
+
+const program = Effect.gen(function* () {
+  const reader = yield* CacheReader;
+  const manifest = yield* reader.readManifest("/path/to/cache");
+  // ... process manifest and reports
+});
+
+const live = CacheReaderLive.pipe(
+  Layer.provideMerge(NodeFileSystem.layer),
+);
+
+await Effect.runPromise(Effect.provide(program, live));
+```
 
 ## GitHub Actions
 
@@ -224,38 +290,20 @@ produces a job summary with:
 No workflow configuration needed -- it works automatically in any GitHub
 Actions job that runs vitest.
 
-## Agent Detection
+## Schemas
 
-The plugin checks these environment variables (in order):
-
-| Variable | Agent |
-| --- | --- |
-| `AI_AGENT` | Cross-tool standard (any truthy value) |
-| `AUGMENT_AGENT=1` | Augment Code |
-| `CLAUDECODE=1` | Claude Code |
-| `CLINE_ACTIVE=true` | Cline (VS Code extension) |
-| `CODEX_SANDBOX` | OpenAI Codex CLI (any value) |
-| `CURSOR_TRACE_ID` | Cursor IDE (any value) |
-| `CURSOR_AGENT=1` | Cursor CLI agent |
-| `GEMINI_CLI=1` | Gemini CLI / Gemini Code Assist |
-| `AGENT` | Goose, Amp, and other generic agents |
-
-## Zod Schemas
-
-All data structures are defined as Zod v4 schemas with codecs for JSON
-encode/decode. Import them for programmatic report validation:
+All data structures are defined as [Effect Schema](https://effect.website/docs/schema/introduction)
+definitions. Import them for programmatic report validation:
 
 ```typescript
-import { AgentReportCodec, CacheManifestCodec } from "vitest-agent-reporter";
-import type { AgentReport } from "vitest-agent-reporter";
+import { AgentReport, CacheManifest } from "vitest-agent-reporter";
+import { Schema } from "effect";
+
+const parsed = Schema.decodeUnknownSync(AgentReport)(rawData);
 ```
 
-See [docs/schemas.md](./docs/schemas.md) for full schema documentation.
-
-## Documentation
-
-For configuration details, direct reporter usage, and schema reference,
-see [docs/](./docs/).
+See the [Effect Schema docs](https://effect.website/docs/schema/introduction)
+for more on schema usage.
 
 ## Requirements
 

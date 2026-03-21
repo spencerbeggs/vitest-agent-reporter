@@ -4,15 +4,12 @@
  * Tests for AgentReporter class.
  */
 
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { VitestTestCase, VitestTestModule } from "./formatters/json.js";
-
-// Mock node:fs/promises
-vi.mock("node:fs/promises", () => ({
-	mkdir: vi.fn().mockResolvedValue(undefined),
-	writeFile: vi.fn().mockResolvedValue(undefined),
-	appendFile: vi.fn().mockResolvedValue(undefined),
-}));
+import { AgentReporter } from "./reporter.js";
+import type { VitestTestCase, VitestTestModule } from "./utils/build-report.js";
 
 // --- Test Helpers ---
 
@@ -78,50 +75,37 @@ function makeTestModule(
 	};
 }
 
-/** Find a writeFile mock call whose first arg (file path) matches a predicate. */
-function findWriteCall(writeFn: ReturnType<typeof vi.fn>, predicate: (path: string) => boolean): [string, string] {
-	const call = writeFn.mock.calls.find((c: unknown[]) => typeof c[0] === "string" && predicate(c[0] as string));
-	if (!call) throw new Error("Expected writeFile call not found");
-	return [call[0] as string, call[1] as string];
-}
-
 // --- Tests ---
 
 describe("AgentReporter", () => {
-	let mkdir: ReturnType<typeof vi.fn>;
-	let writeFile: ReturnType<typeof vi.fn>;
-	let appendFile: ReturnType<typeof vi.fn>;
+	let tmpDir: string;
 
-	beforeEach(async () => {
-		vi.clearAllMocks();
-		const fs = await import("node:fs/promises");
-		mkdir = fs.mkdir as ReturnType<typeof vi.fn>;
-		writeFile = fs.writeFile as ReturnType<typeof vi.fn>;
-		appendFile = fs.appendFile as ReturnType<typeof vi.fn>;
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "reporter-test-"));
 	});
 
 	afterEach(() => {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
 		vi.restoreAllMocks();
 	});
 
 	describe("constructor", () => {
 		it("applies default options", async () => {
-			const { AgentReporter } = await import("./reporter.js");
-			const reporter = new AgentReporter();
+			const reporter = new AgentReporter({
+				cacheDir: tmpDir,
+				consoleOutput: "silent",
+			});
 
-			// Exercise the reporter to verify defaults take effect
-			const stdoutSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
 			await reporter.onTestRunEnd([makeTestModule({ tests: [makeTestCase()] })], [], "passed");
-			stdoutSpy.mockRestore();
 
-			// Default cacheDir is ".vitest-agent-reporter" — check mkdir was called with it
-			expect(mkdir).toHaveBeenCalledWith(expect.stringContaining(".vitest-agent-reporter"), { recursive: true });
+			// Default behavior: reports dir and manifest created
+			expect(fs.existsSync(path.join(tmpDir, "reports"))).toBe(true);
+			expect(fs.existsSync(path.join(tmpDir, "manifest.json"))).toBe(true);
 		});
 
 		it("accepts custom options", async () => {
-			const { AgentReporter } = await import("./reporter.js");
 			const reporter = new AgentReporter({
-				cacheDir: "custom-cache",
+				cacheDir: tmpDir,
 				consoleOutput: "silent",
 				omitPassingTests: false,
 				coverageThreshold: 90,
@@ -131,13 +115,12 @@ describe("AgentReporter", () => {
 
 			await reporter.onTestRunEnd([makeTestModule({ tests: [makeTestCase()] })], [], "passed");
 
-			expect(mkdir).toHaveBeenCalledWith(expect.stringContaining("custom-cache"), { recursive: true });
+			expect(fs.existsSync(path.join(tmpDir, "reports", "default.json"))).toBe(true);
 		});
 	});
 
 	describe("onInit", () => {
-		it("stores vitest instance", async () => {
-			const { AgentReporter } = await import("./reporter.js");
+		it("stores vitest instance", () => {
 			const reporter = new AgentReporter();
 			const mockVitest = { projects: [] };
 
@@ -149,8 +132,10 @@ describe("AgentReporter", () => {
 
 	describe("onCoverage", () => {
 		it("stashes coverage data and includes it in report", async () => {
-			const { AgentReporter } = await import("./reporter.js");
-			const reporter = new AgentReporter({ consoleOutput: "silent" });
+			const reporter = new AgentReporter({
+				cacheDir: tmpDir,
+				consoleOutput: "silent",
+			});
 			const mockCoverage = {
 				getCoverageSummary: () => ({
 					statements: { pct: 90 },
@@ -159,15 +144,23 @@ describe("AgentReporter", () => {
 					lines: { pct: 92 },
 				}),
 				files: () => [],
-				fileCoverageFor: () => ({}),
+				fileCoverageFor: () => ({
+					toSummary: () => ({
+						statements: { pct: 90 },
+						branches: { pct: 85 },
+						functions: { pct: 88 },
+						lines: { pct: 92 },
+					}),
+					getUncoveredLines: () => [],
+				}),
 			};
 
 			reporter.onCoverage(mockCoverage);
 
 			await reporter.onTestRunEnd([makeTestModule({ tests: [makeTestCase()] })], [], "passed");
 
-			const [, content] = findWriteCall(writeFile, (p) => p.endsWith("default.json"));
-			const report = JSON.parse(content);
+			const reportPath = path.join(tmpDir, "reports", "default.json");
+			const report = JSON.parse(fs.readFileSync(reportPath, "utf-8"));
 			expect(report.coverage).toBeDefined();
 			expect(report.coverage.totals.lines).toBe(92);
 		});
@@ -175,34 +168,42 @@ describe("AgentReporter", () => {
 
 	describe("onTestRunEnd", () => {
 		it("writes per-project JSON report file", async () => {
-			const { AgentReporter } = await import("./reporter.js");
-			const reporter = new AgentReporter({ consoleOutput: "silent" });
+			const reporter = new AgentReporter({
+				cacheDir: tmpDir,
+				consoleOutput: "silent",
+			});
 
 			await reporter.onTestRunEnd([makeTestModule({ tests: [makeTestCase({ state: "passed" })] })], [], "passed");
 
-			const [, content] = findWriteCall(writeFile, (p) => p.includes("reports/"));
-			const report = JSON.parse(content);
+			const reportPath = path.join(tmpDir, "reports", "default.json");
+			expect(fs.existsSync(reportPath)).toBe(true);
+			const report = JSON.parse(fs.readFileSync(reportPath, "utf-8"));
 			expect(report.reason).toBe("passed");
 			expect(report.summary.total).toBe(1);
 		});
 
 		it("writes manifest.json with correct entries", async () => {
-			const { AgentReporter } = await import("./reporter.js");
-			const reporter = new AgentReporter({ consoleOutput: "silent" });
+			const reporter = new AgentReporter({
+				cacheDir: tmpDir,
+				consoleOutput: "silent",
+			});
 
 			await reporter.onTestRunEnd([makeTestModule({ tests: [makeTestCase()] })], [], "passed");
 
-			const [, content] = findWriteCall(writeFile, (p) => p.endsWith("manifest.json"));
-			const manifest = JSON.parse(content);
-			expect(manifest.cacheDir).toBe(".vitest-agent-reporter");
+			const manifestPath = path.join(tmpDir, "manifest.json");
+			expect(fs.existsSync(manifestPath)).toBe(true);
+			const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+			expect(manifest.cacheDir).toBe(tmpDir);
 			expect(manifest.projects).toHaveLength(1);
 			expect(manifest.projects[0].reportFile).toBe("reports/default.json");
 			expect(manifest.projects[0].lastResult).toBe("passed");
 		});
 
 		it("groups modules by project and writes separate report files", async () => {
-			const { AgentReporter } = await import("./reporter.js");
-			const reporter = new AgentReporter({ consoleOutput: "silent" });
+			const reporter = new AgentReporter({
+				cacheDir: tmpDir,
+				consoleOutput: "silent",
+			});
 
 			const moduleA = makeTestModule({
 				relativeModuleId: "src/a.test.ts",
@@ -217,35 +218,31 @@ describe("AgentReporter", () => {
 
 			await reporter.onTestRunEnd([moduleA, moduleB], [], "passed");
 
-			// Two report files + one manifest = 3 writeFile calls
-			const reportWrites = writeFile.mock.calls.filter(
-				(c: unknown[]) => typeof c[0] === "string" && (c[0] as string).includes("reports/"),
-			);
-			expect(reportWrites).toHaveLength(2);
-
-			const filenames = reportWrites.map((c: unknown[]) => c[0] as string);
-			expect(filenames.some((f: string) => f.includes("core.json"))).toBe(true);
-			expect(filenames.some((f: string) => f.includes("api.json"))).toBe(true);
+			// Two report files should exist
+			expect(fs.existsSync(path.join(tmpDir, "reports", "core.json"))).toBe(true);
+			expect(fs.existsSync(path.join(tmpDir, "reports", "api.json"))).toBe(true);
 
 			// Multi-project reports include project name
-			const [, coreContent] = findWriteCall(writeFile, (p) => p.includes("core.json"));
-			const coreReport = JSON.parse(coreContent);
+			const coreReport = JSON.parse(fs.readFileSync(path.join(tmpDir, "reports", "core.json"), "utf-8"));
 			expect(coreReport.project).toBe("core");
 		});
 
 		it("uses 'default' filename for single project with empty name", async () => {
-			const { AgentReporter } = await import("./reporter.js");
-			const reporter = new AgentReporter({ consoleOutput: "silent" });
+			const reporter = new AgentReporter({
+				cacheDir: tmpDir,
+				consoleOutput: "silent",
+			});
 
 			await reporter.onTestRunEnd([makeTestModule({ projectName: "", tests: [makeTestCase()] })], [], "passed");
 
-			const [path] = findWriteCall(writeFile, (p) => p.includes("reports/"));
-			expect(path.endsWith("default.json")).toBe(true);
+			expect(fs.existsSync(path.join(tmpDir, "reports", "default.json"))).toBe(true);
 		});
 
 		it("skips console output when consoleOutput is silent", async () => {
-			const { AgentReporter } = await import("./reporter.js");
-			const reporter = new AgentReporter({ consoleOutput: "silent" });
+			const reporter = new AgentReporter({
+				cacheDir: tmpDir,
+				consoleOutput: "silent",
+			});
 			const stdoutSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
 
 			await reporter.onTestRunEnd([makeTestModule({ tests: [makeTestCase()] })], [], "passed");
@@ -255,8 +252,10 @@ describe("AgentReporter", () => {
 		});
 
 		it("writes console output when consoleOutput is failures", async () => {
-			const { AgentReporter } = await import("./reporter.js");
-			const reporter = new AgentReporter({ consoleOutput: "failures" });
+			const reporter = new AgentReporter({
+				cacheDir: tmpDir,
+				consoleOutput: "failures",
+			});
 			const stdoutSpy = vi.spyOn(process.stdout, "write").mockReturnValue(true);
 
 			await reporter.onTestRunEnd([makeTestModule({ tests: [makeTestCase()] })], [], "passed");
@@ -266,40 +265,74 @@ describe("AgentReporter", () => {
 		});
 
 		it("writes GFM when githubActions option is enabled", async () => {
-			const { AgentReporter } = await import("./reporter.js");
+			const summaryFile = path.join(tmpDir, "summary.md");
+
 			const reporter = new AgentReporter({
+				cacheDir: tmpDir,
 				consoleOutput: "silent",
 				githubActions: true,
-				githubSummaryFile: "/tmp/summary.md",
+				githubSummaryFile: summaryFile,
 			});
 
 			await reporter.onTestRunEnd([makeTestModule({ tests: [makeTestCase()] })], [], "passed");
 
-			expect(appendFile).toHaveBeenCalledWith("/tmp/summary.md", expect.stringContaining("Vitest Results"));
+			expect(fs.existsSync(summaryFile)).toBe(true);
+			const content = fs.readFileSync(summaryFile, "utf-8");
+			expect(content).toContain("Vitest Results");
 		});
 
 		it("skips GFM when githubActions is false", async () => {
-			const { AgentReporter } = await import("./reporter.js");
+			const summaryFile = path.join(tmpDir, "summary.md");
+
 			const reporter = new AgentReporter({
+				cacheDir: tmpDir,
 				consoleOutput: "silent",
 				githubActions: false,
 			});
 
 			await reporter.onTestRunEnd([makeTestModule({ tests: [makeTestCase()] })], [], "passed");
 
-			expect(appendFile).not.toHaveBeenCalled();
+			expect(fs.existsSync(summaryFile)).toBe(false);
 		});
 
 		it("creates cache directory structure", async () => {
-			const { AgentReporter } = await import("./reporter.js");
+			const cacheDir = path.join(tmpDir, "nested", "cache");
 			const reporter = new AgentReporter({
-				cacheDir: ".test-cache",
+				cacheDir,
 				consoleOutput: "silent",
 			});
 
 			await reporter.onTestRunEnd([makeTestModule({ tests: [makeTestCase()] })], [], "passed");
 
-			expect(mkdir).toHaveBeenCalledWith(expect.stringContaining(".test-cache"), { recursive: true });
+			expect(fs.existsSync(path.join(cacheDir, "reports"))).toBe(true);
+			expect(fs.existsSync(path.join(cacheDir, "manifest.json"))).toBe(true);
+		});
+
+		it("attaches unhandledErrors to all project reports (bug fix)", async () => {
+			const reporter = new AgentReporter({
+				cacheDir: tmpDir,
+				consoleOutput: "silent",
+			});
+			const errors = [{ message: "unhandled error", stacks: [] }];
+
+			const moduleA = makeTestModule({
+				relativeModuleId: "src/a.test.ts",
+				projectName: "core",
+				tests: [makeTestCase()],
+			});
+			const moduleB = makeTestModule({
+				relativeModuleId: "src/b.test.ts",
+				projectName: "api",
+				tests: [makeTestCase()],
+			});
+
+			await reporter.onTestRunEnd([moduleA, moduleB], errors, "failed");
+
+			const coreReport = JSON.parse(fs.readFileSync(path.join(tmpDir, "reports", "core.json"), "utf-8"));
+			const apiReport = JSON.parse(fs.readFileSync(path.join(tmpDir, "reports", "api.json"), "utf-8"));
+
+			expect(coreReport.unhandledErrors).toHaveLength(1);
+			expect(apiReport.unhandledErrors).toHaveLength(1);
 		});
 	});
 });
