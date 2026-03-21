@@ -23,7 +23,7 @@
 		".": "./src/index.ts"
 	},
 	"bin": {
-		"vitest-agent-reporter": "./bin/vitest-agent-reporter.js"
+		"vitest-agent-reporter": "./src/cli/index.ts"
 	},
 	"scripts": {
 		"build": "turbo run build:dev build:prod --log-order=grouped",
