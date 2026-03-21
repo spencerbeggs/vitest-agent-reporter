@@ -8,9 +8,41 @@
  */
 
 import { join } from "node:path";
+import type { Layer } from "effect";
+import { Effect } from "effect";
+import { AgentDetectionLive } from "./layers/AgentDetectionLive.js";
 import { AgentReporter } from "./reporter.js";
-import type { AgentPluginOptions } from "./types.js";
-import { detectEnvironment, stripConsoleReporters } from "./utils.js";
+import type { AgentPluginOptions } from "./schemas/Options.js";
+import { AgentDetection } from "./services/AgentDetection.js";
+import { stripConsoleReporters } from "./utils/strip-console-reporters.js";
+
+/**
+ * Resolve console output mode based on the detected environment and console strategy.
+ *
+ * @internal
+ */
+function resolveConsoleOutput(
+	env: "agent" | "ci" | "human",
+	strategy: "own" | "complement",
+): "failures" | "full" | "silent" {
+	if (env === "human") return "silent";
+	if (env === "agent" && strategy === "own") return "failures";
+	// complement mode or CI + own: reporter stays silent
+	return "silent";
+}
+
+/**
+ * Resolve whether the reporter should write GFM to GITHUB_STEP_SUMMARY.
+ *
+ * @internal
+ */
+function resolveGithubActions(env: "agent" | "ci" | "human", strategy: "own" | "complement"): boolean {
+	if (env === "human") return false;
+	if (strategy === "complement") return false; // Vitest handles GFM
+	if (env === "agent" && strategy === "own") return false; // agent mode, no GFM
+	if (env === "ci" && strategy === "own") return true; // CI + own = we write GFM
+	return false;
+}
 
 /**
  * Vitest plugin that injects {@link AgentReporter} into the reporter chain.
@@ -20,14 +52,15 @@ import { detectEnvironment, stripConsoleReporters } from "./utils.js";
  * and writes JSON cache + manifest. Cache directory defaults to Vite's
  * `cacheDir` + `"/vitest-agent-reporter"`, sitting alongside Vitest's own cache.
  *
- * Console behavior depends on the detected environment (or forced `mode`):
+ * Console behavior depends on the detected environment (or forced `mode`) and
+ * the `consoleStrategy` option:
  *
- * - **Agent** (e.g., `CLAUDECODE=1`): suppresses built-in console reporters,
- *   shows only structured markdown output with failure details
- * - **CI** (`GITHUB_ACTIONS`, `CI=true`): keeps existing reporters,
- *   adds GFM summary to `GITHUB_STEP_SUMMARY`
- * - **Human**: keeps existing reporters, reporter runs silently
- *   (cache/JSON only, no console output)
+ * - **`"complement"` (default)**: Delegates console output to Vitest's built-in
+ *   reporters (including the `agent` reporter). Our reporter stays silent on
+ *   console but still writes JSON cache. Warns if the `agent` reporter is missing.
+ * - **`"own"`**: Our reporter takes over console output. In agent mode, strips
+ *   built-in console reporters and emits structured markdown. In CI mode, writes
+ *   GFM to `GITHUB_STEP_SUMMARY`.
  *
  * Cache directory resolution priority:
  * 1. Explicit `reporter.cacheDir` option
@@ -35,6 +68,7 @@ import { detectEnvironment, stripConsoleReporters } from "./utils.js";
  * 3. Vite's `cacheDir` + `"/vitest-agent-reporter"` (default)
  *
  * @param options - Plugin configuration options
+ * @param _layer - Internal: override the AgentDetection layer (for testing)
  * @returns Vitest plugin object with `configureVitest` hook
  *
  * @example
@@ -55,11 +89,12 @@ import { detectEnvironment, stripConsoleReporters } from "./utils.js";
  * import { AgentPlugin } from "vitest-agent-reporter";
  * import { defineConfig } from "vitest/config";
  *
- * // Force agent mode regardless of environment
+ * // Force agent mode with own console strategy
  * export default defineConfig({
  *   plugins: [
  *     AgentPlugin({
  *       mode: "agent",
+ *       consoleStrategy: "own",
  *       reporter: {
  *         coverageThreshold: 80,
  *         coverageConsoleLimit: 5,
@@ -71,15 +106,16 @@ import { detectEnvironment, stripConsoleReporters } from "./utils.js";
  *
  * @see {@link AgentReporter} for direct reporter usage without the plugin
  * @see {@link AgentPluginOptions} for all configuration options
- * @see {@link detectEnvironment} for environment detection details
  * @public
  */
-export function AgentPlugin(options: AgentPluginOptions = {}) {
+export function AgentPlugin(options: AgentPluginOptions = {}, _layer?: Layer.Layer<AgentDetection>) {
 	const mode = options.mode ?? "auto";
+	const strategy = options.consoleStrategy ?? "complement";
+	const layer = _layer ?? AgentDetectionLive;
 
 	return {
 		name: "vitest-agent-reporter",
-		configureVitest({
+		async configureVitest({
 			vitest,
 		}: {
 			vitest: {
@@ -91,26 +127,42 @@ export function AgentPlugin(options: AgentPluginOptions = {}) {
 				vite: { config: { cacheDir: string } };
 			};
 		}) {
-			const env = mode === "auto" ? detectEnvironment() : mode === "agent" ? "agent" : "human";
-
-			let consoleOutput: "failures" | "full" | "silent";
-			let githubActions: boolean;
-
-			switch (env) {
-				case "agent":
-					consoleOutput = "failures";
-					githubActions = false;
-					vitest.config.reporters = stripConsoleReporters(vitest.config.reporters);
-					break;
-				case "ci":
-					consoleOutput = "silent";
-					githubActions = true;
-					break;
-				default:
-					consoleOutput = "silent";
-					githubActions = false;
-					break;
+			// Determine environment from AgentDetection service or forced mode
+			let env: "agent" | "ci" | "human";
+			if (mode === "auto") {
+				env = await Effect.runPromise(
+					Effect.provide(
+						Effect.flatMap(AgentDetection, (d) => d.environment),
+						layer,
+					),
+				);
+			} else {
+				env = mode === "agent" ? "agent" : "human";
 			}
+
+			// Only strip reporters when actively taking over console
+			if (strategy === "own" && env === "agent") {
+				vitest.config.reporters = stripConsoleReporters(vitest.config.reporters);
+			}
+
+			// Complement mode warning: agent detected but no built-in agent reporter
+			if (env === "agent" && strategy === "complement") {
+				const hasAgentReporter = vitest.config.reporters.some(
+					(r) => r === "agent" || (Array.isArray(r) && r[0] === "agent"),
+				);
+				if (!hasAgentReporter) {
+					process.stderr.write(
+						'[vitest-agent-reporter] Warning: consoleStrategy is "complement" but ' +
+							'Vitest\'s built-in "agent" reporter is not in the reporter chain. ' +
+							"Console output may be verbose. Add 'agent' to your reporters or set " +
+							'consoleStrategy: "own".\n',
+					);
+				}
+			}
+
+			// Resolve console output and GFM based on env + strategy matrix
+			const consoleOutput = resolveConsoleOutput(env, strategy);
+			const githubActions = resolveGithubActions(env, strategy);
 
 			// Resolve cache directory with priority:
 			// 1. Explicit reporter.cacheDir option

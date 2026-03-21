@@ -22,6 +22,9 @@
 	"exports": {
 		".": "./src/index.ts"
 	},
+	"bin": {
+		"vitest-agent-reporter": "./bin/vitest-agent-reporter.js"
+	},
 	"scripts": {
 		"build": "turbo run build:dev build:prod --log-order=grouped",
 		"build:dev": "rslib build --config-loader native --env-mode dev",
@@ -45,7 +48,11 @@
 		"types:check": "tsgo --noEmit"
 	},
 	"dependencies": {
-		"zod": "^4.3.6"
+		"@effect/cli": "^0.75.0",
+		"@effect/platform": "^0.96.0",
+		"@effect/platform-node": "^0.106.0",
+		"effect": "^3.21.0",
+		"std-env": "^4.0.0"
 	},
 	"devDependencies": {
 		"@savvy-web/changesets": "^0.5.3",

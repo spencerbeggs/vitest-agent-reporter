@@ -30,22 +30,76 @@ pnpm run test
 ```text
 vitest-agent-reporter/
 ├── src/
-│   ├── index.ts            # Public API re-exports
-│   ├── schemas.ts          # Zod schemas, codecs, istanbul interfaces
-│   ├── types.ts            # z.infer<> type aliases
-│   ├── utils.ts            # Utility functions and environment detection
-│   ├── detect-pm.ts        # Package manager detection
-│   ├── coverage.ts         # Istanbul duck-typing coverage processor
-│   ├── reporter.ts         # AgentReporter class
-│   ├── plugin.ts           # AgentPlugin function
-│   └── formatters/
-│       ├── json.ts         # JSON report builder
-│       ├── console.ts      # Console markdown formatter
-│       └── gfm.ts          # GitHub Actions GFM formatter
-├── docs/                   # User-facing documentation
-├── lib/configs/            # Shared tool configuration
-└── .claude/design/         # Architecture design documents
+│   ├── index.ts                # Public API re-exports
+│   ├── reporter.ts             # AgentReporter class (Vitest adapter)
+│   ├── plugin.ts               # AgentPlugin function
+│   ├── cli/
+│   │   ├── index.ts            # CLI entry point (runCli)
+│   │   ├── commands/           # Thin command wrappers (status, overview, coverage)
+│   │   └── lib/                # Testable formatting logic for each command
+│   ├── services/
+│   │   ├── AgentDetection.ts   # std-env wrapper for environment detection
+│   │   ├── CacheWriter.ts      # Write reports and manifest to disk
+│   │   ├── CacheReader.ts      # Read reports and manifest from disk
+│   │   ├── CoverageAnalyzer.ts # Coverage processing with scoped support
+│   │   └── ProjectDiscovery.ts # Test file discovery via globs
+│   ├── layers/
+│   │   ├── *Live.ts            # Production implementations (Node.js I/O)
+│   │   ├── *Test.ts            # Test implementations (mock state containers)
+│   │   ├── ReporterLive.ts     # Merged layer for reporter runtime
+│   │   └── CliLive.ts          # Merged layer for CLI runtime
+│   ├── errors/
+│   │   ├── CacheError.ts       # Data.TaggedError for file I/O failures
+│   │   └── DiscoveryError.ts   # Data.TaggedError for project discovery
+│   ├── schemas/
+│   │   ├── AgentReport.ts      # Report, module, and test schemas
+│   │   ├── CacheManifest.ts    # Manifest and entry schemas
+│   │   ├── Coverage.ts         # Coverage report and totals schemas
+│   │   ├── Options.ts          # Reporter and plugin option schemas
+│   │   └── Common.ts           # Shared literals (TestState, TestRunReason, etc.)
+│   └── utils/
+│       ├── compress-lines.ts   # Line range compression
+│       ├── safe-filename.ts    # Filename sanitization
+│       ├── ansi.ts             # ANSI color helpers
+│       ├── strip-console-reporters.ts
+│       ├── detect-pm.ts        # Package manager detection
+│       ├── build-report.ts     # Report builder (pure function)
+│       ├── format-console.ts   # Console markdown formatter (pure function)
+│       └── format-gfm.ts       # GitHub Actions GFM formatter (pure function)
+├── bin/
+│   └── vitest-agent-reporter.js  # CLI shebang wrapper
+├── docs/                       # User-facing documentation
+├── lib/configs/                # Shared tool configuration
+└── .claude/design/             # Architecture design documents
 ```
+
+## Architecture Patterns
+
+### Effect Services
+
+The project uses [Effect](https://effect.website/) for dependency injection
+and service composition. Key patterns:
+
+- **Services** (`src/services/`) define interfaces via `Context.Tag`
+- **Live layers** (`src/layers/*Live.ts`) provide production implementations
+  using `@effect/platform` for file I/O
+- **Test layers** (`src/layers/*Test.ts`) provide mock implementations with
+  state containers for assertions
+- **Schemas** (`src/schemas/`) use Effect Schema (not Zod) for data
+  validation and serialization
+
+### Reporter Integration
+
+The `AgentReporter` class implements Vitest's Reporter interface. Each
+lifecycle hook (`onTestRunEnd`) builds a scoped effect and runs it with
+`Effect.runPromise`, providing the `ReporterLive` layer inline. This avoids
+managed runtime lifecycle concerns.
+
+### Pure Functions
+
+Formatters (`format-console.ts`, `format-gfm.ts`) and utilities
+(`compress-lines.ts`, `safe-filename.ts`) are plain functions, not Effect
+services. They are trivially testable without layers.
 
 ## Available Scripts
 
@@ -105,8 +159,42 @@ pnpm run test:watch
 pnpm run test:coverage
 
 # Run a specific test file
-pnpm vitest run src/utils.test.ts
+pnpm vitest run src/utils/compress-lines.test.ts
 ```
+
+### Testing Effect Services
+
+Service tests use the state-container pattern with test layers:
+
+```typescript
+import { Effect } from "effect";
+import { CacheReader } from "../services/CacheReader.js";
+import { CacheReaderTest } from "../layers/CacheReaderTest.js";
+
+const testLayer = CacheReaderTest.layer(/* mock state */);
+
+const run = <A, E>(effect: Effect.Effect<A, E, CacheReader>) =>
+  Effect.runPromise(Effect.provide(effect, testLayer));
+
+it("reads manifest from cache dir", async () => {
+  const result = await run(
+    Effect.flatMap(CacheReader, (svc) => svc.readManifest("/tmp/cache")),
+  );
+  // assertions...
+});
+```
+
+Reporter integration tests compose test layers:
+
+```typescript
+const TestReporterLive = Layer.mergeAll(
+  CacheWriterTest.layer(writeState),
+  CoverageAnalyzerTest.layer(),
+);
+```
+
+CLI commands are thin wrappers -- logic lives in `cli/lib/` and is tested
+as pure functions.
 
 ## TypeScript
 
@@ -118,13 +206,13 @@ pnpm vitest run src/utils.test.ts
 
 ```typescript
 // Use .js extensions for relative imports (ESM requirement)
-import { compressLines } from "./utils.js";
+import { compressLines } from "./utils/compress-lines.js";
 
 // Use node: protocol for Node.js built-ins
 import { mkdir } from "node:fs/promises";
 
 // Separate type imports
-import type { AgentReport } from "./types.js";
+import type { AgentReport } from "./schemas/AgentReport.js";
 ```
 
 ## Submitting Changes

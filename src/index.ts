@@ -10,15 +10,9 @@
  * - {@link AgentReporter} -- Vitest Reporter (direct configuration)
  * - {@link AgentPlugin} -- Vitest plugin that auto-injects the reporter
  *
- * Data structures are defined as Zod schemas with inferred TypeScript types.
- * Codecs provide JSON string encode/decode for report and manifest files.
- *
  * @remarks
- * Requires Vitest \>= 3.2.0 for the Reporter v2 API. The plugin convenience
+ * Requires Vitest \>= 4.1.0 for the Reporter v2 API. The plugin convenience
  * layer uses the `configureVitest` hook from Vitest 3.1+.
- *
- * @see {@link https://vitest.dev/api/advanced/reporters.html | Vitest Reporter API}
- * @see {@link https://vitest.dev/api/advanced/plugin.html | Vitest Plugin API}
  *
  * @packageDocumentation
  */
@@ -28,40 +22,37 @@
 export { AgentPlugin } from "./plugin.js";
 export { AgentReporter } from "./reporter.js";
 
-// --- Zod schemas and codecs ---
-
-export {
-	AgentPluginOptionsSchema,
-	AgentReportCodec,
-	AgentReportSchema,
-	AgentReporterOptionsSchema,
-	CacheManifestCodec,
-	CacheManifestEntrySchema,
-	CacheManifestSchema,
-	CoverageReportSchema,
-	CoverageTotalsSchema,
-	FileCoverageReportSchema,
-	ModuleReportSchema,
-	ReportErrorSchema,
-	ReportSummarySchema,
-	TestClassificationSchema,
-	TestReportSchema,
-} from "./schemas.js";
-
-// --- Inferred types ---
+// --- Schemas ---
 
 export type {
-	AgentPluginOptions,
-	AgentReport,
-	AgentReporterOptions,
-	CacheManifest,
-	CacheManifestEntry,
-	CoverageReport,
-	CoverageTotals,
-	FileCoverageReport,
-	ModuleReport,
+	AgentReport as AgentReportType,
+	ModuleReport as ModuleReportType,
+	TestReport as TestReportType,
+} from "./schemas/AgentReport.js";
+export { AgentReport, ModuleReport, ReportSummary, TestReport } from "./schemas/AgentReport.js";
+
+export { CacheManifest, CacheManifestEntry } from "./schemas/CacheManifest.js";
+export type { ReportError as ReportErrorType } from "./schemas/Common.js";
+export {
+	ConsoleOutputMode,
+	ConsoleStrategy,
+	PackageManager,
+	PluginMode,
 	ReportError,
-	ReportSummary,
 	TestClassification,
-	TestReport,
-} from "./types.js";
+	TestRunReason,
+	TestState,
+} from "./schemas/Common.js";
+
+export { CoverageReport, CoverageTotals, FileCoverageReport } from "./schemas/Coverage.js";
+
+export { AgentPluginOptions, AgentReporterOptions } from "./schemas/Options.js";
+
+// --- Services (for programmatic cache access) ---
+
+export { CacheReaderLive } from "./layers/CacheReaderLive.js";
+export { CacheReader } from "./services/CacheReader.js";
+
+// --- Errors ---
+
+export { CacheError } from "./errors/CacheError.js";

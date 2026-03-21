@@ -8,16 +8,26 @@
  * @packageDocumentation
  */
 
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { processCoverage } from "./coverage.js";
-import { formatConsoleMarkdown, relativePath } from "./formatters/console.js";
-import { formatGfm } from "./formatters/gfm.js";
-import type { VitestTestModule } from "./formatters/json.js";
-import { buildAgentReport } from "./formatters/json.js";
-import { AgentReportCodec, CacheManifestCodec } from "./schemas.js";
-import type { AgentReport, AgentReporterOptions, CacheManifest, CacheManifestEntry, CoverageReport } from "./types.js";
-import { isGitHubActions, safeFilename } from "./utils.js";
+import { FileSystem } from "@effect/platform";
+import { Effect, Option } from "effect";
+import { ReporterLive } from "./layers/ReporterLive.js";
+import type { AgentReport } from "./schemas/AgentReport.js";
+import type { CacheManifestEntry } from "./schemas/CacheManifest.js";
+import type { AgentReporterOptions } from "./schemas/Options.js";
+import { CacheWriter } from "./services/CacheWriter.js";
+import { CoverageAnalyzer } from "./services/CoverageAnalyzer.js";
+import type { VitestTestModule } from "./utils/build-report.js";
+import { buildAgentReport } from "./utils/build-report.js";
+import { formatConsoleMarkdown, relativePath } from "./utils/format-console.js";
+import { formatGfm } from "./utils/format-gfm.js";
+import { safeFilename } from "./utils/safe-filename.js";
+
+/**
+ * Check if running in GitHub Actions.
+ */
+function isGitHubActions(): boolean {
+	return process.env.GITHUB_ACTIONS === "true" || process.env.GITHUB_ACTIONS === "1";
+}
 
 /**
  * Fully resolved reporter options with all defaults applied.
@@ -168,114 +178,114 @@ export class AgentReporter {
 		const modules = testModules as ReadonlyArray<VitestTestModule>;
 		const errors = unhandledErrors as ReadonlyArray<{ message: string; stacks?: string[] }>;
 
-		// Ensure cache directory structure
-		const reportsDir = join(this.options.cacheDir, "reports");
-		await mkdir(reportsDir, { recursive: true });
+		// Capture options for use inside Effect.gen
+		const opts = this.options;
+		const stashedCoverage = this.coverage;
 
-		// Group modules by project name
-		const projectGroups = new Map<string, VitestTestModule[]>();
-		for (const mod of modules) {
-			const name = mod.project.name;
-			const key = name || "default";
-			const existing = projectGroups.get(key);
-			if (existing) {
-				existing.push(mod);
-			} else {
-				projectGroups.set(key, [mod]);
-			}
-		}
+		const program = Effect.gen(function* () {
+			const writer = yield* CacheWriter;
+			const analyzer = yield* CoverageAnalyzer;
 
-		// Process coverage if stashed
-		let coverageReport: CoverageReport | undefined;
-		if (this.coverage) {
-			coverageReport = processCoverage(this.coverage, {
-				threshold: this.options.coverageThreshold,
-				includeBareZero: this.options.includeBareZero,
-			});
-		}
+			// Ensure cache directory structure
+			yield* writer.ensureDir(`${opts.cacheDir}/reports`);
 
-		// Build per-project reports
-		const reports: AgentReport[] = [];
-		const manifestEntries: CacheManifestEntry[] = [];
-		const isMultiProject = projectGroups.size > 1;
-
-		for (const [projectName, modules] of projectGroups) {
-			const report = buildAgentReport(
-				modules,
-				projectName === "default" ? errors : [],
-				reason,
-				{ omitPassingTests: this.options.omitPassingTests },
-				isMultiProject ? projectName : undefined,
-			);
-
-			// NOTE: Coverage is global, not per-project. In monorepos, each project
-			// report receives the same coverage data. Per-project filtering would
-			// require path-based heuristics. See architecture doc "Trade-off:
-			// Coverage Not Per-Project".
-			if (coverageReport) {
-				report.coverage = coverageReport;
-			}
-
-			reports.push(report);
-
-			const filename = `${safeFilename(projectName)}.json`;
-			const reportPath = join(reportsDir, filename);
-			try {
-				await writeFile(reportPath, AgentReportCodec.encode(report));
-			} catch (err) {
-				console.error(`[vitest-agent-reporter] Failed to write ${reportPath}:`, err);
-			}
-
-			manifestEntries.push({
-				project: projectName,
-				reportFile: `reports/${filename}`,
-				lastRun: report.timestamp,
-				lastResult: report.reason,
-			});
-		}
-
-		// Write manifest
-		const manifest: CacheManifest = {
-			updatedAt: new Date().toISOString(),
-			cacheDir: this.options.cacheDir,
-			projects: manifestEntries,
-		};
-		try {
-			await writeFile(join(this.options.cacheDir, "manifest.json"), CacheManifestCodec.encode(manifest));
-		} catch (err) {
-			console.error("[vitest-agent-reporter] Failed to write manifest:", err);
-		}
-
-		// Console output
-		if (this.options.consoleOutput !== "silent") {
-			const noColor = !!process.env.NO_COLOR;
-			for (const [i, report] of reports.entries()) {
-				const entry = manifestEntries[i];
-				const formatOptions: Parameters<typeof formatConsoleMarkdown>[1] = {
-					consoleOutput: this.options.consoleOutput,
-					coverageConsoleLimit: this.options.coverageConsoleLimit,
-					noColor,
-				};
-				if (entry) {
-					formatOptions.cacheFile = relativePath(`${this.options.cacheDir}/${entry.reportFile}`);
-				}
-				const md = formatConsoleMarkdown(report, formatOptions);
-				if (md) process.stdout.write(`${md}\n`);
-			}
-		}
-
-		// GFM output for GitHub Actions
-		const useGfm = this.options.githubActions ?? isGitHubActions();
-		if (useGfm) {
-			const summaryFile = this.options.githubSummaryFile ?? process.env.GITHUB_STEP_SUMMARY;
-			if (summaryFile) {
-				const gfm = formatGfm(reports);
-				try {
-					await appendFile(summaryFile, gfm);
-				} catch (err) {
-					console.error("[vitest-agent-reporter] Failed to write GITHUB_STEP_SUMMARY:", err);
+			// Group modules by project name
+			const projectGroups = new Map<string, VitestTestModule[]>();
+			for (const mod of modules) {
+				const name = mod.project.name;
+				const key = name || "default";
+				const existing = projectGroups.get(key);
+				if (existing) {
+					existing.push(mod);
+				} else {
+					projectGroups.set(key, [mod]);
 				}
 			}
-		}
+
+			// Process coverage via service
+			const coverageResult = stashedCoverage
+				? yield* analyzer.process(stashedCoverage, {
+						threshold: opts.coverageThreshold,
+						includeBareZero: opts.includeBareZero,
+					})
+				: Option.none();
+			const coverageReport = Option.getOrUndefined(coverageResult);
+
+			// Build per-project reports
+			// BUG FIX: Pass unhandledErrors to ALL projects, not just "default"
+			const reports: AgentReport[] = [];
+			const manifestEntries: CacheManifestEntry[] = [];
+			const isMultiProject = projectGroups.size > 1;
+
+			for (const [projectName, projectModules] of projectGroups) {
+				const baseReport = buildAgentReport(
+					projectModules,
+					errors,
+					reason,
+					{ omitPassingTests: opts.omitPassingTests },
+					isMultiProject ? projectName : undefined,
+				);
+
+				// NOTE: Coverage is global, not per-project. In monorepos, each project
+				// report receives the same coverage data. Per-project filtering would
+				// require path-based heuristics. See architecture doc "Trade-off:
+				// Coverage Not Per-Project".
+				const report: AgentReport = coverageReport ? { ...baseReport, coverage: coverageReport } : baseReport;
+
+				reports.push(report);
+
+				// Write report via service
+				yield* writer.writeReport(opts.cacheDir, projectName, report);
+
+				const filename = `${safeFilename(projectName)}.json`;
+				manifestEntries.push({
+					project: projectName,
+					reportFile: `reports/${filename}`,
+					lastRun: report.timestamp,
+					lastResult: report.reason,
+				});
+			}
+
+			// Write manifest via service
+			const manifest = {
+				updatedAt: new Date().toISOString(),
+				cacheDir: opts.cacheDir,
+				projects: manifestEntries,
+			};
+			yield* writer.writeManifest(opts.cacheDir, manifest);
+
+			// Console output (direct, not via service -- pure function)
+			if (opts.consoleOutput !== "silent") {
+				const noColor = !!process.env.NO_COLOR;
+				for (const [i, report] of reports.entries()) {
+					const entry = manifestEntries[i];
+					const formatOptions: Parameters<typeof formatConsoleMarkdown>[1] = {
+						consoleOutput: opts.consoleOutput,
+						coverageConsoleLimit: opts.coverageConsoleLimit,
+						noColor,
+					};
+					if (entry) {
+						formatOptions.cacheFile = relativePath(`${opts.cacheDir}/${entry.reportFile}`);
+					}
+					const md = formatConsoleMarkdown(report, formatOptions);
+					if (md) process.stdout.write(`${md}\n`);
+				}
+			}
+
+			// GFM output via FileSystem service
+			const useGfm = opts.githubActions ?? isGitHubActions();
+			if (useGfm) {
+				const summaryFile = opts.githubSummaryFile ?? process.env.GITHUB_STEP_SUMMARY;
+				if (summaryFile) {
+					const fs = yield* FileSystem.FileSystem;
+					const gfm = formatGfm(reports);
+					yield* fs.writeFileString(summaryFile, gfm, { flag: "a" }).pipe(Effect.catchAll(() => Effect.void));
+				}
+			}
+		});
+
+		await Effect.runPromise(program.pipe(Effect.provide(ReporterLive))).catch((err) => {
+			process.stderr.write(`vitest-agent-reporter: ${err}\n`);
+		});
 	}
 }

@@ -1,0 +1,16 @@
+import type { Effect } from "effect";
+import { Context } from "effect";
+import type { DiscoveryError } from "../errors/DiscoveryError.js";
+
+export interface TestFileEntry {
+	readonly testFile: string;
+	readonly sourceFiles: ReadonlyArray<string>;
+}
+
+export class ProjectDiscovery extends Context.Tag("vitest-agent-reporter/ProjectDiscovery")<
+	ProjectDiscovery,
+	{
+		readonly discoverTestFiles: (rootDir: string) => Effect.Effect<ReadonlyArray<TestFileEntry>, DiscoveryError>;
+		readonly mapTestToSource: (testFile: string) => Effect.Effect<ReadonlyArray<string>, DiscoveryError>;
+	}
+>() {}
