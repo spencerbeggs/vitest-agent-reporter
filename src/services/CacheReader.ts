@@ -3,6 +3,7 @@ import { Context } from "effect";
 import type { CacheError } from "../errors/CacheError.js";
 import type { AgentReport } from "../schemas/AgentReport.js";
 import type { CacheManifest } from "../schemas/CacheManifest.js";
+import type { HistoryRecord } from "../schemas/History.js";
 
 export class CacheReader extends Context.Tag("vitest-agent-reporter/CacheReader")<
 	CacheReader,
@@ -13,5 +14,6 @@ export class CacheReader extends Context.Tag("vitest-agent-reporter/CacheReader"
 			projectName: string,
 		) => Effect.Effect<Option.Option<AgentReport>, CacheError>;
 		readonly listReports: (cacheDir: string) => Effect.Effect<ReadonlyArray<string>, CacheError>;
+		readonly readHistory: (cacheDir: string, projectName: string) => Effect.Effect<HistoryRecord>;
 	}
 >() {}

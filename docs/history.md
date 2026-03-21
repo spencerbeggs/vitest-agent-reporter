@@ -1,0 +1,110 @@
+# Failure History and Test Classification
+
+The reporter tracks per-test pass/fail outcomes across runs in a 10-run
+sliding window. Each test is classified based on its history, and
+classifications appear in both console output and JSON cache files.
+
+## How It Works
+
+Every time `AgentReporter.onTestRunEnd` fires, the reporter:
+
+1. Extracts all test outcomes (pass/fail) from the current run
+2. Reads the existing history file for each project
+3. Prepends the current run to each test's history, pruning to 10 entries
+4. Classifies each test based on its updated history
+5. Attaches classifications to the test report
+6. Writes the updated history file
+
+History is always written -- there is no toggle. The data is lightweight
+(10 entries per test, one file per project) and only useful when it has
+been accumulating.
+
+## Classifications
+
+| Classification | Meaning |
+| --- | --- |
+| `stable` | Passed in the current run with no failures in the window |
+| `new-failure` | Failed in the current run with no prior failures (or first time seen) |
+| `persistent` | Failed in the current run, and the previous run also failed |
+| `flaky` | Failed in the current run, but the window has a mix of passes and failures |
+| `recovered` | Passed in the current run, but has failures in the window |
+
+The key distinction between `persistent` and `flaky`: if the immediately
+preceding run was also a failure, the test is persistent. If there is a
+mix of passes and failures in the window, it is flaky.
+
+## Console Output
+
+Failed tests show their classification in brackets:
+
+```markdown
+- x **compressLines > handles empty array** [new-failure]
+  Expected [] to equal [""]
+
+- x **compressLines > handles duplicates** [persistent]
+  Expected [1,2] to equal [1]
+```
+
+The "Next steps" section prioritizes actions based on classifications:
+
+1. **New failures** -- most likely caused by recent changes
+2. **Persistent failures** -- pre-existing, may not be yours
+3. **Flaky tests** -- may pass on retry
+4. Re-run commands and cache file pointer
+5. Hint to run `vitest-agent-reporter history` for deeper analysis
+
+## History Files
+
+History is stored per project at
+`{cacheDir}/history/{project}.history.json`:
+
+```json
+{
+  "project": "default",
+  "updatedAt": "2026-03-21T00:00:00.000Z",
+  "tests": [
+    {
+      "fullName": "Suite > test name",
+      "runs": [
+        { "timestamp": "2026-03-21T00:00:00.000Z", "state": "passed" },
+        { "timestamp": "2026-03-20T00:00:00.000Z", "state": "failed" }
+      ]
+    }
+  ]
+}
+```
+
+Runs are stored most-recent-first and pruned to 10 entries. Only
+`passed` and `failed` states are tracked -- skipped and pending tests
+do not add entries, preserving their prior history.
+
+## CLI History Command
+
+For a deeper view of failure trends:
+
+```bash
+npx vitest-agent-reporter history
+```
+
+This shows flaky tests (sorted by fail rate), persistent failures
+(with consecutive failure count), and recently recovered tests. Each
+entry includes a P/F visualization showing the run pattern over time.
+
+See [CLI Commands](cli.md) for details.
+
+## Programmatic Access
+
+History schemas and the HistoryTracker service are exported for
+programmatic use:
+
+```typescript
+import {
+  HistoryRecord,
+  TestHistory,
+  TestRun,
+  HistoryTracker,
+  HistoryTrackerLive,
+} from "vitest-agent-reporter";
+```
+
+See [Schemas](schemas.md) for the full schema reference.

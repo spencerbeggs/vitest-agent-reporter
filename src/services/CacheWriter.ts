@@ -3,6 +3,7 @@ import { Context } from "effect";
 import type { CacheError } from "../errors/CacheError.js";
 import type { AgentReport } from "../schemas/AgentReport.js";
 import type { CacheManifest } from "../schemas/CacheManifest.js";
+import type { HistoryRecord } from "../schemas/History.js";
 
 export class CacheWriter extends Context.Tag("vitest-agent-reporter/CacheWriter")<
 	CacheWriter,
@@ -14,5 +15,10 @@ export class CacheWriter extends Context.Tag("vitest-agent-reporter/CacheWriter"
 		) => Effect.Effect<void, CacheError>;
 		readonly writeManifest: (cacheDir: string, manifest: CacheManifest) => Effect.Effect<void, CacheError>;
 		readonly ensureDir: (cacheDir: string) => Effect.Effect<void, CacheError>;
+		readonly writeHistory: (
+			cacheDir: string,
+			projectName: string,
+			history: HistoryRecord,
+		) => Effect.Effect<void, CacheError>;
 	}
 >() {}

@@ -1,86 +1,61 @@
-# Zod Schemas and Codecs
+# Effect Schemas
 
 All data structures in `vitest-agent-reporter` are defined as
-[Zod v4](https://zod.dev/) schemas. TypeScript types are inferred from
-schemas via `z.infer<>`. Codecs provide JSON string encode/decode for
-reading and writing report files.
+[Effect Schema](https://effect.website/docs/schema/introduction)
+definitions. TypeScript types are derived via `typeof Schema.Type`.
+JSON encode/decode uses `Schema.decodeUnknownSync` and
+`Schema.encodeUnknownSync`.
 
 ## Available Schemas
 
 | Schema | Description |
 | --- | --- |
-| `AgentReportSchema` | Complete per-project test report |
-| `ReportSummarySchema` | Aggregate test run statistics |
-| `ModuleReportSchema` | Test module (file) and its test cases |
-| `TestReportSchema` | Individual test case result |
-| `ReportErrorSchema` | Error with message, stack, and diff |
-| `CoverageReportSchema` | Coverage report with totals and low-coverage files |
-| `CoverageTotalsSchema` | Aggregate coverage percentages |
-| `FileCoverageReportSchema` | Per-file coverage with uncovered line ranges |
-| `CacheManifestSchema` | Root manifest indexing all project reports |
-| `CacheManifestEntrySchema` | Single project entry in the manifest |
-| `TestClassificationSchema` | Failure classification enum |
-| `AgentReporterOptionsSchema` | Reporter configuration options |
-| `AgentPluginOptionsSchema` | Plugin configuration options |
+| `AgentReport` | Complete per-project test report |
+| `ReportSummary` | Aggregate test run statistics |
+| `ModuleReport` | Test module (file) and its test cases |
+| `TestReport` | Individual test case result |
+| `ReportError` | Error with message, stack, and diff |
+| `CoverageReport` | Coverage report with totals and low-coverage files |
+| `CoverageTotals` | Aggregate coverage percentages |
+| `FileCoverageReport` | Per-file coverage with uncovered line ranges |
+| `CacheManifest` | Root manifest indexing all project reports |
+| `CacheManifestEntry` | Single project entry in the manifest |
+| `HistoryRecord` | Per-project failure history across runs |
+| `TestHistory` | Single test's pass/fail history |
+| `TestRun` | Single run outcome (passed or failed) |
+| `TestClassification` | Failure classification literal |
+| `AgentReporterOptions` | Reporter configuration options |
+| `AgentPluginOptions` | Plugin configuration options |
 
-## Available Codecs
-
-| Codec | Input | Output |
-| --- | --- | --- |
-| `AgentReportCodec` | JSON string | Validated `AgentReport` |
-| `CacheManifestCodec` | JSON string | Validated `CacheManifest` |
-
-## Using Codecs
-
-Codecs provide bidirectional transformation between JSON strings on disk
-and validated TypeScript objects.
-
-### Decoding (reading a report file)
+## Decoding (reading a report file)
 
 ```typescript
 import { readFile } from "node:fs/promises";
-import { AgentReportCodec } from "vitest-agent-reporter";
-import type { AgentReport } from "vitest-agent-reporter";
+import { AgentReport } from "vitest-agent-reporter";
+import { Schema } from "effect";
 
-const json = await readFile(".vitest-agent-reporter/reports/default.json", "utf-8");
-const report: AgentReport = AgentReportCodec.decode(json);
+const json = await readFile(
+  ".vitest-agent-reporter/reports/default.json",
+  "utf-8",
+);
+const report = Schema.decodeUnknownSync(AgentReport)(JSON.parse(json));
 
 console.log(report.summary.failed); // number of failed tests
 console.log(report.failedFiles);    // array of failing file paths
 ```
 
-### Encoding (writing a report file)
-
-```typescript
-import { writeFile } from "node:fs/promises";
-import { AgentReportCodec } from "vitest-agent-reporter";
-import type { AgentReport } from "vitest-agent-reporter";
-
-const report: AgentReport = {
-  timestamp: new Date().toISOString(),
-  reason: "passed",
-  summary: { total: 5, passed: 5, failed: 0, skipped: 0, duration: 120 },
-  failed: [],
-  unhandledErrors: [],
-  failedFiles: [],
-};
-
-const json: string = AgentReportCodec.encode(report);
-await writeFile("report.json", json);
-```
-
-### Reading the manifest
+## Reading the manifest
 
 ```typescript
 import { readFile } from "node:fs/promises";
-import { CacheManifestCodec } from "vitest-agent-reporter";
-import type { CacheManifest } from "vitest-agent-reporter";
+import { CacheManifest } from "vitest-agent-reporter";
+import { Schema } from "effect";
 
 const json = await readFile(
   "node_modules/.cache/vitest-agent-reporter/manifest.json",
   "utf-8",
 );
-const manifest: CacheManifest = CacheManifestCodec.decode(json);
+const manifest = Schema.decodeUnknownSync(CacheManifest)(JSON.parse(json));
 
 // Find projects with failures
 const failing = manifest.projects.filter((p) => p.lastResult === "failed");
@@ -89,53 +64,95 @@ for (const entry of failing) {
 }
 ```
 
+## Reading failure history
+
+```typescript
+import { readFile } from "node:fs/promises";
+import { HistoryRecord } from "vitest-agent-reporter";
+import { Schema } from "effect";
+
+const json = await readFile(
+  ".vitest-agent-reporter/history/default.history.json",
+  "utf-8",
+);
+const history = Schema.decodeUnknownSync(HistoryRecord)(JSON.parse(json));
+
+for (const test of history.tests) {
+  const failures = test.runs.filter((r) => r.state === "failed").length;
+  if (failures > 0) {
+    console.log(`${test.fullName}: ${failures}/${test.runs.length} failed`);
+  }
+}
+```
+
 ## Type Inference
 
-All TypeScript types are inferred from schemas. Import them as types:
+All TypeScript types are derived from schemas. Import them as types:
 
 ```typescript
 import type {
-  AgentReport,
-  AgentReporterOptions,
-  CacheManifest,
-  CacheManifestEntry,
-  CoverageReport,
-  CoverageTotals,
-  FileCoverageReport,
-  ModuleReport,
-  ReportError,
-  ReportSummary,
-  TestClassification,
-  TestReport,
+  AgentReportType,
+  ModuleReportType,
+  TestReportType,
+  ReportErrorType,
 } from "vitest-agent-reporter";
 ```
 
-You can also infer types directly from schemas:
+Or derive types directly from schemas:
 
 ```typescript
-import { z } from "zod/v4";
-import { AgentReportSchema } from "vitest-agent-reporter";
+import { AgentReport } from "vitest-agent-reporter";
 
-type AgentReport = z.infer<typeof AgentReportSchema>;
+type AgentReportType = typeof AgentReport.Type;
 ```
 
 ## Validating Report Files
 
-Use schemas directly for custom validation:
+Use schemas for custom validation:
 
 ```typescript
 import { readFile } from "node:fs/promises";
-import { AgentReportSchema } from "vitest-agent-reporter";
+import { AgentReport } from "vitest-agent-reporter";
+import { Schema } from "effect";
 
-const raw = await readFile(".vitest-agent-reporter/reports/default.json", "utf-8");
-const data = JSON.parse(raw);
+const raw = await readFile(
+  ".vitest-agent-reporter/reports/default.json",
+  "utf-8",
+);
 
-const result = AgentReportSchema.safeParse(data);
-if (result.success) {
-  console.log("Valid report:", result.data.summary);
-} else {
-  console.error("Invalid report:", result.error.issues);
+try {
+  const report = Schema.decodeUnknownSync(AgentReport)(JSON.parse(raw));
+  console.log("Valid report:", report.summary);
+} catch (error) {
+  console.error("Invalid report:", error);
 }
+```
+
+## Programmatic Cache Access
+
+For consumers who want to read cached data via Effect services, the
+package exports `CacheReader` and `CacheReaderLive`:
+
+```typescript
+import {
+  CacheReader,
+  CacheReaderLive,
+  CacheError,
+} from "vitest-agent-reporter";
+import { Effect, Layer } from "effect";
+import { NodeFileSystem } from "@effect/platform-node";
+
+const program = Effect.gen(function* () {
+  const reader = yield* CacheReader;
+  const manifest = yield* reader.readManifest("/path/to/cache");
+  // ... process manifest and reports
+});
+
+const live = CacheReaderLive.pipe(
+  Layer.provideMerge(NodeFileSystem.layer),
+);
+
+await Effect.runPromise(Effect.provide(program, live));
 ```
 
 ## Schema Reference
@@ -156,10 +173,10 @@ The top-level report written per project:
     skipped: number;
     duration: number;         // wall-clock milliseconds
   };
-  failed: ModuleReport[];    // only modules with failures
+  failed: ModuleReport[];     // only modules with failures
   unhandledErrors: ReportError[];
-  failedFiles: string[];     // quick index of relative paths
-  coverage?: CoverageReport; // present when coverage enabled
+  failedFiles: string[];      // quick index of relative paths
+  coverage?: CoverageReport;  // present when coverage enabled
 }
 ```
 
@@ -190,7 +207,7 @@ An individual test case:
   flaky?: boolean;           // passed after retry
   slow?: boolean;            // exceeded slowTestThreshold
   errors?: ReportError[];
-  classification?: TestClassification;  // Phase 3
+  classification?: TestClassification;
 }
 ```
 
@@ -215,6 +232,8 @@ An individual test case:
     lines: number;
   };
   threshold: number;         // configured threshold
+  scoped: boolean;           // true when filtered to tested files
+  scopedFiles?: string[];    // files in scope (when scoped)
   lowCoverage: FileCoverageReport[];  // files below threshold
   lowCoverageFiles: string[];         // quick index of paths
 }
@@ -251,15 +270,41 @@ An individual test case:
 {
   project: string;           // project name
   reportFile: string;        // relative path: "reports/default.json"
-  historyFile?: string;      // Phase 3
+  historyFile?: string;      // "history/default.history.json"
   lastRun: string | null;    // ISO 8601 or null before first run
   lastResult: "passed" | "failed" | "interrupted" | null;
 }
 ```
 
-### TestClassification
+### HistoryRecord
 
-Failure history classification (Phase 3):
+```typescript
+{
+  project: string;
+  updatedAt: string;         // ISO 8601
+  tests: TestHistory[];
+}
+```
+
+### TestHistory
+
+```typescript
+{
+  fullName: string;          // matches TestReport.fullName
+  runs: TestRun[];           // sliding window, most recent first, max 10
+}
+```
+
+### TestRun
+
+```typescript
+{
+  timestamp: string;         // ISO 8601
+  state: "passed" | "failed";
+}
+```
+
+### TestClassification
 
 ```typescript
 "stable" | "new-failure" | "persistent" | "flaky" | "recovered"

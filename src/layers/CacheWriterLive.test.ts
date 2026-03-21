@@ -20,6 +20,32 @@ describe("CacheWriter", () => {
 		expect(state.dirs).toContain("/tmp/cache");
 	});
 
+	it("writeHistory stores history JSON in state", async () => {
+		const state = CacheWriterTest.empty();
+		const history = {
+			project: "core",
+			updatedAt: "2026-03-21T00:00:00.000Z",
+			tests: [
+				{
+					fullName: "Suite > my test",
+					runs: [{ timestamp: "2026-03-21T00:00:00.000Z", state: "failed" as const }],
+				},
+			],
+		};
+		await Effect.runPromise(
+			Effect.provide(
+				Effect.flatMap(CacheWriter, (w) => w.writeHistory("/tmp/cache", "core", history)),
+				CacheWriterTest.layer(state),
+			),
+		);
+		expect(state.histories.has("/tmp/cache/history/core.history.json")).toBe(true);
+		const raw = state.histories.get("/tmp/cache/history/core.history.json");
+		expect(raw).toBeDefined();
+		const stored = JSON.parse(raw as string);
+		expect(stored.project).toBe("core");
+		expect(stored.tests).toHaveLength(1);
+	});
+
 	it("writeReport stores JSON in state", async () => {
 		const state = CacheWriterTest.empty();
 		const report = {
@@ -130,6 +156,38 @@ describe("CacheWriterLive", () => {
 		);
 
 		expect(fs.existsSync(targetDir)).toBe(true);
+
+		fs.rmSync(tmpDir, { recursive: true });
+	});
+
+	it("writes history to disk (directory must exist)", async () => {
+		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cw-test-"));
+		fs.mkdirSync(path.join(tmpDir, "history"), { recursive: true });
+
+		const layer = CacheWriterLive.pipe(Layer.provide(NodeFileSystem.layer));
+		const history = {
+			project: "test-project",
+			updatedAt: "2026-03-21T00:00:00.000Z",
+			tests: [
+				{
+					fullName: "Suite > a test",
+					runs: [{ timestamp: "2026-03-21T00:00:00.000Z", state: "passed" as const }],
+				},
+			],
+		};
+
+		await Effect.runPromise(
+			Effect.provide(
+				Effect.flatMap(CacheWriter, (w) => w.writeHistory(tmpDir, "test-project", history)),
+				layer,
+			),
+		);
+
+		const filePath = path.join(tmpDir, "history", "test-project.history.json");
+		expect(fs.existsSync(filePath)).toBe(true);
+		const content = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+		expect(content.project).toBe("test-project");
+		expect(content.tests).toHaveLength(1);
 
 		fs.rmSync(tmpDir, { recursive: true });
 	});

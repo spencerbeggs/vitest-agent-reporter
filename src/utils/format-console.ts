@@ -145,7 +145,8 @@ export function formatConsoleMarkdown(report: AgentReport, options: ConsoleForma
 			// Failed tests
 			const failedTests = mod.tests.filter((t) => t.state === "failed");
 			for (const test of failedTests) {
-				lines.push(`- ${ansi("\u2717", "red", ao)} **${test.fullName}**`);
+				const label = test.classification ? ` [${test.classification}]` : "";
+				lines.push(`- ${ansi("\u2717", "red", ao)} **${test.fullName}**${label}`);
 				if (test.errors && test.errors.length > 0) {
 					for (const err of test.errors) {
 						lines.push(`  ${ansi(err.message, "dim", ao)}`);
@@ -185,11 +186,44 @@ export function formatConsoleMarkdown(report: AgentReport, options: ConsoleForma
 		lines.push("### Next steps");
 		lines.push("");
 		if (hasFailures) {
+			// Collect classifications from failed tests
+			const allFailedTests = report.failed.flatMap((m) => m.tests.filter((t) => t.state === "failed"));
+			const newFailures = allFailedTests.filter((t) => t.classification === "new-failure");
+			const persistent = allFailedTests.filter((t) => t.classification === "persistent");
+			const flaky = allFailedTests.filter((t) => t.classification === "flaky");
+			const hasClassifications = newFailures.length > 0 || persistent.length > 0 || flaky.length > 0;
+
+			if (newFailures.length > 0) {
+				const files = [
+					...new Set(
+						report.failed
+							.filter((m) => m.tests.some((t) => t.classification === "new-failure"))
+							.map((m) => relativePath(m.file)),
+					),
+				];
+				lines.push(
+					`- Fix ${newFailures.length} new failure${newFailures.length > 1 ? "s" : ""} in ${files.map((f) => `\`${f}\``).join(", ")} (likely caused by recent changes)`,
+				);
+			}
+			if (persistent.length > 0) {
+				lines.push(
+					`- ${persistent.length} persistent failure${persistent.length > 1 ? "s" : ""} (pre-existing, may not be yours)`,
+				);
+			}
+			if (flaky.length > 0) {
+				lines.push(`- ${flaky.length} flaky test${flaky.length > 1 ? "s" : ""} (may pass on retry)`);
+			}
+
 			for (const file of report.failedFiles) {
 				lines.push(`- Re-run: \`vitest run ${relativePath(file)}\``);
 			}
-		}
-		if (options.cacheFile) {
+			if (options.cacheFile) {
+				lines.push(`- Full report: \`${options.cacheFile}\``);
+			}
+			if (hasClassifications) {
+				lines.push(`- Run \`vitest-agent-reporter history\` for failure trends`);
+			}
+		} else if (options.cacheFile) {
 			lines.push(`- Full report: \`${options.cacheFile}\``);
 		}
 		lines.push("");

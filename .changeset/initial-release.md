@@ -14,10 +14,12 @@
   strategies: `"complement"` (default) layers on Vitest's built-in agent
   reporter, adding JSON cache and manifest; `"own"` takes over console
   output entirely, stripping built-in reporters.
-- **CLI bin** (`vitest-agent-reporter`) with three on-demand commands:
+- **CLI bin** (`vitest-agent-reporter`) with four on-demand commands:
   - `status` -- per-project pass/fail state from cached results
   - `overview` -- test landscape summary with file-to-test mapping
   - `coverage` -- coverage gap analysis using thresholds from cached reports
+  - `history` -- failure trend analysis with P/F visualization, flaky
+    detection, and persistent failure tracking
 - **Agent detection** via `std-env` (covers Claude Code, Cursor, Gemini
   CLI, Codex, Devin, Augment, Goose, Kiro, and more)
 - **Coverage integration** with istanbul duck-typing (works with both
@@ -36,3 +38,9 @@
 - **Coverage thresholds** read from Vitest config automatically
 - **Compact console output** with failure details, error diffs, coverage
   gaps with uncovered line ranges, and re-run commands
+- **Failure history** -- per-test pass/fail tracking across runs in a
+  10-run sliding window with automatic classification: `new-failure`,
+  `persistent`, `flaky`, `recovered`, `stable`
+- **Classification-driven suggestions** -- console output labels failed
+  tests with their classification and provides prioritized next steps
+  (new failures first, then persistent, then flaky)

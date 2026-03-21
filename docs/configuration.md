@@ -35,6 +35,13 @@ When `mode` is `"auto"`, the plugin checks environment variables to determine
 the runtime context. See [Agent Detection](#agent-detection) for the full
 list.
 
+### `consoleStrategy`
+
+| Value | Behavior |
+| --- | --- |
+| `"complement"` (default) | Layer on Vitest's built-in `agent` reporter. Adds JSON cache and manifest only. Does not strip any reporters from the chain. |
+| `"own"` | Take over console output entirely. Strips built-in console reporters (including `agent`), uses this reporter's markdown formatter, and writes its own GFM. |
+
 ### `reporter`
 
 Nested reporter options passed through to `AgentReporter`. The plugin manages
@@ -175,8 +182,10 @@ This is useful for:
 
 ## Agent Detection
 
-When `mode` is `"auto"`, the plugin checks these environment variables in
-order. The first match wins:
+When `mode` is `"auto"`, the plugin uses
+[std-env](https://github.com/nicolo-ribaudo/std-env) for agent detection.
+The following environment variables are checked (list maintained by
+`std-env` and may expand as new agents are added):
 
 | Variable | Value | Agent |
 | --- | --- | --- |

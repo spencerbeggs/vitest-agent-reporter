@@ -6,22 +6,46 @@ repository.
 ## Project Status
 
 `vitest-agent-reporter` is a Vitest reporter and plugin for LLM coding agents.
-Phase 1 is complete. Two primary exports:
+Phases 1-3 are complete. Four primary capabilities:
 
 1. **`AgentReporter`** -- Vitest Reporter producing structured markdown
    (console), persistent JSON (disk), and optional GFM (GitHub Actions)
 2. **`AgentPlugin`** -- Vitest plugin that injects `AgentReporter` with
    three-environment detection (agent/CI/human), reporter chain management,
    cache directory resolution, and coverage threshold extraction
+3. **`vitest-agent-reporter` CLI** -- `@effect/cli`-based bin with `status`,
+   `overview`, `coverage`, and `history` subcommands for on-demand test
+   landscape queries
+4. **Suggested actions & failure history** -- actionable suggestions in
+   console output, per-test failure persistence across runs, and test
+   classification (`stable`, `new-failure`, `persistent`, `flaky`,
+   `recovered`) for regression vs flake detection
 
-All data structures use Zod 4 schemas (`schemas.ts`) with `z.infer<>` types
-and `z.codec()` for JSON encode/decode. Schemas are part of the public API.
+Effect service architecture: all I/O encapsulated in six Effect services
+(AgentDetection, CacheWriter, CacheReader, CoverageAnalyzer, ProjectDiscovery,
+HistoryTracker) with live and test layer implementations. All data structures
+use Effect Schema
+definitions (`src/schemas/`) with `typeof Schema.Type` for TypeScript types and
+`Schema.decodeUnknown`/`Schema.encodeUnknown` for JSON encode/decode. Schemas
+are part of the public API.
+
+Source layout: `src/services/` (Effect tags), `src/layers/` (live + test),
+`src/schemas/` (Effect Schema definitions), `src/utils/` (pure functions),
+`src/cli/` (commands + lib), `src/errors/` (tagged errors).
 
 **Spec:** [GitHub Issue #1](https://github.com/spencerbeggs/vitest-agent-reporter/issues/1)
 
-**For architecture details:**
+**For architecture details (progressive loading -- load only what you need):**
 → @./.claude/design/vitest-agent-reporter/architecture.md
-Load when working on reporter architecture, output formatting, or caching.
+  Hub document with overview, diagram, and component summary.
+→ @./.claude/design/vitest-agent-reporter/components.md
+  Load when working on specific components, need API details or interfaces.
+→ @./.claude/design/vitest-agent-reporter/decisions.md
+  Load when you need to understand "why" a design choice was made.
+→ @./.claude/design/vitest-agent-reporter/data-structures.md
+  Load when working with schemas, cache format, output, or data flow.
+→ @./.claude/design/vitest-agent-reporter/testing-and-phases.md
+  Load when writing tests, reviewing coverage, or checking phase status.
 
 ## Build Pipeline
 
