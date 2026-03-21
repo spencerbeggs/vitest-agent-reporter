@@ -1,5 +1,11 @@
 # vitest-agent-reporter
 
+## 0.2.0
+
+### Bug Fixes
+
+* [`73b0c82`](https://github.com/spencerbeggs/vitest-agent-reporter/commit/73b0c82388780520ae91b6d81996c41953e68b03) Forgot to link the cli correctly, my bad
+
 ## 0.1.0
 
 ### Features
