@@ -35,13 +35,14 @@ vitest-agent-reporter/
 │   ├── plugin.ts               # AgentPlugin function
 │   ├── cli/
 │   │   ├── index.ts            # CLI entry point (runCli)
-│   │   ├── commands/           # Thin command wrappers (status, overview, coverage)
+│   │   ├── commands/           # Thin command wrappers (status, overview, coverage, history)
 │   │   └── lib/                # Testable formatting logic for each command
 │   ├── services/
 │   │   ├── AgentDetection.ts   # std-env wrapper for environment detection
-│   │   ├── CacheWriter.ts      # Write reports and manifest to disk
-│   │   ├── CacheReader.ts      # Read reports and manifest from disk
+│   │   ├── CacheWriter.ts      # Write reports, manifest, and history to disk
+│   │   ├── CacheReader.ts      # Read reports, manifest, and history from disk
 │   │   ├── CoverageAnalyzer.ts # Coverage processing with scoped support
+│   │   ├── HistoryTracker.ts   # Test classification from failure history
 │   │   └── ProjectDiscovery.ts # Test file discovery via globs
 │   ├── layers/
 │   │   ├── *Live.ts            # Production implementations (Node.js I/O)
@@ -55,6 +56,7 @@ vitest-agent-reporter/
 │   │   ├── AgentReport.ts      # Report, module, and test schemas
 │   │   ├── CacheManifest.ts    # Manifest and entry schemas
 │   │   ├── Coverage.ts         # Coverage report and totals schemas
+│   │   ├── History.ts          # History record, test history, test run schemas
 │   │   ├── Options.ts          # Reporter and plugin option schemas
 │   │   └── Common.ts           # Shared literals (TestState, TestRunReason, etc.)
 │   └── utils/

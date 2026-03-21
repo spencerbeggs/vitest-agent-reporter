@@ -1,6 +1,7 @@
 import { FileSystem } from "@effect/platform";
 import { Effect, Layer } from "effect";
 import { CacheError } from "../errors/CacheError.js";
+import type { HistoryRecord } from "../schemas/History.js";
 import { CacheWriter } from "../services/CacheWriter.js";
 import { safeFilename } from "../utils/safe-filename.js";
 
@@ -45,6 +46,21 @@ export const CacheWriterLive: Layer.Layer<CacheWriter, never, FileSystem.FileSys
 							new CacheError({
 								operation: "mkdir",
 								path: cacheDir,
+								reason: String(error),
+							}),
+					),
+				),
+			writeHistory: (cacheDir: string, projectName: string, history: HistoryRecord) =>
+				Effect.gen(function* () {
+					const json = JSON.stringify(history, null, 2);
+					const filePath = `${cacheDir}/history/${safeFilename(projectName)}.history.json`;
+					yield* fs.writeFileString(filePath, json);
+				}).pipe(
+					Effect.mapError(
+						(error) =>
+							new CacheError({
+								operation: "write",
+								path: `${cacheDir}/history/${safeFilename(projectName)}.history.json`,
 								reason: String(error),
 							}),
 					),

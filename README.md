@@ -18,10 +18,15 @@ caching, coverage analysis, and CLI tooling on top.
   reporter by default, or takes over console output entirely
 - **Persistent JSON cache** -- per-project reports with a manifest for
   selective reading
-- **CLI bin** -- query test status, coverage gaps, and test landscape from
-  the command line
+- **CLI bin** -- query test status, coverage gaps, test landscape, and
+  failure history from the command line
 - **Coverage gaps** -- flags files below threshold with uncovered line
   ranges, with scoped coverage for partial test runs
+- **Failure history tracking** -- persists per-test failure data across
+  runs to distinguish new failures, persistent failures, flaky tests, and
+  recovered tests
+- **Test classification** -- each test is classified as `stable`,
+  `new-failure`, `persistent`, `flaky`, or `recovered` based on run history
 - **GitHub Actions GFM** -- writes structured summaries to
   `GITHUB_STEP_SUMMARY` automatically in CI
 
@@ -90,8 +95,7 @@ layers on top of Vitest's built-in `agent` reporter -- adding JSON cache and
 manifest while letting Vitest handle console suppression and GFM.
 
 In **agent mode** with `consoleStrategy: "own"`, built-in console reporters
-are suppressed and replaced with the compact markdown output (Phase 1
-behavior).
+are suppressed and replaced with the compact markdown output.
 
 In **CI mode**, your existing reporters stay active. The plugin adds GFM
 output to `GITHUB_STEP_SUMMARY` for job summary display.
@@ -113,197 +117,26 @@ npx vitest-agent-reporter overview
 
 # Coverage gap analysis (uses threshold from cached reports)
 npx vitest-agent-reporter coverage
+
+# Failure history with test classification across runs
+npx vitest-agent-reporter history
 ```
 
 All commands accept `--cache-dir, -d` to specify the cache directory. When
 omitted, the CLI checks common locations automatically.
 
-## Cache and JSON Reports
+## Documentation
 
-All output lives under a single cache directory (default:
-`node_modules/.cache/vitest-agent-reporter/`):
+For detailed guides on configuration, direct reporter usage, schemas,
+and more:
 
-```text
-node_modules/.cache/vitest-agent-reporter/
-  manifest.json              # project index
-  reports/
-    default.json             # single-repo report
-    core__unit.json           # monorepo: per-project reports
-    api__integration.json
-```
-
-**Manifest-first read pattern:** agents read `manifest.json` once to find
-failing projects, then open only those report files:
-
-```json
-{
-  "updatedAt": "2025-01-15T10:30:00.000Z",
-  "cacheDir": "node_modules/.cache/vitest-agent-reporter",
-  "projects": [
-    {
-      "project": "default",
-      "reportFile": "reports/default.json",
-      "lastRun": "2025-01-15T10:30:00.000Z",
-      "lastResult": "failed"
-    }
-  ]
-}
-```
-
-Each report file contains structured test results:
-
-```json
-{
-  "timestamp": "2025-01-15T10:30:00.000Z",
-  "reason": "failed",
-  "summary": {
-    "total": 12, "passed": 10, "failed": 2, "skipped": 0, "duration": 520
-  },
-  "failed": [
-    {
-      "file": "src/utils.test.ts",
-      "state": "failed",
-      "duration": 45,
-      "tests": [
-        {
-          "name": "compresses consecutive lines",
-          "fullName": "compressLines > compresses consecutive lines",
-          "state": "failed",
-          "errors": [
-            { "message": "Expected \"1-3,5\" but received \"1,2,3,5\"" }
-          ]
-        }
-      ]
-    }
-  ],
-  "unhandledErrors": [],
-  "failedFiles": ["src/utils.test.ts"]
-}
-```
-
-## Configuration
-
-### AgentPlugin Options
-
-```typescript
-AgentPlugin({
-  mode: "auto",              // "auto" | "agent" | "silent"
-  consoleStrategy: "complement", // "complement" | "own"
-  reporter: {
-    cacheDir: undefined,         // custom cache directory path
-    coverageThreshold: 0,        // flag files below this % (0 = use vitest config)
-    coverageConsoleLimit: 10,    // max low-coverage files in console output
-    omitPassingTests: true,      // exclude passing tests from JSON reports
-    includeBareZero: false,      // include files with all metrics at 0%
-    githubSummaryFile: undefined // override GITHUB_STEP_SUMMARY path
-  },
-});
-```
-
-| Option | Type | Default | Description |
-| --- | --- | --- | --- |
-| `mode` | `"auto"` `"agent"` `"silent"` | `"auto"` | Force a specific mode instead of auto-detecting |
-| `consoleStrategy` | `"complement"` `"own"` | `"complement"` | Layer on Vitest's agent reporter or take over console output |
-| `reporter.cacheDir` | `string` | Vite's cacheDir | Override the cache directory path |
-| `reporter.coverageThreshold` | `number` | `0` | Flag files below this coverage percentage |
-| `reporter.coverageConsoleLimit` | `number` | `10` | Max low-coverage files shown in console |
-| `reporter.omitPassingTests` | `boolean` | `true` | Exclude passing tests from JSON reports |
-| `reporter.includeBareZero` | `boolean` | `false` | Include files where all metrics are 0% |
-| `reporter.githubSummaryFile` | `string` | `GITHUB_STEP_SUMMARY` env var | Override the GFM output file path |
-
-### Console Strategy
-
-- **`"complement"`** (default) -- lets Vitest's built-in `agent` reporter
-  handle console suppression and GFM summaries. This reporter adds JSON
-  cache and manifest only. Does not strip any reporters from the chain.
-
-- **`"own"`** -- takes over console output entirely. Strips built-in
-  console reporters (including `agent`), uses this reporter's markdown
-  formatter, and writes its own GFM. This was the default behavior in
-  Phase 1.
-
-### Cache Directory Resolution
-
-The cache directory is resolved in this priority order:
-
-1. Explicit `reporter.cacheDir` option
-2. `outputFile['vitest-agent-reporter']` from Vitest config
-3. Vite's `cacheDir` + `/vitest-agent-reporter` (default)
-
-## Direct Reporter Usage
-
-If you prefer not to use the plugin, configure `AgentReporter` directly:
-
-```typescript
-import { AgentReporter } from "vitest-agent-reporter";
-import { defineConfig } from "vitest/config";
-
-export default defineConfig({
-  test: {
-    reporters: [
-      new AgentReporter({
-        cacheDir: ".vitest-agent-reporter",
-        consoleOutput: "failures",
-        coverageThreshold: 80,
-      }),
-    ],
-  },
-});
-```
-
-See [AgentReporterOptions](#agentplugin-options) for all configuration options.
-
-## Programmatic Cache Access
-
-For consumers who want to read cached reports programmatically, the package
-exports `CacheReader` and `CacheReaderLive` (Effect services):
-
-```typescript
-import { CacheReader, CacheReaderLive, CacheError } from "vitest-agent-reporter";
-import { Effect, Layer } from "effect";
-import { NodeFileSystem } from "@effect/platform-node";
-
-const program = Effect.gen(function* () {
-  const reader = yield* CacheReader;
-  const manifest = yield* reader.readManifest("/path/to/cache");
-  // ... process manifest and reports
-});
-
-const live = CacheReaderLive.pipe(
-  Layer.provideMerge(NodeFileSystem.layer),
-);
-
-await Effect.runPromise(Effect.provide(program, live));
-```
-
-## GitHub Actions
-
-When `GITHUB_ACTIONS` is detected (or `githubActions: true` is set), the
-reporter writes GFM-formatted output to `GITHUB_STEP_SUMMARY`. This
-produces a job summary with:
-
-- Pass/fail counts in a summary table
-- Collapsible per-project details (monorepo)
-- Coverage tables with threshold warnings
-- Diff-fenced code blocks for assertion failures
-
-No workflow configuration needed -- it works automatically in any GitHub
-Actions job that runs vitest.
-
-## Schemas
-
-All data structures are defined as [Effect Schema](https://effect.website/docs/schema/introduction)
-definitions. Import them for programmatic report validation:
-
-```typescript
-import { AgentReport, CacheManifest } from "vitest-agent-reporter";
-import { Schema } from "effect";
-
-const parsed = Schema.decodeUnknownSync(AgentReport)(rawData);
-```
-
-See the [Effect Schema docs](https://effect.website/docs/schema/introduction)
-for more on schema usage.
+| Guide | Description |
+| --- | --- |
+| [Configuration](./docs/configuration.md) | Plugin and reporter options, cache resolution, coverage thresholds |
+| [Direct Reporter Usage](./docs/reporter.md) | Using `AgentReporter` without the plugin |
+| [Schemas](./docs/schemas.md) | Effect Schema definitions, programmatic validation |
+| [CLI Commands](./docs/cli.md) | Status, overview, coverage, and history commands |
+| [Failure History](./docs/history.md) | Test classification and failure tracking |
 
 ## Requirements
 

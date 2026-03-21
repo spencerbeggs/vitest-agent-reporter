@@ -1,6 +1,7 @@
 import { Effect, Layer, Option, Schema } from "effect";
 import { AgentReport } from "../schemas/AgentReport.js";
 import { CacheManifest } from "../schemas/CacheManifest.js";
+import { HistoryRecord } from "../schemas/History.js";
 import { CacheReader } from "../services/CacheReader.js";
 
 export const CacheReaderTest = {
@@ -28,6 +29,15 @@ export const CacheReaderTest = {
 					return Array.from(data.keys())
 						.filter((k) => k.startsWith(prefix))
 						.map((k) => k.slice(prefix.length));
+				}),
+			readHistory: (cacheDir, projectName) =>
+				Effect.sync(() => {
+					const key = `${cacheDir}/history/${projectName}.history.json`;
+					const content = data.get(key);
+					if (!content) {
+						return { project: projectName, updatedAt: "", tests: [] };
+					}
+					return Schema.decodeUnknownSync(HistoryRecord)(JSON.parse(content));
 				}),
 		}),
 } as const;

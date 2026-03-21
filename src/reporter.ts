@@ -16,6 +16,8 @@ import type { CacheManifestEntry } from "./schemas/CacheManifest.js";
 import type { AgentReporterOptions } from "./schemas/Options.js";
 import { CacheWriter } from "./services/CacheWriter.js";
 import { CoverageAnalyzer } from "./services/CoverageAnalyzer.js";
+import type { TestOutcome } from "./services/HistoryTracker.js";
+import { HistoryTracker } from "./services/HistoryTracker.js";
 import type { VitestTestModule } from "./utils/build-report.js";
 import { buildAgentReport } from "./utils/build-report.js";
 import { formatConsoleMarkdown, relativePath } from "./utils/format-console.js";
@@ -159,10 +161,12 @@ export class AgentReporter {
 	 * 2. Group test modules by `testModule.project.name`
 	 * 3. Process stashed coverage data (if available)
 	 * 4. Build per-project {@link AgentReport} objects
-	 * 5. Write per-project JSON files to `reports/` subdirectory
-	 * 6. Write/update `manifest.json` at cache root
-	 * 7. Emit console markdown (unless `"silent"`)
-	 * 8. Write GFM summary to `GITHUB_STEP_SUMMARY` (if GitHub Actions)
+	 * 5. Classify tests via HistoryTracker and attach classifications
+	 * 6. Write per-project JSON files to `reports/` subdirectory
+	 * 7. Write per-project history files to `history/` subdirectory
+	 * 8. Write/update `manifest.json` at cache root
+	 * 9. Emit console markdown (unless `"silent"`)
+	 * 10. Write GFM summary to `GITHUB_STEP_SUMMARY` (if GitHub Actions)
 	 *
 	 * File write failures are logged to stderr but do not crash the test run.
 	 *
@@ -185,9 +189,11 @@ export class AgentReporter {
 		const program = Effect.gen(function* () {
 			const writer = yield* CacheWriter;
 			const analyzer = yield* CoverageAnalyzer;
+			const tracker = yield* HistoryTracker;
 
 			// Ensure cache directory structure
 			yield* writer.ensureDir(`${opts.cacheDir}/reports`);
+			yield* writer.ensureDir(`${opts.cacheDir}/history`);
 
 			// Group modules by project name
 			const projectGroups = new Map<string, VitestTestModule[]>();
@@ -226,21 +232,56 @@ export class AgentReporter {
 					isMultiProject ? projectName : undefined,
 				);
 
+				// Extract test outcomes for history classification (separate generator iteration)
+				const testOutcomes: TestOutcome[] = [];
+				for (const mod of projectModules) {
+					for (const testCase of mod.children.allTests()) {
+						const state = testCase.result().state;
+						if (state === "passed" || state === "failed") {
+							testOutcomes.push({ fullName: testCase.fullName, state });
+						}
+					}
+				}
+
+				// Classify tests via history and attach classifications to failed test reports
+				const { history, classifications } = yield* tracker.classify(
+					opts.cacheDir,
+					projectName,
+					testOutcomes,
+					baseReport.timestamp,
+				);
+
+				// Schema types are readonly -- rebuild failed array with classifications applied
+				const failedWithClassifications = baseReport.failed.map((mod) => ({
+					...mod,
+					tests: mod.tests.map((test) => {
+						const cls = classifications.get(test.fullName);
+						return cls ? { ...test, classification: cls } : test;
+					}),
+				}));
+				const classifiedReport: AgentReport = { ...baseReport, failed: failedWithClassifications };
+
 				// NOTE: Coverage is global, not per-project. In monorepos, each project
 				// report receives the same coverage data. Per-project filtering would
 				// require path-based heuristics. See architecture doc "Trade-off:
 				// Coverage Not Per-Project".
-				const report: AgentReport = coverageReport ? { ...baseReport, coverage: coverageReport } : baseReport;
+				const report: AgentReport = coverageReport
+					? { ...classifiedReport, coverage: coverageReport }
+					: classifiedReport;
 
 				reports.push(report);
 
 				// Write report via service
 				yield* writer.writeReport(opts.cacheDir, projectName, report);
 
+				// Write history via service
+				yield* writer.writeHistory(opts.cacheDir, projectName, history);
+
 				const filename = `${safeFilename(projectName)}.json`;
 				manifestEntries.push({
 					project: projectName,
 					reportFile: `reports/${filename}`,
+					historyFile: `history/${safeFilename(projectName)}.history.json`,
 					lastRun: report.timestamp,
 					lastResult: report.reason,
 				});

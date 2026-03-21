@@ -5,6 +5,7 @@ import { NodeFileSystem } from "@effect/platform-node";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import { CacheError } from "../errors/CacheError.js";
+import type { HistoryRecord } from "../schemas/History.js";
 import { CacheReader } from "../services/CacheReader.js";
 import { CacheReaderLive } from "./CacheReaderLive.js";
 import { CacheReaderTest } from "./CacheReaderTest.js";
@@ -270,6 +271,75 @@ describe("CacheReaderLive", () => {
 				expect(error.value.operation).toBe("read");
 			}
 		}
+
+		fs.rmSync(tmpDir, { recursive: true });
+	});
+
+	it("readHistory reads and decodes a valid history file", async () => {
+		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cr-history-"));
+		const historyDir = path.join(tmpDir, "history");
+		fs.mkdirSync(historyDir, { recursive: true });
+		const sampleHistory: HistoryRecord = {
+			project: "core",
+			updatedAt: "2026-03-20T00:00:00.000Z",
+			tests: [
+				{
+					fullName: "my test",
+					runs: [{ timestamp: "2026-03-20T00:00:00.000Z", state: "passed" }],
+				},
+			],
+		};
+		fs.writeFileSync(path.join(historyDir, "core.history.json"), JSON.stringify(sampleHistory));
+
+		const layer = CacheReaderLive.pipe(Layer.provide(NodeFileSystem.layer));
+
+		const result = await Effect.runPromise(
+			Effect.provide(
+				Effect.flatMap(CacheReader, (r) => r.readHistory(tmpDir, "core")),
+				layer,
+			),
+		);
+
+		expect(result.project).toBe("core");
+		expect(result.tests).toHaveLength(1);
+		expect(result.tests[0].fullName).toBe("my test");
+
+		fs.rmSync(tmpDir, { recursive: true });
+	});
+
+	it("readHistory returns empty HistoryRecord when file does not exist", async () => {
+		const layer = CacheReaderLive.pipe(Layer.provide(NodeFileSystem.layer));
+
+		const result = await Effect.runPromise(
+			Effect.provide(
+				Effect.flatMap(CacheReader, (r) => r.readHistory("/tmp/non-existent-cache-dir-xyz", "core")),
+				layer,
+			),
+		);
+
+		expect(result.project).toBe("core");
+		expect(result.updatedAt).toBe("");
+		expect(result.tests).toEqual([]);
+	});
+
+	it("readHistory returns empty HistoryRecord for corrupt JSON and logs warning", async () => {
+		const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cr-history-corrupt-"));
+		const historyDir = path.join(tmpDir, "history");
+		fs.mkdirSync(historyDir, { recursive: true });
+		fs.writeFileSync(path.join(historyDir, "core.history.json"), "not valid json {{{");
+
+		const layer = CacheReaderLive.pipe(Layer.provide(NodeFileSystem.layer));
+
+		const result = await Effect.runPromise(
+			Effect.provide(
+				Effect.flatMap(CacheReader, (r) => r.readHistory(tmpDir, "core")),
+				layer,
+			),
+		);
+
+		expect(result.project).toBe("core");
+		expect(result.updatedAt).toBe("");
+		expect(result.tests).toEqual([]);
 
 		fs.rmSync(tmpDir, { recursive: true });
 	});

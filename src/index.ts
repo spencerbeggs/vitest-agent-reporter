@@ -46,12 +46,18 @@ export {
 
 export { CoverageReport, CoverageTotals, FileCoverageReport } from "./schemas/Coverage.js";
 
+export { HistoryRecord, TestHistory, TestRun } from "./schemas/History.js";
+
 export { AgentPluginOptions, AgentReporterOptions } from "./schemas/Options.js";
 
-// --- Services (for programmatic cache access) ---
+// --- Services (for programmatic access) ---
 
 export { CacheReaderLive } from "./layers/CacheReaderLive.js";
+export { HistoryTrackerLive } from "./layers/HistoryTrackerLive.js";
+export { AgentDetection } from "./services/AgentDetection.js";
 export { CacheReader } from "./services/CacheReader.js";
+export type { TestOutcome } from "./services/HistoryTracker.js";
+export { HistoryTracker } from "./services/HistoryTracker.js";
 
 // --- Errors ---
 

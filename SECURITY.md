@@ -8,7 +8,7 @@
 
 ## Reporting a Vulnerability
 
-To report a security vulnerability, please email [security@beggs.codes](mailto:security@spencerbeg.gs).
+To report a security vulnerability, please email [security@beggs.codes](mailto:security@beggs.codes).
 
 Please include:
 

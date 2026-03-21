@@ -3,6 +3,7 @@ import { Effect, Layer, Option, Schema } from "effect";
 import { CacheError } from "../errors/CacheError.js";
 import { AgentReport } from "../schemas/AgentReport.js";
 import { CacheManifest } from "../schemas/CacheManifest.js";
+import { HistoryRecord } from "../schemas/History.js";
 import { CacheReader } from "../services/CacheReader.js";
 import { safeFilename } from "../utils/safe-filename.js";
 
@@ -114,6 +115,34 @@ export const CacheReaderLive: Layer.Layer<CacheReader, never, FileSystem.FileSys
 								),
 					),
 				),
+			readHistory: (cacheDir, projectName) => {
+				const filePath = `${cacheDir}/history/${safeFilename(projectName)}.history.json`;
+				const emptyRecord: HistoryRecord = {
+					project: projectName,
+					updatedAt: "",
+					tests: [],
+				};
+				return Effect.gen(function* () {
+					const content = yield* fs.readFileString(filePath);
+					return yield* Effect.try({
+						try: () => Schema.decodeUnknownSync(HistoryRecord)(JSON.parse(content)),
+						catch: () => {
+							process.stderr.write(`vitest-agent-reporter: corrupt history file ${filePath}, resetting\n`);
+							return emptyRecord;
+						},
+					});
+				}).pipe(
+					Effect.catchTag("SystemError", (error) =>
+						error.reason === "NotFound"
+							? Effect.succeed(emptyRecord)
+							: Effect.sync(() => {
+									process.stderr.write(`vitest-agent-reporter: error reading ${filePath}: ${error}\n`);
+									return emptyRecord;
+								}),
+					),
+					Effect.catchAll(() => Effect.succeed(emptyRecord)),
+				);
+			},
 		};
 	}),
 );

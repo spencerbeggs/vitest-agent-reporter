@@ -335,4 +335,80 @@ describe("AgentReporter", () => {
 			expect(apiReport.unhandledErrors).toHaveLength(1);
 		});
 	});
+
+	describe("history integration", () => {
+		it("writes history file alongside report", async () => {
+			const reporter = new AgentReporter({
+				cacheDir: tmpDir,
+				consoleOutput: "silent",
+			});
+
+			const passingTest = makeTestCase({ name: "passes", fullName: "Suite > passes", state: "passed" });
+			const failingTest = makeTestCase({
+				name: "fails",
+				fullName: "Suite > fails",
+				state: "failed",
+				errors: [{ message: "expected true to be false" }],
+			});
+
+			await reporter.onTestRunEnd([makeTestModule({ tests: [passingTest, failingTest] })], [], "failed");
+
+			const historyPath = path.join(tmpDir, "history", "default.history.json");
+			expect(fs.existsSync(historyPath)).toBe(true);
+
+			const history = JSON.parse(fs.readFileSync(historyPath, "utf-8"));
+			expect(history.project).toBe("default");
+			expect(history.tests).toHaveLength(2);
+
+			const testNames = history.tests.map((t: { fullName: string }) => t.fullName);
+			expect(testNames).toContain("Suite > passes");
+			expect(testNames).toContain("Suite > fails");
+		});
+
+		it("attaches classifications to failed test reports", async () => {
+			const reporter = new AgentReporter({
+				cacheDir: tmpDir,
+				consoleOutput: "silent",
+			});
+
+			const failingTest = makeTestCase({
+				name: "fails",
+				fullName: "Suite > fails",
+				state: "failed",
+				errors: [{ message: "expected true to be false" }],
+			});
+
+			await reporter.onTestRunEnd(
+				[
+					makeTestModule({
+						state: "failed",
+						tests: [failingTest],
+					}),
+				],
+				[],
+				"failed",
+			);
+
+			const reportPath = path.join(tmpDir, "reports", "default.json");
+			const report = JSON.parse(fs.readFileSync(reportPath, "utf-8"));
+
+			expect(report.failed).toHaveLength(1);
+			expect(report.failed[0].tests).toHaveLength(1);
+			expect(report.failed[0].tests[0].classification).toBe("new-failure");
+		});
+
+		it("populates historyFile in manifest entries", async () => {
+			const reporter = new AgentReporter({
+				cacheDir: tmpDir,
+				consoleOutput: "silent",
+			});
+
+			await reporter.onTestRunEnd([makeTestModule({ tests: [makeTestCase()] })], [], "passed");
+
+			const manifestPath = path.join(tmpDir, "manifest.json");
+			const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+
+			expect(manifest.projects[0].historyFile).toBe("history/default.history.json");
+		});
+	});
 });

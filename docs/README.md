@@ -10,7 +10,7 @@ pnpm add vitest-agent-reporter
 yarn add vitest-agent-reporter
 ```
 
-**Requirements:** Vitest >= 3.2.0 | Node.js >= 18
+**Requirements:** Vitest >= 4.1.0 | Node.js >= 22
 
 ## Setup
 
@@ -25,20 +25,24 @@ export default defineConfig({
 });
 ```
 
-The plugin auto-detects the environment:
+The plugin auto-detects the environment using
+[std-env](https://github.com/nicolo-ribaudo/std-env):
 
 | Environment | Detection | Behavior |
 | --- | --- | --- |
-| Agent | `CLAUDECODE`, `CURSOR_TRACE_ID`, `AI_AGENT`, etc. | Suppresses console reporters, shows structured markdown |
+| Agent | `std-env` agent detection (Claude Code, Cursor, Gemini CLI, Codex, etc.) | Structured markdown or complement mode |
 | CI | `GITHUB_ACTIONS`, `CI=true` | Keeps existing reporters, adds GFM to `GITHUB_STEP_SUMMARY` |
-| Human | No agent/CI vars | Keeps existing reporters, runs silently |
+| Human | No agent/CI detected | Keeps existing reporters, runs silently |
 
-JSON cache is always written regardless of environment.
+JSON cache and failure history are always written regardless of
+environment.
 
 ## Guides
 
 | Guide | Description |
 | --- | --- |
-| [Configuration](configuration.md) | All plugin and reporter options, cache directory resolution, coverage thresholds, environment detection override |
+| [Configuration](configuration.md) | Plugin and reporter options, console strategy, cache directory resolution, coverage thresholds, environment detection |
 | [Direct Reporter Usage](reporter.md) | Using `AgentReporter` without the plugin, lifecycle hooks, advanced configuration |
-| [Schemas & Codecs](schemas.md) | Working with Zod schemas, reading cache files, type inference, programmatic validation |
+| [Schemas](schemas.md) | Effect Schema definitions, reading cache files, type inference, programmatic validation |
+| [CLI Commands](cli.md) | Status, overview, coverage, and history commands |
+| [Failure History](history.md) | Test classification and failure tracking across runs |

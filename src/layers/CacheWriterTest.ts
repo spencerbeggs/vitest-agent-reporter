@@ -3,12 +3,14 @@ import { CacheWriter } from "../services/CacheWriter.js";
 
 export interface CacheWriterTestState {
 	readonly files: Map<string, string>;
+	readonly histories: Map<string, string>;
 	readonly dirs: string[];
 }
 
 export const CacheWriterTest = {
 	empty: (): CacheWriterTestState => ({
 		files: new Map(),
+		histories: new Map(),
 		dirs: [],
 	}),
 	layer: (state: CacheWriterTestState): Layer.Layer<CacheWriter> =>
@@ -25,6 +27,11 @@ export const CacheWriterTest = {
 			ensureDir: (cacheDir) =>
 				Effect.sync(() => {
 					state.dirs.push(cacheDir);
+				}),
+			writeHistory: (cacheDir, projectName, history) =>
+				Effect.sync(() => {
+					const path = `${cacheDir}/history/${projectName}.history.json`;
+					state.histories.set(path, JSON.stringify(history, null, 2));
 				}),
 		}),
 } as const;

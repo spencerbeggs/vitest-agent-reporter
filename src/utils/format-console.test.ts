@@ -308,4 +308,118 @@ describe("formatConsoleMarkdown", () => {
 		const result = formatConsoleMarkdown(reportWithModuleErrorsNoDiff, baseOptions);
 		expect(result).toContain("Cannot find module './missing'");
 	});
+
+	// --- Classification labels ---
+
+	it("shows classification label on failed test when present", () => {
+		const reportWithClassification: AgentReport = {
+			timestamp: "2024-01-01T00:00:00.000Z",
+			reason: "failed",
+			summary: { total: 2, passed: 1, failed: 1, skipped: 0, duration: 100 },
+			failed: [
+				{
+					file: "src/foo.test.ts",
+					state: "failed",
+					tests: [
+						{
+							name: "does something",
+							fullName: "Foo > does something",
+							state: "failed",
+							classification: "new-failure",
+							errors: [{ message: "expected 1 to equal 2" }],
+						},
+					],
+				},
+			],
+			unhandledErrors: [],
+			failedFiles: ["src/foo.test.ts"],
+		};
+		const result = formatConsoleMarkdown(reportWithClassification, baseOptions);
+		expect(result).toContain("[new-failure]");
+	});
+
+	it("does not show classification label when not present", () => {
+		const result = formatConsoleMarkdown(failingReport, baseOptions);
+		expect(result).not.toMatch(/\[new-failure\]/);
+		expect(result).not.toMatch(/\[persistent\]/);
+		expect(result).not.toMatch(/\[flaky\]/);
+	});
+
+	// --- Classification-based suggestions ---
+
+	it("shows new-failure and persistent suggestions with history hint", () => {
+		const reportWithMixed: AgentReport = {
+			timestamp: "2024-01-01T00:00:00.000Z",
+			reason: "failed",
+			summary: { total: 4, passed: 2, failed: 2, skipped: 0, duration: 200 },
+			failed: [
+				{
+					file: "src/bar.test.ts",
+					state: "failed",
+					tests: [
+						{
+							name: "new test",
+							fullName: "Bar > new test",
+							state: "failed",
+							classification: "new-failure",
+							errors: [{ message: "err" }],
+						},
+					],
+				},
+				{
+					file: "src/baz.test.ts",
+					state: "failed",
+					tests: [
+						{
+							name: "old test",
+							fullName: "Baz > old test",
+							state: "failed",
+							classification: "persistent",
+							errors: [{ message: "err" }],
+						},
+					],
+				},
+			],
+			unhandledErrors: [],
+			failedFiles: ["src/bar.test.ts", "src/baz.test.ts"],
+		};
+		const result = formatConsoleMarkdown(reportWithMixed, baseOptions);
+		expect(result).toContain("new failure");
+		expect(result).toContain("persistent failure");
+		expect(result).toContain("vitest-agent-reporter history");
+	});
+
+	it("shows flaky suggestion with retry hint", () => {
+		const reportWithFlaky: AgentReport = {
+			timestamp: "2024-01-01T00:00:00.000Z",
+			reason: "failed",
+			summary: { total: 2, passed: 1, failed: 1, skipped: 0, duration: 100 },
+			failed: [
+				{
+					file: "src/flaky.test.ts",
+					state: "failed",
+					tests: [
+						{
+							name: "unstable test",
+							fullName: "Flaky > unstable test",
+							state: "failed",
+							classification: "flaky",
+							errors: [{ message: "timeout" }],
+						},
+					],
+				},
+			],
+			unhandledErrors: [],
+			failedFiles: ["src/flaky.test.ts"],
+		};
+		const result = formatConsoleMarkdown(reportWithFlaky, baseOptions);
+		expect(result).toContain("flaky test");
+		expect(result).toContain("may pass on retry");
+		expect(result).toContain("vitest-agent-reporter history");
+	});
+
+	it("does not show history hint when no classifications present", () => {
+		const result = formatConsoleMarkdown(failingReport, baseOptions);
+		expect(result).not.toContain("vitest-agent-reporter history");
+	});
 });
