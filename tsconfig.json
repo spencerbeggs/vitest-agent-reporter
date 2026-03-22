@@ -1,3 +1,5 @@
 {
-	"extends": ["@savvy-web/rslib-builder/tsconfig/ecma/lib.json"]
+	"$schema": "https://json.schemastore.org/tsconfig.json",
+	"files": [],
+	"references": [{ "path": "./package" }, { "path": "./examples/basic" }]
 }

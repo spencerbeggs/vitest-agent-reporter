@@ -41,8 +41,8 @@ environment.
 
 | Guide | Description |
 | --- | --- |
-| [Configuration](configuration.md) | Plugin and reporter options, console strategy, cache directory resolution, coverage thresholds, environment detection |
+| [Configuration](configuration.md) | Plugin and reporter options, thresholds, targets, trends, cache resolution, environment detection |
 | [Direct Reporter Usage](reporter.md) | Using `AgentReporter` without the plugin, lifecycle hooks, advanced configuration |
 | [Schemas](schemas.md) | Effect Schema definitions, reading cache files, type inference, programmatic validation |
-| [CLI Commands](cli.md) | Status, overview, coverage, and history commands |
+| [CLI Commands](cli.md) | Status, overview, coverage, history, trends, cache, and doctor commands |
 | [Failure History](history.md) | Test classification and failure tracking across runs |

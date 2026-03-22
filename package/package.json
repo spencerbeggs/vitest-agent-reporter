@@ -1,0 +1,75 @@
+{
+	"name": "vitest-agent-reporter",
+	"version": "0.2.1",
+	"private": true,
+	"description": "A Vitest reporter that outputs structured markdown to console and persistent JSON to disk for LLM coding agents, with monorepo-aware caching via a Vite plugin.",
+	"keywords": ["vitest", "reporter", "llm", "ai", "agent", "testing", "coverage", "markdown", "github-actions"],
+	"homepage": "https://github.com/spencerbeggs/vitest-agent-reporter#readme",
+	"bugs": {
+		"url": "https://github.com/spencerbeggs/vitest-agent-reporter/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/spencerbeggs/vitest-agent-reporter.git",
+		"directory": "package"
+	},
+	"license": "MIT",
+	"author": {
+		"name": "C. Spencer Beggs",
+		"email": "spencer@beggs.codes",
+		"url": "https://spencerbeg.gs"
+	},
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"bin": {
+		"vitest-agent-reporter": "./src/cli/index.ts"
+	},
+	"scripts": {
+		"build:dev": "rslib build --config-loader native --env-mode dev",
+		"build:inspect": "rslib inspect --config-loader native --env-mode npm --verbose",
+		"build:prod": "rslib build --config-loader native --env-mode npm",
+		"types:check": "tsgo --noEmit"
+	},
+	"dependencies": {
+		"@effect/cli": "^0.75.0",
+		"@effect/platform": "^0.96.0",
+		"@effect/platform-node": "^0.106.0",
+		"effect": "^3.21.0",
+		"std-env": "^4.0.0"
+	},
+	"devDependencies": {
+		"@savvy-web/rslib-builder": "^0.19.0",
+		"vitest": "^4.1.0"
+	},
+	"peerDependencies": {
+		"vitest": ">=4.1.0"
+	},
+	"peerDependenciesMeta": {
+		"vitest": {
+			"optional": false
+		}
+	},
+	"publishConfig": {
+		"access": "public",
+		"directory": "dist/dev",
+		"linkDirectory": true,
+		"targets": [
+			{
+				"protocol": "npm",
+				"registry": "https://npm.pkg.github.com/",
+				"directory": "dist/github",
+				"access": "public",
+				"provenance": true
+			},
+			{
+				"protocol": "npm",
+				"registry": "https://registry.npmjs.org/",
+				"directory": "dist/npm",
+				"access": "public",
+				"provenance": true
+			}
+		]
+	}
+}

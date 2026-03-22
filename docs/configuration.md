@@ -15,7 +15,7 @@ export default defineConfig({
     AgentPlugin({
       mode: "auto",
       reporter: {
-        coverageThreshold: 80,
+        coverageThresholds: { lines: 80, branches: 80 },
         coverageConsoleLimit: 5,
       },
     }),
@@ -51,7 +51,9 @@ detection, so those fields are not available through the plugin interface.
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `cacheDir` | `string` | Vite's cacheDir | Override the cache directory path |
-| `coverageThreshold` | `number` | `0` | Flag files below this coverage percentage |
+| `coverageThresholds` | `object` | `{}` | Vitest-native threshold format (per-metric, per-glob) |
+| `coverageTargets` | `object` | -- | Aspirational coverage targets (same format as thresholds) |
+| `autoUpdate` | `boolean` | `true` when targets set | Auto-ratchet baselines when coverage improves |
 | `coverageConsoleLimit` | `number` | `10` | Max low-coverage files shown in console |
 | `omitPassingTests` | `boolean` | `true` | Exclude passing tests from JSON reports |
 | `includeBareZero` | `boolean` | `false` | Include files where all four metrics are 0% |
@@ -73,7 +75,7 @@ export default defineConfig({
         cacheDir: ".vitest-agent-reporter",
         consoleOutput: "failures",
         omitPassingTests: true,
-        coverageThreshold: 80,
+        coverageThresholds: { lines: 80, branches: 80 },
         coverageConsoleLimit: 10,
         includeBareZero: false,
         githubActions: false,
@@ -89,7 +91,9 @@ export default defineConfig({
 | `cacheDir` | `string` | `".vitest-agent-reporter"` | Directory for JSON cache files |
 | `consoleOutput` | `"failures"` `"full"` `"silent"` | `"failures"` | Console output verbosity |
 | `omitPassingTests` | `boolean` | `true` | Exclude passing tests from JSON reports |
-| `coverageThreshold` | `number` | `0` | Flag files below this coverage percentage |
+| `coverageThresholds` | `object` | `{}` | Vitest-native threshold format (see below) |
+| `coverageTargets` | `object` | -- | Aspirational coverage targets (same format) |
+| `autoUpdate` | `boolean` | `true` when targets set | Auto-ratchet baselines when coverage improves |
 | `coverageConsoleLimit` | `number` | `10` | Max low-coverage files shown in console |
 | `includeBareZero` | `boolean` | `false` | Include files where all four metrics are 0% |
 | `githubActions` | `boolean` | auto-detect | Force GFM output on/off |
@@ -119,25 +123,105 @@ node_modules/.cache/
       default.json
 ```
 
-## Coverage Threshold Behavior
+## Coverage Thresholds
 
-The `coverageThreshold` option controls which files appear in the coverage
-gaps section of console output and JSON reports.
+The `coverageThresholds` option uses Vitest's native threshold format. Files
+with any metric below their applicable threshold appear in the "Coverage gaps"
+section of console output and JSON reports.
 
-When using `AgentPlugin`, the threshold is resolved in this order:
+```typescript
+AgentPlugin({
+  reporter: {
+    // Per-metric thresholds
+    coverageThresholds: {
+      lines: 80,
+      branches: 75,
+      functions: 80,
+      statements: 80,
+    },
+  },
+});
+```
 
-1. **Explicit option** -- `reporter.coverageThreshold` in plugin options
-2. **Vitest config** -- minimum of `coverage.thresholds.lines`,
-   `.statements`, `.branches`, `.functions` from your Vitest config
-3. **Default** -- `0` (no files flagged)
+When using `AgentPlugin`, thresholds are resolved in this order:
 
-Setting `coverageThreshold: 80` means any file with any coverage metric
-below 80% will appear in the low-coverage list, sorted worst-first by
-line coverage.
+1. **Explicit option** -- `reporter.coverageThresholds` in plugin options
+2. **Vitest config** -- `coverage.thresholds` from your Vitest config
+3. **Default** -- `{}` (no files flagged)
+
+Per-glob patterns are also supported:
+
+```typescript
+coverageThresholds: {
+  lines: 80,
+  "src/utils/**": { lines: 90 },
+  "src/generated/**": { lines: 0 },
+}
+```
+
+Negative numbers specify maximum uncovered items (matching Vitest's format),
+and `100` enforces full coverage. The `perFile` boolean applies thresholds
+per file rather than in aggregate.
 
 **Bare-zero files** (all four metrics at 0%) are excluded by default. These
 are typically generated files, re-exports, or index files with no executable
 code. Set `includeBareZero: true` to include them.
+
+## Coverage Targets
+
+Targets represent aspirational coverage goals. Unlike thresholds, falling
+below a target does not produce a "red" failure -- it produces a "yellow"
+hint showing room for improvement.
+
+```typescript
+AgentPlugin({
+  reporter: {
+    coverageThresholds: { lines: 70 },   // hard floor
+    coverageTargets: { lines: 90 },      // aspirational goal
+  },
+});
+```
+
+The format is identical to `coverageThresholds` -- per-metric values and
+per-glob patterns are supported.
+
+### Auto-Ratcheting Baselines
+
+When `coverageTargets` is set, the reporter automatically tracks a
+high-water mark (baseline) for each metric. When coverage improves, the
+baseline ratchets up so it never regresses. Baselines are stored in
+`{cacheDir}/baselines.json`.
+
+Set `autoUpdate: false` to disable auto-ratcheting:
+
+```typescript
+AgentPlugin({
+  reporter: {
+    coverageTargets: { lines: 90 },
+    autoUpdate: false,
+  },
+});
+```
+
+## Coverage Trends
+
+The reporter records a coverage trend entry on each full test run. Trends
+are stored per project at `{cacheDir}/trends/{project}.trends.json` with a
+50-entry sliding window.
+
+Console output uses a three-tier system based on coverage state:
+
+| Tier | Condition | Console behavior |
+| --- | --- | --- |
+| Green | All tests pass, all targets met | Single success line with trend direction |
+| Yellow | All tests pass, some files below targets | "Room for improvement" section with target gaps |
+| Red | Test failures or files below thresholds | Standard failure output with coverage gaps |
+
+Use the CLI `trends` command for detailed trend analysis:
+
+```bash
+npx vitest-agent-reporter trends
+```
 
 ## Console Output Modes
 

@@ -1,13 +1,9 @@
 {
-	"name": "vitest-agent-reporter",
-	"version": "0.2.1",
+	"name": "vitest-agent-reporter-monorepo",
+	"version": "0.0.0",
 	"private": true,
-	"description": "A Vitest reporter that outputs structured markdown to console and persistent JSON to disk for LLM coding agents, with monorepo-aware caching via a Vite plugin.",
-	"keywords": ["vitest", "reporter", "llm", "ai", "agent", "testing", "coverage", "markdown", "github-actions"],
+	"description": "Monorepo for vitest-agent-reporter development",
 	"homepage": "https://github.com/spencerbeggs/vitest-agent-reporter#readme",
-	"bugs": {
-		"url": "https://github.com/spencerbeggs/vitest-agent-reporter/issues"
-	},
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/spencerbeggs/vitest-agent-reporter.git"
@@ -19,18 +15,9 @@
 		"url": "https://spencerbeg.gs"
 	},
 	"type": "module",
-	"exports": {
-		".": "./src/index.ts"
-	},
-	"bin": {
-		"vitest-agent-reporter": "./src/cli/index.ts"
-	},
 	"scripts": {
-		"build": "turbo run build:dev build:prod --log-order=grouped",
-		"build:dev": "rslib build --config-loader native --env-mode dev",
-		"build:inspect": "rslib inspect --config-loader native --env-mode npm --verbose",
-		"build:prod": "rslib build --config-loader native --env-mode npm",
-		"ci:build": "CI=\"true\" turbo run build:dev build:prod --log-order=grouped --output-logs=full",
+		"build": "turbo run build:dev build:prod --filter='./package' --log-order=grouped --log-prefix=none",
+		"ci:build": "CI=\"true\" turbo run build:dev build:prod --filter='./package' --log-order=grouped --output-logs=full",
 		"ci:test": "CI=\"true\" vitest run --coverage",
 		"ci:version": "savvy-changesets version && biome format --write .",
 		"commit:check": "savvy-commit check",
@@ -44,31 +31,17 @@
 		"test": "vitest run --coverage",
 		"test:coverage": "vitest run --coverage",
 		"test:watch": "vitest --watch",
-		"typecheck": "turbo run types:check --log-prefix=none --log-order=grouped",
-		"types:check": "tsgo --noEmit"
-	},
-	"dependencies": {
-		"@effect/cli": "^0.75.0",
-		"@effect/platform": "^0.96.0",
-		"@effect/platform-node": "^0.106.0",
-		"effect": "^3.21.0",
-		"std-env": "^4.0.0"
+		"typecheck": "turbo run types:check --log-prefix=none --log-order=grouped"
 	},
 	"devDependencies": {
 		"@savvy-web/changesets": "^0.5.3",
 		"@savvy-web/commitlint": "^0.4.2",
 		"@savvy-web/lint-staged": "^0.6.1",
-		"@savvy-web/rslib-builder": "^0.19.0",
 		"@savvy-web/vitest": "^0.3.0",
-		"vitest": "^4.1.0"
-	},
-	"peerDependencies": {
-		"vitest": ">=4.1.0"
-	},
-	"peerDependenciesMeta": {
-		"vitest": {
-			"optional": false
-		}
+		"@types/node": "catalog:silk",
+		"@typescript/native-preview": "catalog:silk",
+		"typescript": "catalog:silk",
+		"vitest-agent-reporter": "workspace:*"
 	},
 	"packageManager": "pnpm@10.32.1+sha512.a706938f0e89ac1456b6563eab4edf1d1faf3368d1191fc5c59790e96dc918e4456ab2e67d613de1043d2e8c81f87303e6b40d4ffeca9df15ef1ad567348f2be",
 	"devEngines": {
@@ -82,27 +55,6 @@
 				"name": "node",
 				"version": "24.11.0",
 				"onFail": "ignore"
-			}
-		]
-	},
-	"publishConfig": {
-		"access": "public",
-		"directory": "dist/dev",
-		"linkDirectory": true,
-		"targets": [
-			{
-				"protocol": "npm",
-				"registry": "https://npm.pkg.github.com/",
-				"directory": "dist/github",
-				"access": "public",
-				"provenance": true
-			},
-			{
-				"protocol": "npm",
-				"registry": "https://registry.npmjs.org/",
-				"directory": "dist/npm",
-				"access": "public",
-				"provenance": true
 			}
 		]
 	}
