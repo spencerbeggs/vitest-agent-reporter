@@ -1,6 +1,6 @@
 {
 	"name": "vitest-agent-reporter",
-	"version": "0.2.1",
+	"version": "0.3.0",
 	"private": true,
 	"description": "A Vitest reporter that outputs structured markdown to console and persistent JSON to disk for LLM coding agents, with monorepo-aware caching via a Vite plugin.",
 	"keywords": ["vitest", "reporter", "llm", "ai", "agent", "testing", "coverage", "markdown", "github-actions"],
@@ -33,10 +33,10 @@
 		"types:check": "tsgo --noEmit"
 	},
 	"dependencies": {
-		"@effect/cli": "^0.75.0",
-		"@effect/platform": "^0.96.0",
-		"@effect/platform-node": "^0.106.0",
-		"effect": "^3.21.0",
+		"@effect/cli": "catalog:silk",
+		"@effect/platform": "catalog:silk",
+		"@effect/platform-node": "catalog:silk",
+		"effect": "catalog:silk",
 		"std-env": "^4.0.0"
 	},
 	"devDependencies": {
