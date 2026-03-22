@@ -1,5 +1,11 @@
 # vitest-agent-reporter
 
+## 0.2.1
+
+### Bug Fixes
+
+* [`1f951fd`](https://github.com/spencerbeggs/vitest-agent-reporter/commit/1f951fd916f3d8f98e3dedcbccc282b8f35d0b60) Execute the cli with `@efffect/platform-node`
+
 ## 0.2.0
 
 ### Bug Fixes
