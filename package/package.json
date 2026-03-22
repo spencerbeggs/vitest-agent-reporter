@@ -33,10 +33,10 @@
 		"types:check": "tsgo --noEmit"
 	},
 	"dependencies": {
-		"@effect/cli": "^0.75.0",
-		"@effect/platform": "^0.96.0",
-		"@effect/platform-node": "^0.106.0",
-		"effect": "^3.21.0",
+		"@effect/cli": "catalog:silk",
+		"@effect/platform": "catalog:silk",
+		"@effect/platform-node": "catalog:silk",
+		"effect": "catalog:silk",
 		"std-env": "^4.0.0"
 	},
 	"devDependencies": {
