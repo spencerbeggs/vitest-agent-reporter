@@ -34,6 +34,7 @@ pnpm-release.json
 .claude/plans/
 .claude/plugins-debug.log
 .playwright-mcp
+docs/superpowers/
 
 # vitest-agent-reporter cache (standalone mode default; plugin mode uses node_modules/.vite/)
 .vitest-agent-reporter/

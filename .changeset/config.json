@@ -10,7 +10,7 @@
 	"access": "restricted",
 	"baseBranch": "main",
 	"updateInternalDependencies": "patch",
-	"ignore": [],
+	"ignore": ["example-basic"],
 	"privatePackages": {
 		"tag": true,
 		"version": true

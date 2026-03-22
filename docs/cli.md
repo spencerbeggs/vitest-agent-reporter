@@ -6,6 +6,51 @@ queries. It does not run tests or call AI providers.
 All commands accept `--cache-dir, -d` to specify the cache directory.
 When omitted, the CLI checks common locations automatically.
 
+## cache
+
+Manage the reporter cache directory.
+
+### cache path
+
+Print the resolved cache directory path and exit.
+
+```bash
+npx vitest-agent-reporter cache path
+```
+
+Useful for scripting or verifying which directory the CLI resolves to.
+
+### cache clean
+
+Delete the entire cache directory.
+
+```bash
+npx vitest-agent-reporter cache clean
+```
+
+Removes all cached reports, history, baselines, and trend data. Run
+tests again to regenerate.
+
+## doctor
+
+Diagnose cache health. Runs a series of checks and reports pass/fail
+for each:
+
+```bash
+npx vitest-agent-reporter doctor
+```
+
+Checks performed:
+
+- **Cache found** -- can the cache directory be resolved?
+- **Manifest valid** -- is `manifest.json` present and parseable?
+- **Reports** -- do all referenced report files exist and decode?
+- **History** -- do all referenced history files exist and decode?
+- **Last run** -- is the cache stale (older than 24 hours)?
+
+Exits with code 1 if any check fails. When issues are found, suggests
+running `vitest-agent-reporter cache clean` and re-running tests.
+
 ## status
 
 Show per-project pass/fail state from the most recent test run.
@@ -66,3 +111,27 @@ no interesting history to display.
 The history command is most useful when the console output hints at
 flaky or persistent failures. The console "Next steps" section includes
 a pointer to run this command when classifications are present.
+
+## trends
+
+Coverage trend analysis across runs.
+
+```bash
+npx vitest-agent-reporter trends
+```
+
+Reads per-project trend files and displays:
+
+- **Direction** -- whether coverage is improving, regressing, or stable
+  over recent runs
+- **Metrics table** -- current value, 5-run average, and (if targets are
+  configured) the target value and gap for each metric
+- **Recent trajectory** -- line coverage values over the last 10 runs,
+  showing the progression
+
+Trend data is recorded automatically on each full test run and stored in
+`{cacheDir}/trends/{project}.trends.json` with a 50-entry sliding window.
+
+The trends command is most useful when you want to verify whether a
+coverage change is a one-time dip or part of a pattern. The console
+output includes a pointer to this command when trend data is available.

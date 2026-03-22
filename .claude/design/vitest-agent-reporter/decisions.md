@@ -3,8 +3,8 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-03-21
-last-synced: 2026-03-20
+updated: 2026-03-22
+last-synced: 2026-03-22
 completeness: 90
 related:
   - vitest-agent-reporter/architecture.md
@@ -101,7 +101,7 @@ TypeScript and serializable to/from JSON files on disk.
 `z.infer<>` in `types.ts`, codecs via `z.codec()`.
 
 **Phase 2 approach (current):** Effect Schema definitions split across
-`src/schemas/` directory. TypeScript types derived via
+`package/src/schemas/` directory. TypeScript types derived via
 `typeof Schema.Type`. JSON encode/decode via `Schema.decodeUnknown` /
 `Schema.encodeUnknown`. Schemas are exported from the public API so
 consumers can validate report files.
@@ -247,6 +247,116 @@ should maximize signal-to-noise ratio.
 alongside `CacheWriter.writeReport` in `onTestRunEnd`. History files are
 always populated in `CacheManifestEntry.historyFile`.
 
+### Decision 14: Vitest-Native Threshold Format (Phase 4)
+
+**Context:** Phase 1-3 used a single `coverageThreshold: number` (minimum
+across all metrics). Vitest supports a richer format with per-metric
+thresholds, per-glob patterns, negative numbers (relative thresholds),
+`100` shorthand, and `perFile` mode.
+
+**Phase 3 approach:** `coverageThreshold: number` -- a single minimum
+extracted via `extractCoverageThreshold()` from Vitest's config.
+
+**Phase 4 approach (current):** `coverageThresholds` accepts the full
+Vitest thresholds format (`Record<string, unknown>`). Parsed by
+`resolveThresholds()` into a typed `ResolvedThresholds` structure with
+`global` (MetricThresholds), `perFile` (boolean), and `patterns`
+(PatternThresholds[]). `extractCoverageThreshold()` removed entirely.
+
+**Why changed:** The single-number approach lost per-metric granularity.
+Agents benefit from knowing exactly which metric is below threshold and
+by how much. The Vitest-native format means users can copy their existing
+coverage config directly into our plugin options without translation.
+
+**Breaking change:** `coverageThreshold: number` replaced by
+`coverageThresholds: Record<string, unknown>`. `CoverageReport.threshold`
+(number) replaced by `CoverageReport.thresholds` (object).
+
+### Decision 15: Three-Level Coverage Model (Phase 4)
+
+**Context:** Users need both hard enforcement (fail the build) and
+aspirational goals (track progress toward 100%). A single threshold
+serves one purpose but not both.
+
+**Chosen approach:** Three levels:
+
+1. **Thresholds** (`coverageThresholds`) -- enforced minimums. Same as
+   Vitest's `coverage.thresholds`. Violations are reported as failures
+2. **Targets** (`coverageTargets`) -- aspirational goals. Same format as
+   thresholds but informational only. Console output shows progress
+   toward targets in the yellow tier
+3. **Baselines** (`baselines.json`) -- auto-ratcheting high-water marks.
+   Updated automatically after each run. Advance toward targets but
+   never past them. Regressions below baselines are flagged
+
+**Why chosen:** Separating enforcement from aspiration lets teams set
+aggressive goals without breaking CI. Baselines provide a ratchet
+mechanism so coverage never goes backward without explicit acknowledgment.
+
+**Implementation:** Plugin disables Vitest's native `autoUpdate` when our
+targets are set (prevents double-ratcheting). Reporter reads baselines,
+computes updated values, writes them back. `autoUpdate` option (default
+true) controls whether baselines auto-advance.
+
+### Decision 16: Coverage Trend Tracking (Phase 4)
+
+**Context:** Point-in-time coverage data doesn't show whether coverage is
+improving or degrading over time. LLM agents need trajectory information
+to prioritize coverage work.
+
+**Chosen approach:** Per-project trend tracking with 50-entry sliding
+window. Only recorded on full (non-scoped) test runs to avoid mixing
+partial and full coverage data. Target change detection via hash
+comparison resets trend history when targets change (old data is no
+longer comparable).
+
+**Options considered:**
+
+1. **50-entry sliding window (Chosen):**
+   - Pros: Bounded storage, sufficient history for trajectory analysis,
+     constant-space per project
+   - Cons: Loses older history
+   - Why chosen: 50 runs provides weeks of daily trend data without
+     unbounded growth
+
+2. **Unlimited history:**
+   - Pros: Complete record
+   - Cons: Unbounded file growth, slower reads
+   - Why rejected: Cache files should be lightweight and disposable
+
+**Why target hash comparison:** When targets change, historical deltas
+are no longer meaningful (the goalpost moved). Resetting provides a
+clean baseline for the new target regime rather than showing misleading
+"improvements" that are actually just threshold changes.
+
+### Decision 17: Tiered Console Output (Phase 4)
+
+**Context:** Phase 1-3 console output showed the same format regardless
+of run health. LLM agents with limited context windows benefit from
+adaptive verbosity -- minimal output when everything is fine, detailed
+output when action is needed.
+
+**Chosen approach:** Three tiers based on run health:
+
+- **Green** (all pass, targets met): one-line summary with cache pointer.
+  Minimal context consumption
+- **Yellow** (pass but below targets): shows improvements needed and
+  CLI hint for the `coverage` command. Moderate detail
+- **Red** (failures/threshold violations/regressions): full detail with
+  failed tests, errors, diffs, coverage gaps, and CLI hints for
+  `coverage` and `trends` commands. Maximum actionable information
+
+**Why chosen:** The green tier reduces noise for stable runs (the
+majority case). The yellow tier surfaces coverage work without
+overwhelming. The red tier provides everything needed to diagnose and
+fix issues. CLI command suggestions at yellow/red tiers guide agents to
+deeper analysis tools.
+
+**Implementation:** Console formatter receives trend data and computes
+the tier from report state. Trend summary line added after the header
+when trend data is available. CLI command suggestions use detected
+package manager from `detect-pm.ts` for correct invocation syntax.
+
 ---
 
 ## Design Patterns Used
@@ -287,8 +397,8 @@ always populated in `CacheManifestEntry.historyFile`.
 - **Where used:** All Effect services (Phase 2)
 - **Why used:** Clean separation between service interface (Context.Tag)
   and implementation (Layer). Enables swapping live I/O for test mocks
-- **Implementation:** Service tags in `src/services/`, live and test
-  layers in `src/layers/`, merged composition layers (`ReporterLive`,
+- **Implementation:** Service tags in `package/src/services/`, live and
+  test layers in `package/src/layers/`, merged composition layers (`ReporterLive`,
   `CliLive`)
 
 ### Pattern: Scoped Effect.runPromise
@@ -298,6 +408,15 @@ always populated in `CacheManifestEntry.historyFile`.
   service architecture without ManagedRuntime lifecycle concerns
 - **Implementation:** Each hook builds a self-contained effect, provides
   the layer inline, and runs via `Effect.runPromise`
+
+### Pattern: Hash-Based Change Detection
+
+- **Where used:** Coverage trend tracking (target change detection)
+- **Why used:** Detect when coverage targets have changed between runs,
+  invalidating historical trend data
+- **Implementation:** `hashTargets()` serializes `ResolvedThresholds` to
+  JSON string, stored as `targetsHash` on each `TrendEntry`. When the
+  hash differs from the last entry, trend history is cleared
 
 ---
 

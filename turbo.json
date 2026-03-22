@@ -2,14 +2,28 @@
 	"$schema": "https://turborepo.com/schema.v2.json",
 	"globalPassThroughEnv": ["GITHUB_ACTIONS", "CI"],
 	"tasks": {
+		"build": {
+			"cache": true,
+			"dependsOn": ["^build"],
+			"inputs": [
+				"$TURBO_DEFAULT$",
+				"!**/*.test.ts",
+				"!**/*.spec.ts",
+				"!**/*.md",
+				"!.changeset/**",
+				"!.claude/**",
+				"!.github/**",
+				"!.husky/**",
+				"!.vscode/**"
+			],
+			"outputs": ["dist/**"]
+		},
 		"build:dev": {
 			"cache": true,
 			"dependsOn": ["types:check"],
 			"inputs": [
 				"$TURBO_DEFAULT$",
-				"$TURBO_ROOT$/package.json",
 				"$TURBO_ROOT$/pnpm-lock.yaml",
-				"$TURBO_ROOT$/pnpm-workspace.yaml",
 				"!**/*.test.ts",
 				"!**/*.spec.ts",
 				"!**/*.md",
@@ -27,9 +41,7 @@
 			"dependsOn": ["types:check"],
 			"inputs": [
 				"$TURBO_DEFAULT$",
-				"$TURBO_ROOT$/package.json",
 				"$TURBO_ROOT$/pnpm-lock.yaml",
-				"$TURBO_ROOT$/pnpm-workspace.yaml",
 				"!**/*.test.ts",
 				"!**/*.spec.ts",
 				"!**/*.md",
@@ -41,6 +53,17 @@
 			],
 			"outputLogs": "full",
 			"outputs": ["dist/npm/**", ".rslib/declarations/npm/**"]
+		},
+		"dev": {
+			"cache": false,
+			"dependsOn": ["^build"],
+			"interactive": true,
+			"persistent": true
+		},
+		"preview": {
+			"cache": false,
+			"dependsOn": ["build"],
+			"persistent": true
 		},
 		"types:check": {
 			"cache": true,

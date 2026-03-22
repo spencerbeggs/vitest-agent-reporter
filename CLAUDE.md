@@ -3,6 +3,19 @@
 This file provides guidance to Claude Code when working with code in this
 repository.
 
+## Workspace Layout
+
+This is a pnpm monorepo. Workspaces are defined in `pnpm-workspace.yaml`:
+
+| Workspace | Path | Purpose |
+| --------- | ---- | ------- |
+| `vitest-agent-reporter` | `package/` | Main package (reporter, plugin, CLI, schemas) |
+| Examples | `examples/*` | Usage examples |
+
+The publishable source lives under `package/`. Root-level configs
+(`turbo.json`, `biome.jsonc`, etc.) apply to all workspaces. To scope
+commands to the main package, use `--filter='./package'`.
+
 ## Project Status
 
 `vitest-agent-reporter` is a Vitest reporter and plugin for LLM coding agents.
@@ -25,13 +38,16 @@ Effect service architecture: all I/O encapsulated in six Effect services
 (AgentDetection, CacheWriter, CacheReader, CoverageAnalyzer, ProjectDiscovery,
 HistoryTracker) with live and test layer implementations. All data structures
 use Effect Schema
-definitions (`src/schemas/`) with `typeof Schema.Type` for TypeScript types and
-`Schema.decodeUnknown`/`Schema.encodeUnknown` for JSON encode/decode. Schemas
-are part of the public API.
+definitions (`package/src/schemas/`) with `typeof Schema.Type` for TypeScript
+types and `Schema.decodeUnknown`/`Schema.encodeUnknown` for JSON encode/decode.
+Schemas are part of the public API.
 
-Source layout: `src/services/` (Effect tags), `src/layers/` (live + test),
-`src/schemas/` (Effect Schema definitions), `src/utils/` (pure functions),
-`src/cli/` (commands + lib), `src/errors/` (tagged errors).
+Source layout: `package/src/services/` (Effect tags),
+`package/src/layers/` (live + test),
+`package/src/schemas/` (Effect Schema definitions),
+`package/src/utils/` (pure functions),
+`package/src/cli/` (commands + lib),
+`package/src/errors/` (tagged errors).
 
 **Spec:** [GitHub Issue #1](https://github.com/spencerbeggs/vitest-agent-reporter/issues/1)
 
@@ -68,8 +84,8 @@ and transforms the output `package.json`:
 - Rewrites `exports` to point at compiled output
 - Strips `devDependencies`, `scripts`, `publishConfig`, and `devEngines`
 
-The `rslib.config.ts` `transform()` callback controls what gets removed. Never
-manually set `"private": false` in the source `package.json`.
+The `package/rslib.config.ts` `transform()` callback controls what gets
+removed. Never manually set `"private": false` in the source `package.json`.
 
 ### Publish Targets
 
@@ -135,7 +151,7 @@ pnpm run build:inspect     # Inspect production build config (verbose)
 ### Running a Specific Test
 
 ```bash
-pnpm vitest run src/index.test.ts
+pnpm vitest run package/src/index.test.ts
 ```
 
 ## Code Quality and Hooks

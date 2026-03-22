@@ -24,6 +24,12 @@ JSON encode/decode uses `Schema.decodeUnknownSync` and
 | `TestHistory` | Single test's pass/fail history |
 | `TestRun` | Single run outcome (passed or failed) |
 | `TestClassification` | Failure classification literal |
+| `MetricThresholds` | Per-metric threshold values (lines, functions, branches, statements) |
+| `PatternThresholds` | A glob pattern paired with metric thresholds |
+| `ResolvedThresholds` | Fully resolved thresholds with global, perFile, and patterns |
+| `CoverageBaselines` | Auto-ratcheting high-water marks stored in cache |
+| `TrendEntry` | Single coverage trend data point |
+| `TrendRecord` | Per-project trend sliding window (50 entries) |
 | `AgentReporterOptions` | Reporter configuration options |
 | `AgentPluginOptions` | Plugin configuration options |
 
@@ -231,8 +237,19 @@ An individual test case:
     functions: number;
     lines: number;
   };
-  threshold: number;         // configured threshold
-  scoped: boolean;           // true when filtered to tested files
+  thresholds: {
+    global: MetricThresholds;
+    patterns?: PatternThresholds[];
+  };
+  targets?: {                // aspirational goals (when configured)
+    global: MetricThresholds;
+    patterns?: PatternThresholds[];
+  };
+  baselines?: {              // auto-ratcheted high-water marks
+    global: MetricThresholds;
+    patterns?: PatternThresholds[];
+  };
+  scoped?: boolean;          // true when filtered to tested files
   scopedFiles?: string[];    // files in scope (when scoped)
   lowCoverage: FileCoverageReport[];  // files below threshold
   lowCoverageFiles: string[];         // quick index of paths
@@ -308,4 +325,64 @@ An individual test case:
 
 ```typescript
 "stable" | "new-failure" | "persistent" | "flaky" | "recovered"
+```
+
+### MetricThresholds
+
+```typescript
+{
+  lines?: number;
+  functions?: number;
+  branches?: number;
+  statements?: number;
+}
+```
+
+### PatternThresholds
+
+A tuple of glob pattern and metric thresholds:
+
+```typescript
+[string, MetricThresholds]
+// e.g. ["src/utils/**", { lines: 90 }]
+```
+
+### ResolvedThresholds
+
+```typescript
+{
+  global: MetricThresholds;
+  perFile: boolean;            // default: false
+  patterns: PatternThresholds[];
+}
+```
+
+### CoverageBaselines
+
+```typescript
+{
+  updatedAt: string;           // ISO 8601
+  global: MetricThresholds;
+  patterns: PatternThresholds[];
+}
+```
+
+### TrendEntry
+
+```typescript
+{
+  timestamp: string;           // ISO 8601
+  coverage: CoverageTotals;
+  delta: CoverageTotals;      // change from previous entry
+  direction: "improving" | "regressing" | "stable";
+  targetsHash?: string;       // hash of targets config (detect changes)
+}
+```
+
+### TrendRecord
+
+```typescript
+{
+  entries: TrendEntry[];       // sliding window, max 50
+}
 ```

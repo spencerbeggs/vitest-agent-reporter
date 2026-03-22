@@ -3,8 +3,8 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-03-21
-last-synced: 2026-03-20
+updated: 2026-03-22
+last-synced: 2026-03-22
 completeness: 90
 related:
   - vitest-agent-reporter/architecture.md
@@ -24,68 +24,79 @@ and data flow diagrams.
 ## File Structure
 
 ```text
-src/
-  index.ts              -- sole re-export point for public API
-  reporter.ts           -- AgentReporter class (Effect.runPromise + ReporterLive)
-  plugin.ts             -- AgentPlugin function (async configureVitest hook)
+package/
+  src/
+    index.ts              -- sole re-export point for public API
+    reporter.ts           -- AgentReporter class (Effect.runPromise + ReporterLive)
+    plugin.ts             -- AgentPlugin function (async configureVitest hook)
 
-  cli/
-    index.ts            -- runCli entry point, Command.run() via @effect/cli
-    commands/
-      status.ts         -- thin wrapper, delegates to lib
-      overview.ts       -- thin wrapper, delegates to lib
-      coverage.ts       -- thin wrapper, delegates to lib
-      history.ts        -- thin wrapper, delegates to lib
-    lib/
-      format-status.ts  -- testable formatting logic
-      format-overview.ts
-      format-coverage.ts
-      format-history.ts
-      resolve-cache-dir.ts
+    cli/
+      index.ts            -- runCli entry point, Command.run() via @effect/cli
+      commands/
+        status.ts         -- thin wrapper, delegates to lib
+        overview.ts       -- thin wrapper, delegates to lib
+        coverage.ts       -- thin wrapper, delegates to lib
+        history.ts        -- thin wrapper, delegates to lib
+        trends.ts         -- thin wrapper, delegates to lib
+        cache.ts          -- cache parent with path/clean subcommands
+        doctor.ts         -- 5-point cache health diagnostic
+      lib/
+        format-status.ts  -- testable formatting logic
+        format-overview.ts
+        format-coverage.ts
+        format-history.ts
+        format-trends.ts  -- trend data formatting
+        format-doctor.ts  -- doctor diagnostic formatting
+        resolve-cache-dir.ts -- searches Vite hash-based subdirectories
 
-  services/
-    AgentDetection.ts   -- Context.Tag: std-env wrapper
-    CacheWriter.ts      -- Context.Tag: write reports/manifest/history
-    CacheReader.ts      -- Context.Tag: read reports/manifest/history
-    CoverageAnalyzer.ts -- Context.Tag: coverage processing
-    ProjectDiscovery.ts -- Context.Tag: test file discovery
-    HistoryTracker.ts   -- Context.Tag: test outcome classification
+    services/
+      AgentDetection.ts   -- Context.Tag: std-env wrapper
+      CacheWriter.ts      -- Context.Tag: write reports/manifest/history
+      CacheReader.ts      -- Context.Tag: read reports/manifest/history
+      CoverageAnalyzer.ts -- Context.Tag: coverage processing
+      ProjectDiscovery.ts -- Context.Tag: test file discovery
+      HistoryTracker.ts   -- Context.Tag: test outcome classification
 
-  layers/
-    AgentDetectionLive.ts / AgentDetectionTest.ts
-    CacheWriterLive.ts / CacheWriterTest.ts
-    CacheReaderLive.ts / CacheReaderTest.ts
-    CoverageAnalyzerLive.ts / CoverageAnalyzerTest.ts
-    ProjectDiscoveryLive.ts / ProjectDiscoveryTest.ts
-    HistoryTrackerLive.ts / HistoryTrackerTest.ts
-    ReporterLive.ts     -- merged layer for reporter runtime
-    CliLive.ts          -- merged layer for CLI runtime
+    layers/
+      AgentDetectionLive.ts / AgentDetectionTest.ts
+      CacheWriterLive.ts / CacheWriterTest.ts
+      CacheReaderLive.ts / CacheReaderTest.ts
+      CoverageAnalyzerLive.ts / CoverageAnalyzerTest.ts
+      ProjectDiscoveryLive.ts / ProjectDiscoveryTest.ts
+      HistoryTrackerLive.ts / HistoryTrackerTest.ts
+      ReporterLive.ts     -- merged layer for reporter runtime
+      CliLive.ts          -- merged layer for CLI runtime
 
-  errors/
-    CacheError.ts       -- Data.TaggedError (file I/O)
-    DiscoveryError.ts   -- Data.TaggedError (project discovery)
+    errors/
+      CacheError.ts       -- Data.TaggedError (file I/O)
+      DiscoveryError.ts   -- Data.TaggedError (project discovery)
 
-  schemas/
-    Common.ts           -- shared literals (TestState, ConsoleStrategy, etc.)
-    AgentReport.ts      -- report + module + test schemas
-    CacheManifest.ts    -- manifest + entry schemas
-    Coverage.ts         -- coverage report + totals + file coverage
-    History.ts          -- TestRun, TestHistory, HistoryRecord schemas
-    Options.ts          -- reporter + plugin option schemas
+    schemas/
+      Common.ts           -- shared literals (TestState, ConsoleStrategy, etc.)
+      AgentReport.ts      -- report + module + test schemas
+      CacheManifest.ts    -- manifest + entry schemas
+      Coverage.ts         -- coverage report + totals + file coverage
+      Thresholds.ts       -- MetricThresholds, PatternThresholds, ResolvedThresholds
+      Baselines.ts        -- CoverageBaselines (auto-ratcheting high-water marks)
+      Trends.ts           -- TrendEntry, TrendRecord (coverage trends)
+      History.ts          -- TestRun, TestHistory, HistoryRecord schemas
+      Options.ts          -- reporter + plugin + coverage + formatter options
 
-  utils/
-    compress-lines.ts   -- range compression for uncovered lines
-    safe-filename.ts    -- project name sanitization
-    ansi.ts             -- ANSI color helpers (NO_COLOR aware)
-    strip-console-reporters.ts -- reporter chain manipulation
-    detect-pm.ts        -- package manager detection (FileSystemAdapter)
-    format-console.ts   -- pure function: console markdown
-    format-gfm.ts       -- pure function: GitHub Actions GFM
-    build-report.ts     -- pure function: AgentReport builder + duck-typed
-                           Vitest interfaces
+    utils/
+      compress-lines.ts   -- range compression for uncovered lines
+      safe-filename.ts    -- project name sanitization
+      ansi.ts             -- ANSI color helpers (NO_COLOR aware)
+      strip-console-reporters.ts -- reporter chain manipulation
+      detect-pm.ts        -- package manager detection (FileSystemAdapter)
+      resolve-thresholds.ts -- Vitest thresholds format parser
+      compute-trend.ts    -- coverage trend computation + hash comparison
+      format-console.ts   -- pure function: tiered console markdown
+      format-gfm.ts       -- pure function: GitHub Actions GFM
+      build-report.ts     -- pure function: AgentReport builder + duck-typed
+                             Vitest interfaces
 
-bin/
-  vitest-agent-reporter.js  -- shebang wrapper for CLI
+  bin/
+    vitest-agent-reporter.js  -- shebang wrapper for CLI
 ```
 
 ---
@@ -93,15 +104,17 @@ bin/
 ## Test Files
 
 ```text
-src/
+package/src/
   reporter.test.ts          -- AgentReporter lifecycle integration tests
   plugin.test.ts            -- AgentPlugin environment detection + config
   cli/lib/
     format-status.test.ts   -- status formatting logic
     format-overview.test.ts -- overview formatting logic
     format-coverage.test.ts -- coverage formatting logic
-    format-history.test.ts  -- history formatting logic (13 tests)
-    resolve-cache-dir.test.ts -- cache dir resolution
+    format-history.test.ts  -- history formatting logic
+    format-trends.test.ts   -- trends formatting logic
+    format-doctor.test.ts   -- doctor diagnostic formatting
+    resolve-cache-dir.test.ts -- cache dir resolution (includes Vite hash paths)
   errors/
     errors.test.ts          -- CacheError, DiscoveryError tagged errors
   layers/
@@ -111,15 +124,17 @@ src/
                                    corrupt/invalid JSON error paths
     CoverageAnalyzerLive.test.ts -- coverage processing, test layer
     ProjectDiscoveryLive.test.ts -- test file discovery
-    HistoryTrackerLive.test.ts  -- classification logic, sliding window (14 tests)
+    HistoryTrackerLive.test.ts  -- classification logic, sliding window
     ReporterLive.test.ts        -- merged layer composition
   schemas/
     Common.test.ts          -- shared literal schemas
     AgentReport.test.ts     -- report schema validation
     CacheManifest.test.ts   -- manifest schema validation
-    Coverage.test.ts        -- coverage schema validation
+    Coverage.test.ts        -- coverage schema validation (thresholds object)
+    Baselines.test.ts       -- baselines schema validation
+    Trends.test.ts          -- TrendEntry, TrendRecord schema validation
     History.test.ts         -- TestRun, TestHistory, HistoryRecord schema validation
-    Options.test.ts         -- reporter + plugin options schema validation
+    Options.test.ts         -- reporter + plugin + coverage options schema validation
   services/
     services.test.ts        -- service Context.Tag definitions
   utils/
@@ -128,12 +143,14 @@ src/
     ansi.test.ts            -- ANSI/stripAnsi, NO_COLOR
     strip-console-reporters.test.ts -- reporter chain manipulation
     detect-pm.test.ts       -- package manager detection
-    format-console.test.ts  -- console markdown formatting
+    resolve-thresholds.test.ts -- Vitest thresholds format parsing
+    compute-trend.test.ts   -- trend computation, hash change detection
+    format-console.test.ts  -- tiered console markdown formatting
     format-gfm.test.ts      -- GFM formatting
     build-report.test.ts    -- report building with mock Vitest objects
 ```
 
-**30 test files, 350 tests total.** All coverage metrics (statements,
+**36 test files, 429 tests total.** All coverage metrics (statements,
 branches, functions, lines) are above 80%.
 
 ---
@@ -148,11 +165,14 @@ Cache outputs are organized under a configurable root directory. When using
 ```text
 {cacheDir}/
   manifest.json                         -- project index (CacheManifest)
+  baselines.json                        -- auto-ratcheting coverage baselines
   reports/                              -- per-project test result JSON
     {safe-project-name}.json            -- AgentReport encoded via codec
     default.json                        -- single-repo fallback name
   history/                              -- per-project failure history JSON
     {safe-project-name}.history.json    -- HistoryRecord encoded via codec
+  trends/                               -- per-project coverage trend JSON
+    {safe-project-name}.trends.json     -- TrendRecord encoded via codec
 ```
 
 **`safeFilename()` examples:**
@@ -164,7 +184,7 @@ Cache outputs are organized under a configurable root directory. When using
 **Package manager detection:**
 
 The CLI overview and history commands need to output correct run commands.
-Detection logic in `src/utils/detect-pm.ts`:
+Detection logic in `package/src/utils/detect-pm.ts`:
 
 1. Check `packageManager` field in root `package.json`
 2. Fall back to lockfile detection
@@ -174,7 +194,7 @@ Detection logic in `src/utils/detect-pm.ts`:
 
 ## Data Structures
 
-All types are defined as Effect Schema definitions in `src/schemas/` with
+All types are defined as Effect Schema definitions in `package/src/schemas/` with
 TypeScript types derived via `typeof Schema.Type`.
 
 ### JSON Report (`AgentReport`)
@@ -236,8 +256,19 @@ interface ReportError {
 ```typescript
 interface CoverageReport {
   totals: CoverageTotals;
-  threshold: number;
-  scoped: boolean;                                // Phase 2: filtered to subset
+  thresholds: {                                   // Phase 4: Vitest-native format
+    global: MetricThresholds;                     // per-metric thresholds
+    patterns?: PatternThresholds[];               // per-glob thresholds
+  };
+  targets?: {                                     // Phase 4: aspirational goals
+    global: MetricThresholds;
+    patterns?: PatternThresholds[];
+  };
+  baselines?: {                                   // Phase 4: high-water marks
+    global: MetricThresholds;
+    patterns?: PatternThresholds[];
+  };
+  scoped?: boolean;                               // Phase 2: filtered to subset
   scopedFiles?: string[];                         // Phase 2: files in scope
   lowCoverage: FileCoverageReport[];
   lowCoverageFiles: string[];
@@ -250,10 +281,55 @@ interface CoverageTotals {
   lines: number;
 }
 
+interface MetricThresholds {
+  lines?: number;
+  functions?: number;
+  branches?: number;
+  statements?: number;
+}
+
+type PatternThresholds = [string, MetricThresholds];  // [glob, metrics]
+
 interface FileCoverageReport {
   file: string;
   summary: CoverageTotals;
   uncoveredLines: string;                         // e.g. "42-50,99,120-135"
+}
+```
+
+### Coverage Thresholds (`ResolvedThresholds`)
+
+```typescript
+interface ResolvedThresholds {
+  global: MetricThresholds;
+  perFile?: boolean;                              // default: false
+  patterns?: PatternThresholds[];                 // per-glob overrides
+}
+```
+
+### Coverage Baselines (`CoverageBaselines`)
+
+```typescript
+interface CoverageBaselines {
+  updatedAt: string;                              // ISO 8601
+  global: MetricThresholds;                       // high-water marks
+  patterns?: PatternThresholds[];                 // per-glob high-water marks
+}
+```
+
+### Coverage Trends (`TrendRecord`)
+
+```typescript
+interface TrendEntry {
+  timestamp: string;                              // ISO 8601
+  coverage: CoverageTotals;                       // coverage at this point
+  delta: CoverageTotals;                          // change from previous entry
+  direction: "improving" | "regressing" | "stable";
+  targetsHash?: string;                           // hash of targets for change detection
+}
+
+interface TrendRecord {
+  entries: TrendEntry[];                          // sliding window, max 50
 }
 ```
 
@@ -300,19 +376,56 @@ Printed to `process.stdout`. Uses `ansi()` helper that no-ops when
 
 Three modes controlled by `consoleOutput` option:
 
-- `"failures"` (default) -- compact header + failed tests with diffs +
-  coverage gaps + next steps
-- `"full"` -- same format, includes passing test details
+- `"failures"` (default) -- tiered output based on run health
+- `"full"` -- same tiered format, includes passing test details
 - `"silent"` -- no console output, JSON only
 
-**Example output (failures):**
+Console output uses three tiers based on run health:
+
+- **Green** (all pass, targets met): minimal one-line summary
+- **Yellow** (pass but below targets): improvements needed + CLI hint
+- **Red** (failures/threshold violations/regressions): full detail +
+  CLI hints
+
+**Example output (green tier -- all passing, targets met):**
+
+```markdown
+## [checkmark] Vitest -- 10 passed (120ms)
+
+[checkmark] All tests passed
+
+-> Cache: `node_modules/.vite/.../vitest-agent-reporter/reports/default.json`
+```
+
+**Example output (yellow tier -- passing but below targets):**
+
+```markdown
+## [checkmark] Vitest -- 10 passed (120ms)
+
+Coverage improving over 5 runs
+
+[checkmark] All tests passed
+
+### Coverage targets
+
+- Lines: 78% (target: 90%)
+- Branches: 65% (target: 80%)
+
+-> Run `pnpm vitest-agent-reporter coverage` for gap analysis
+
+-> Cache: `node_modules/.vite/.../vitest-agent-reporter/reports/default.json`
+```
+
+**Example output (red tier -- failures):**
 
 ````markdown
 ## X Vitest -- 2 failed, 8 passed (340ms)
 
+Coverage regressing over 3 runs
+
 ### X `src/utils.test.ts`
 
-- X **compressLines > handles empty array**
+- X **compressLines > handles empty array** [new-failure]
   Expected [] to equal [""]
 
   ```diff
@@ -329,19 +442,12 @@ Three modes controlled by `consoleOutput` option:
 
 ### Next steps
 
-- Re-run: `vitest run src/utils.test.ts`
+- 1 new failure since last run
+- Re-run: `pnpm vitest run src/utils.test.ts`
+- Run `pnpm vitest-agent-reporter coverage` for gap analysis
+- Run `pnpm vitest-agent-reporter trends` for coverage trajectory
 - Full report: `node_modules/.vite/.../vitest-agent-reporter/reports/default.json`
 ````
-
-**Example output (all passing):**
-
-```markdown
-## [checkmark] Vitest -- 10 passed (120ms)
-
-[checkmark] All tests passed
-
--> Cache: `node_modules/.vite/.../vitest-agent-reporter/reports/default.json`
-```
 
 ---
 
@@ -379,6 +485,7 @@ onTestRunEnd(testModules, unhandledErrors, reason)
   |
   +-- Build Effect program:
   |     +-- yield* CacheWriter
+  |     +-- yield* CacheReader
   |     +-- yield* CoverageAnalyzer
   |     +-- yield* HistoryTracker
   |
@@ -389,6 +496,9 @@ onTestRunEnd(testModules, unhandledErrors, reason)
   |     +-- Returns Option<CoverageReport>
   |     +-- processScoped used when partial test run detected
   |
+  +-- CacheReader.readBaselines(cacheDir)
+  |     +-- Returns Option<CoverageBaselines>
+  |
   +-- For each project group:
   |     +-- buildAgentReport(modules, errors, reason, options, name)
   |     |     +-- Pure function: tallies, extracts errors, builds report
@@ -398,9 +508,15 @@ onTestRunEnd(testModules, unhandledErrors, reason)
   |     +-- HistoryTracker.classify(outcomes)
   |     |     +-- Returns { history: HistoryRecord, classifications: Map }
   |     +-- Attach classifications to TestReport.classification fields
+  |     +-- computeTrend() on full (non-scoped) runs
+  |     |     +-- CacheReader.readTrends(cacheDir, projectName)
+  |     |     +-- computeTrend(totals, existing, targets)
+  |     |     +-- CacheWriter.writeTrends(cacheDir, projectName, trends)
   |     +-- CacheWriter.writeReport(cacheDir, projectName, report)
   |     +-- CacheWriter.writeHistory(cacheDir, projectName, history)
   |
+  +-- Compute updated baselines (ratchet up, capped at targets)
+  +-- CacheWriter.writeBaselines(cacheDir, baselines)
   +-- CacheWriter.writeManifest(cacheDir, manifest)
   |     +-- historyFile field populated per project
   |
@@ -437,8 +553,14 @@ async configureVitest({ vitest })
   +-- Resolve cacheDir:
   |     option.cacheDir ?? resolveOutputDir(outputFile) ?? vite.cacheDir/...
   |
-  +-- Extract coverage threshold:
-  |     option.coverageThreshold ?? extractCoverageThreshold(coverage.thresholds)
+  +-- Resolve coverage thresholds:
+  |     resolveThresholds(option.coverageThresholds ?? coverage.thresholds)
+  |
+  +-- Resolve coverage targets:
+  |     resolveThresholds(option.coverageTargets)
+  |
+  +-- Disable Vitest native autoUpdate if targets set:
+  |     coverage.thresholds.autoUpdate = false
   |
   +-- vitest.config.reporters.push(new AgentReporter({...}))
 ```
@@ -467,9 +589,29 @@ vitest-agent-reporter <command> [options]
   |     +-- formatCoverage() -> stdout
   |
   +-- history:
+  |     +-- CacheReader.readManifest(cacheDir)
+  |     +-- CacheReader.readHistory() for all projects
+  |     +-- formatHistory() -> stdout (flaky, persistent, recovered tests)
+  |
+  +-- trends:
+  |     +-- CacheReader.readManifest(cacheDir)
+  |     +-- CacheReader.readTrends() for all projects
+  |     +-- formatTrends() -> stdout (direction, metrics, sparkline)
+  |
+  +-- cache path:
+  |     +-- resolveCacheDir -> stdout (absolute path)
+  |
+  +-- cache clean:
+  |     +-- resolveCacheDir
+  |     +-- FileSystem.remove(cacheDir, { recursive: true })
+  |
+  +-- doctor:
+        +-- resolveCacheDir
         +-- CacheReader.readManifest(cacheDir)
-        +-- CacheReader.readHistory() for all projects
-        +-- formatHistory() -> stdout (flaky, persistent, recovered tests)
+        +-- CacheReader.readReport() per project (integrity)
+        +-- CacheReader.readHistory() per project (integrity)
+        +-- staleness check (last run recency)
+        +-- formatDoctor() -> stdout
 ```
 
 ---
@@ -554,8 +696,12 @@ GFM content is appended (not overwritten) to support multiple steps.
 - `TestOutcome` type for constructing `HistoryTracker.classify` inputs
 - `AgentDetection` service (exported for consumers needing environment
   detection)
+- `ResolvedThresholds`, `MetricThresholds`, `PatternThresholds` schemas for
+  threshold data access
+- `CoverageBaselines` schema for baseline data access
+- `TrendEntry`, `TrendRecord` schemas for trend data access
 
 ---
 
-**Document Status:** Current -- reflects Phase 1, Phase 2, and Phase 3
-implementation as built. All phases complete.
+**Document Status:** Current -- reflects Phase 1, Phase 2, Phase 3, and
+Phase 4 implementation as built. All phases complete.

@@ -9,6 +9,7 @@
 		"**/.cache",
 		"**/coverage",
 		"**/.coverage",
+		"**/docs/superpowers",
 		"**/dist",
 		"**/CHANGELOG.md",
 		"**/.claude/plans"

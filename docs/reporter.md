@@ -19,7 +19,9 @@ const reporter = new AgentReporter({
   cacheDir: ".vitest-agent-reporter",
   consoleOutput: "failures",
   omitPassingTests: true,
-  coverageThreshold: 80,
+  coverageThresholds: { lines: 80, branches: 80 },
+  coverageTargets: { lines: 90 },
+  autoUpdate: true,
   coverageConsoleLimit: 10,
   includeBareZero: false,
   githubActions: false,
@@ -34,7 +36,9 @@ All options are optional. Defaults:
 | `cacheDir` | `".vitest-agent-reporter"` | Directory for JSON cache files (relative to cwd) |
 | `consoleOutput` | `"failures"` | `"failures"`, `"full"`, or `"silent"` |
 | `omitPassingTests` | `true` | Exclude passing tests from JSON reports |
-| `coverageThreshold` | `0` | Flag files below this coverage % |
+| `coverageThresholds` | `{}` | Vitest-native threshold format (per-metric, per-glob) |
+| `coverageTargets` | -- | Aspirational targets (same format as thresholds) |
+| `autoUpdate` | `true` when targets set | Auto-ratchet baselines when coverage improves |
 | `coverageConsoleLimit` | `10` | Max low-coverage files in console |
 | `includeBareZero` | `false` | Include files where all metrics are 0% |
 | `githubActions` | auto-detect | Force GFM output on/off |
@@ -107,7 +111,7 @@ export default defineConfig({
     reporters: [
       new AgentReporter({
         consoleOutput: "failures",
-        coverageThreshold: 80,
+        coverageThresholds: { lines: 80 },
       }),
     ],
   },
@@ -157,7 +161,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     reporters: [
-      new AgentReporter({ coverageThreshold: 80 }),
+      new AgentReporter({ coverageThresholds: { lines: 80 } }),
     ],
     coverage: {
       provider: "v8",
@@ -184,7 +188,7 @@ export default defineConfig({
       new AgentReporter({
         consoleOutput: "silent",
         githubActions: true,
-        coverageThreshold: 80,
+        coverageThresholds: { lines: 80 },
       }),
     ],
   },

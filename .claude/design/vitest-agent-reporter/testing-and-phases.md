@@ -3,8 +3,8 @@ status: current
 module: vitest-agent-reporter
 category: testing
 created: 2026-03-20
-updated: 2026-03-21
-last-synced: 2026-03-20
+updated: 2026-03-22
+last-synced: 2026-03-22
 completeness: 90
 related:
   - vitest-agent-reporter/architecture.md
@@ -24,12 +24,12 @@ Testing approach, test patterns, and implementation phase history.
 
 ### Unit Tests
 
-**Location:** `src/**/*.test.ts`
+**Location:** `package/src/**/*.test.ts`
 
 **Test structure mirrors source.** Services are tested through their layers.
 CLI logic is tested through lib functions.
 
-**Implemented tests (Phase 1-2-3):**
+**Implemented tests (Phase 1-2-3-4):**
 
 - `utils/compress-lines.test.ts` -- `compressLines()` edge cases
 - `utils/safe-filename.test.ts` -- `safeFilename()` sanitization
@@ -40,41 +40,56 @@ CLI logic is tested through lib functions.
   `getRunCommand()` for all package managers
 - `utils/build-report.test.ts` -- `buildAgentReport()` with mock Vitest
   objects, tallying, error extraction, omitPassingTests behavior
-- `utils/format-console.test.ts` -- `formatConsoleMarkdown()` output
-  formatting, all three modes, coverage gaps, next steps
+- `utils/format-console.test.ts` -- `formatConsoleMarkdown()` tiered
+  output, coverage gaps, trend summaries, CLI hints
 - `utils/format-gfm.test.ts` -- `formatGfm()` single and multi-project
   output, coverage tables, details blocks
+- `utils/resolve-thresholds.test.ts` -- `resolveThresholds()` Vitest-native
+  format parsing, `100` shorthand, per-glob patterns, `getMinThreshold()`
+- `utils/compute-trend.test.ts` -- `computeTrend()` trend entry computation,
+  sliding window, target hash change detection, `getRecentDirection()`
 - `schemas/Common.test.ts` -- shared literal schema validation
 - `schemas/AgentReport.test.ts` -- report schema validation and encoding
 - `schemas/CacheManifest.test.ts` -- manifest schema validation
-- `schemas/Coverage.test.ts` -- coverage schema validation, scoped fields
-- `schemas/Options.test.ts` -- reporter and plugin options schema validation
+- `schemas/Coverage.test.ts` -- coverage schema validation, thresholds
+  object format, targets, baselines
+- `schemas/Baselines.test.ts` -- CoverageBaselines schema validation
+- `schemas/Trends.test.ts` -- TrendEntry, TrendRecord schema validation
+- `schemas/Options.test.ts` -- reporter + plugin + coverage options schema
+  validation
 - `services/services.test.ts` -- service Context.Tag definitions
 - `errors/errors.test.ts` -- CacheError and DiscoveryError tagged error types
 - `layers/AgentDetectionLive.test.ts` -- std-env integration, live layer
-- `layers/CacheWriterLive.test.ts` -- file write via mock FileSystem
+- `layers/CacheWriterLive.test.ts` -- file write via mock FileSystem,
+  including writeBaselines and writeTrends
 - `layers/CacheReaderLive.test.ts` -- file read via mock FileSystem,
-  corrupt/invalid JSON error paths
+  corrupt/invalid JSON error paths, readBaselines, readTrends
 - `layers/CoverageAnalyzerLive.test.ts` -- coverage processing, scoped
   coverage, bare-zero handling, test layer
 - `layers/ProjectDiscoveryLive.test.ts` -- test file discovery, source
   mapping
 - `layers/HistoryTrackerLive.test.ts` -- classification logic, sliding
-  window (new-failure, persistent, flaky, stable, recovered), 14 tests
+  window (new-failure, persistent, flaky, stable, recovered)
 - `layers/ReporterLive.test.ts` -- merged layer composition
 - `schemas/History.test.ts` -- TestRun, TestHistory, HistoryRecord schema
   validation
 - `cli/lib/format-status.test.ts` -- status formatting
 - `cli/lib/format-overview.test.ts` -- overview formatting
-- `cli/lib/format-coverage.test.ts` -- coverage formatting
+- `cli/lib/format-coverage.test.ts` -- coverage formatting with thresholds
+  object
 - `cli/lib/format-history.test.ts` -- history formatting (flaky/persistent/
-  recovered display, P/F visualization), 13 tests
-- `cli/lib/resolve-cache-dir.test.ts` -- cache dir resolution
+  recovered display, P/F visualization)
+- `cli/lib/format-trends.test.ts` -- trends formatting (direction, metrics,
+  sparkline)
+- `cli/lib/format-doctor.test.ts` -- doctor diagnostic formatting
+- `cli/lib/resolve-cache-dir.test.ts` -- cache dir resolution including
+  Vite hash-based subdirectory search
 - `reporter.test.ts` -- `AgentReporter` lifecycle integration tests,
-  including history classification and writeHistory invocation
+  including history classification, writeHistory, writeBaselines,
+  writeTrends invocation
 - `plugin.test.ts` -- `AgentPlugin` environment detection, reporter
-  injection, cache directory resolution, coverage threshold extraction,
-  consoleStrategy behavior
+  injection, cache directory resolution, coverage threshold/target
+  resolution, consoleStrategy behavior, autoUpdate disabling
 
 **Test patterns:**
 
@@ -133,7 +148,7 @@ CLI commands are not tested directly (thin wrappers). Logic lives in
 - Package manager detection with FileSystemAdapter
 - Utility functions (`compressLines`, `safeFilename`, `ansi`,
   `detectEnvironment`, `stripConsoleReporters`)
-- Public API exports via `src/index.ts` (reporter, plugin, schemas, types)
+- Public API exports via `package/src/index.ts` (reporter, plugin, schemas, types)
 - Comprehensive unit and integration tests for all modules
 
 **Note:** Phase 1 source files were restructured during Phase 2. See Phase
@@ -147,18 +162,18 @@ bugs.
 
 **Deliverables (all implemented):**
 
-- Migrated from Zod to Effect Schema (`src/schemas/` directory)
+- Migrated from Zod to Effect Schema (`package/src/schemas/` directory)
 - Five Effect services: AgentDetection, CacheWriter, CacheReader,
-  CoverageAnalyzer, ProjectDiscovery (`src/services/`)
-- Live and test layers for all services (`src/layers/`)
+  CoverageAnalyzer, ProjectDiscovery (`package/src/services/`)
+- Live and test layers for all services (`package/src/layers/`)
 - Merged composition layers: ReporterLive, CliLive
-- Tagged error types: CacheError, DiscoveryError (`src/errors/`)
-- CLI bin with `status`, `overview`, `coverage` commands (`src/cli/`)
+- Tagged error types: CacheError, DiscoveryError (`package/src/errors/`)
+- CLI bin with `status`, `overview`, `coverage` commands (`package/src/cli/`)
 - `consoleStrategy` option (`"own" | "complement"`, default `"complement"`)
 - Scoped coverage support via CoverageAnalyzer.processScoped()
 - `std-env` integration replacing hand-rolled environment detection
-- Restructured utils from single file to `src/utils/` directory
-- Relocated formatters from `src/formatters/` to `src/utils/`
+- Restructured utils from single file to `package/src/utils/` directory
+- Relocated formatters from `package/src/formatters/` to `package/src/utils/`
 - Bug fix: unhandledErrors now attached to ALL project reports
 - Bug fix: `includeBareZero` works correctly at threshold 0
 
@@ -169,8 +184,9 @@ bugs.
   `"own"`)
 - `detectEnvironment()` and `isGitHubActions()` utilities removed (replaced
   by AgentDetection service)
-- `src/schemas.ts` and `src/types.ts` removed (replaced by `src/schemas/`)
-- `src/coverage.ts` removed (replaced by CoverageAnalyzer service)
+- `package/src/schemas.ts` and `package/src/types.ts` removed (replaced by
+  `package/src/schemas/`)
+- `package/src/coverage.ts` removed (replaced by CoverageAnalyzer service)
 
 **Dependencies added:** `effect`, `@effect/cli`, `@effect/platform`,
 `@effect/platform-node`, `std-env`
@@ -179,11 +195,13 @@ bugs.
 
 **Source files:**
 
-- `src/reporter.ts`, `src/plugin.ts`, `src/index.ts`
-- `src/services/*.ts`, `src/layers/*.ts`, `src/errors/*.ts`
-- `src/schemas/*.ts`, `src/utils/*.ts`
-- `src/cli/index.ts`, `src/cli/commands/*.ts`, `src/cli/lib/*.ts`
-- `bin/vitest-agent-reporter.js`
+- `package/src/reporter.ts`, `package/src/plugin.ts`, `package/src/index.ts`
+- `package/src/services/*.ts`, `package/src/layers/*.ts`,
+  `package/src/errors/*.ts`
+- `package/src/schemas/*.ts`, `package/src/utils/*.ts`
+- `package/src/cli/index.ts`, `package/src/cli/commands/*.ts`,
+  `package/src/cli/lib/*.ts`
+- `package/bin/vitest-agent-reporter.js`
 
 **Depends on:** Phase 1 (architecture, data structures, test patterns)
 
@@ -196,7 +214,8 @@ and whether failures are new, persistent, or flaky.
 
 - `History.ts` schema (`TestRun`, `TestHistory`, `HistoryRecord`) for
   failure persistence
-- `HistoryTracker` Effect service (`src/services/HistoryTracker.ts`) with
+- `HistoryTracker` Effect service (`package/src/services/HistoryTracker.ts`)
+  with
   `classify(outcomes: TestOutcome[])` method
 - `HistoryTrackerLive` with 10-entry sliding window and five classifications:
   `new-failure`, `persistent`, `flaky`, `recovered`, `stable`
@@ -229,13 +248,102 @@ and whether failures are new, persistent, or flaky.
 
 **Source files:**
 
-- `src/services/HistoryTracker.ts`
-- `src/layers/HistoryTrackerLive.ts`, `src/layers/HistoryTrackerTest.ts`
-- `src/schemas/History.ts`
-- `src/cli/commands/history.ts`, `src/cli/lib/format-history.ts`
+- `package/src/services/HistoryTracker.ts`
+- `package/src/layers/HistoryTrackerLive.ts`,
+  `package/src/layers/HistoryTrackerTest.ts`
+- `package/src/schemas/History.ts`
+- `package/src/cli/commands/history.ts`,
+  `package/src/cli/lib/format-history.ts`
 
 **Depends on:** Phase 1 (report data structures), Phase 2 (Effect services,
 CacheReader/CacheWriter, CliLive/ReporterLive composition)
+
+### Phase 4: Coverage Thresholds, Baselines, and Trends -- COMPLETE
+
+**Goal:** Replace the single `coverageThreshold: number` with Vitest-native
+threshold format, add aspirational targets with auto-ratcheting baselines,
+per-project coverage trend tracking, tiered console output, and new CLI
+commands for cache management and diagnostics.
+
+**Deliverables (all implemented):**
+
+- **Monorepo restructuring:** source moved from `src/` to `package/src/`;
+  root is pnpm monorepo with `package` (publishable) and `examples/*`
+  (test projects) workspaces
+- **Coverage thresholds overhaul (breaking change):**
+  `coverageThreshold: number` replaced by `coverageThresholds` (Vitest-native
+  format: per-metric, per-glob, negative numbers, `100` shorthand, `perFile`).
+  `extractCoverageThreshold` deleted, replaced by `resolveThresholds` utility.
+  `CoverageReport.threshold` (number) replaced by `CoverageReport.thresholds`
+  (object with global + patterns)
+- **Coverage targets:** new `coverageTargets` option (same format as
+  thresholds) for aspirational goals. Plugin disables Vitest's native
+  `autoUpdate` when our targets are set
+- **Coverage baselines:** `baselines.json` in cache directory stores
+  high-water marks per metric. Reporter reads baselines, computes updated
+  baselines, writes them back. Baselines ratchet up but never past targets.
+  `autoUpdate` option (default true) controls auto-ratcheting
+- **Coverage trends:** per-project trend tracking with 50-entry sliding
+  window. Only recorded on full (non-scoped) runs. Target change detection
+  via hash comparison resets trend history. `TrendEntry` and `TrendRecord`
+  schemas, `computeTrend` utility
+- **Tiered console output:** green (all pass, targets met -- minimal),
+  yellow (pass but below targets -- improvements + CLI hint), red
+  (failures/violations/regressions -- full detail + CLI hints). Trend
+  summary line after header. CLI command suggestions use detected PM
+- **New CLI commands:** `cache path` (resolved cache dir), `cache clean`
+  (delete cache), `doctor` (5-point health diagnostic), `trends`
+  (per-project trend display with direction, metrics, sparkline)
+- **CLI cache resolution fix:** `resolveCacheDir` now searches
+  `node_modules/.vite/vitest/*/vitest-agent-reporter` for Vite's
+  hash-based cache subdirectory
+- **New schemas:** `Thresholds.ts` (MetricThresholds, PatternThresholds,
+  ResolvedThresholds), `Baselines.ts` (CoverageBaselines), `Trends.ts`
+  (TrendEntry, TrendRecord)
+- **New utilities:** `resolve-thresholds.ts`, `compute-trend.ts`
+- **New service methods:** `CacheReader.readBaselines`, `readTrends`;
+  `CacheWriter.writeBaselines`, `writeTrends`
+- **New `CoverageOptions` and `FormatterOptions` schemas** in Options.ts
+
+**Breaking changes from Phase 3:**
+
+- `coverageThreshold: number` replaced by
+  `coverageThresholds: Record<string, unknown>` in `AgentReporterOptions`
+- `CoverageReport.threshold` (number) replaced by
+  `CoverageReport.thresholds` (object with `global` and `patterns`)
+- `extractCoverageThreshold()` function removed
+- Console output format changed to tiered model
+
+**New test files:**
+
+- `schemas/Baselines.test.ts`
+- `schemas/Trends.test.ts`
+- `utils/resolve-thresholds.test.ts`
+- `utils/compute-trend.test.ts`
+- `cli/lib/format-trends.test.ts`
+- `cli/lib/format-doctor.test.ts`
+
+**Modified test files:** `schemas/Coverage.test.ts`,
+`schemas/Options.test.ts`, `layers/CacheWriterLive.test.ts`,
+`layers/CacheReaderLive.test.ts`, `layers/CoverageAnalyzerLive.test.ts`,
+`layers/ReporterLive.test.ts`, `reporter.test.ts`, `plugin.test.ts`,
+`cli/lib/format-coverage.test.ts`, `cli/lib/format-console.test.ts`,
+`cli/lib/resolve-cache-dir.test.ts`
+
+**Source files:**
+
+- `package/src/schemas/Thresholds.ts`, `package/src/schemas/Baselines.ts`,
+  `package/src/schemas/Trends.ts`
+- `package/src/utils/resolve-thresholds.ts`,
+  `package/src/utils/compute-trend.ts`
+- `package/src/cli/commands/cache.ts`,
+  `package/src/cli/commands/doctor.ts`,
+  `package/src/cli/commands/trends.ts`
+- `package/src/cli/lib/format-doctor.ts`,
+  `package/src/cli/lib/format-trends.ts`
+
+**Depends on:** Phase 2 (Effect services, CacheReader/CacheWriter, CLI
+framework), Phase 3 (HistoryTracker, ReporterLive/CliLive composition)
 
 ---
 
@@ -262,6 +370,6 @@ CacheReader/CacheWriter, CliLive/ReporterLive composition)
 
 ---
 
-**Document Status:** Current -- reflects Phase 1, Phase 2, and Phase 3
-implementation as built. 350 tests across 30 files, all coverage metrics
-above 80%. All phases complete.
+**Document Status:** Current -- reflects Phase 1, Phase 2, Phase 3, and
+Phase 4 implementation as built. 429 tests across 36 files, all coverage
+metrics above 80%. All phases complete.
