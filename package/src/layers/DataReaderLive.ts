@@ -59,31 +59,68 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 					JOIN files f ON f.id = tm.file_id
 					WHERE tm.run_id = ${run.id} AND tm.state = 'failed'`;
 
-				const failedModuleReports = [];
-				for (const mod of failedModules) {
-					const tests = yield* sql<{
-						name: string;
-						full_name: string;
-						state: string;
-						duration: number | null;
-						flaky: number | null;
-						slow: number | null;
-						classification: string | null;
-					}>`SELECT name, full_name, state, duration, flaky, slow, classification
-						FROM test_cases WHERE module_id = ${mod.module_id}`;
+				// Bulk-fetch test cases and errors for all failed modules (3 queries instead of O(M×N))
+				const moduleIds = failedModules.map((m) => m.module_id);
 
-					const testReports = [];
-					for (const tc of tests) {
-						// Get errors for this test case
-						const tcErrors = yield* sql<{
-							message: string;
-							stack: string | null;
-							diff: string | null;
-						}>`SELECT message, stack, diff FROM test_errors
-							WHERE test_case_id IN (SELECT id FROM test_cases WHERE module_id = ${mod.module_id} AND full_name = ${tc.full_name})
-							AND run_id = ${run.id}`;
+				const allTestCases =
+					moduleIds.length > 0
+						? yield* sql<{
+								module_id: number;
+								test_case_id: number;
+								name: string;
+								full_name: string;
+								state: string;
+								duration: number | null;
+								flaky: number | null;
+								slow: number | null;
+								classification: string | null;
+							}>`SELECT tc.module_id, tc.id as test_case_id, tc.name, tc.full_name, tc.state, tc.duration, tc.flaky, tc.slow, tc.classification
+							FROM test_cases tc WHERE tc.module_id IN ${sql.in(moduleIds)}`
+						: [];
 
-						testReports.push({
+				const allErrors =
+					moduleIds.length > 0
+						? yield* sql<{
+								test_case_id: number | null;
+								module_id: number | null;
+								scope: string;
+								message: string;
+								stack: string | null;
+								diff: string | null;
+							}>`SELECT te.test_case_id, te.module_id, te.scope, te.message, te.stack, te.diff
+							FROM test_errors te
+							WHERE te.run_id = ${run.id}
+							  AND te.module_id IN ${sql.in(moduleIds)}`
+						: [];
+
+				// Group in TypeScript
+				const testsByModule = new Map<number, typeof allTestCases>();
+				for (const tc of allTestCases) {
+					const arr = testsByModule.get(tc.module_id);
+					if (arr) arr.push(tc);
+					else testsByModule.set(tc.module_id, [tc]);
+				}
+				const errorsByTestCase = new Map<number, typeof allErrors>();
+				const errorsByModule = new Map<number, typeof allErrors>();
+				for (const e of allErrors) {
+					if (e.scope === "test" && e.test_case_id != null) {
+						const arr = errorsByTestCase.get(e.test_case_id);
+						if (arr) arr.push(e);
+						else errorsByTestCase.set(e.test_case_id, [e]);
+					} else if (e.scope === "module" && e.module_id != null) {
+						const arr = errorsByModule.get(e.module_id);
+						if (arr) arr.push(e);
+						else errorsByModule.set(e.module_id, [e]);
+					}
+				}
+
+				const failedModuleReports = failedModules.map((mod) => {
+					const tests = testsByModule.get(mod.module_id) ?? [];
+					const modErrors = errorsByModule.get(mod.module_id) ?? [];
+
+					const testReports = tests.map((tc) => {
+						const tcErrors = errorsByTestCase.get(tc.test_case_id) ?? [];
+						return {
 							name: tc.name,
 							fullName: tc.full_name,
 							state: tc.state as "passed" | "failed" | "skipped" | "pending",
@@ -109,18 +146,10 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 											| "recovered",
 									}
 								: {}),
-						});
-					}
+						};
+					});
 
-					// Get module-level errors
-					const modErrors = yield* sql<{
-						message: string;
-						stack: string | null;
-						diff: string | null;
-					}>`SELECT message, stack, diff FROM test_errors
-						WHERE module_id = ${mod.module_id} AND scope = 'module' AND run_id = ${run.id}`;
-
-					failedModuleReports.push({
+					return {
 						file: mod.file_path,
 						state: mod.module_state as "passed" | "failed" | "skipped" | "pending",
 						...(mod.module_duration != null ? { duration: mod.module_duration } : {}),
@@ -134,8 +163,8 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 								}
 							: {}),
 						tests: testReports,
-					});
-				}
+					};
+				});
 
 				// Get unhandled errors
 				const unhandledErrors = yield* sql<{

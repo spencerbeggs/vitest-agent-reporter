@@ -25,9 +25,13 @@ import { stripConsoleReporters } from "./utils/strip-console-reporters.js";
  *
  * @internal
  */
-function resolveFormat(strategy: "own" | "complement", explicit?: OutputFormat): OutputFormat {
+function resolveFormat(strategy: "own" | "complement", env: Environment, explicit?: OutputFormat): OutputFormat {
 	if (explicit) return explicit;
-	return strategy === "own" ? "markdown" : "vitest-bypass";
+	if (strategy === "own") {
+		// "own" mode: agent gets our markdown, humans get silent (Vitest handles their output)
+		return env === "agent-shell" ? "markdown" : "silent";
+	}
+	return "vitest-bypass";
 }
 
 /**
@@ -88,8 +92,8 @@ export function AgentPlugin(options: AgentPluginOptions = {}, _layer?: Layer.Lay
 			}
 			log("env:", env);
 
-			// Map strategy to format (backward compat)
-			const format = resolveFormat(strategy, options.format);
+			// Map strategy + environment to format
+			const format = resolveFormat(strategy, env, options.format);
 			log("format:", format);
 
 			// Determine if this is an agent environment (for reporter stripping)

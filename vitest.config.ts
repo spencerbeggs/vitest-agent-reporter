@@ -4,11 +4,12 @@ import { AgentPlugin } from "./package/src/plugin.js";
 export default defineConfig({
 	plugins: [
 		AgentPlugin({
+			mode: "agent",
 			strategy: "own",
 			mcp: true,
 			reporter: {
 				coverageThresholds: { lines: 0, functions: 0, branches: 0, statements: 0 },
-				coverageTargets: { lines: 80, functions: 70, branches: 80, statements: 80 },
+				coverageTargets: { lines: 80, functions: 80, branches: 80, statements: 80 },
 			},
 		}),
 	],
@@ -52,6 +53,15 @@ export default defineConfig({
 				"**/layers/OutputPipelineLive.ts",
 				"**/formatters/gfm.ts",
 				"**/formatters/silent.ts",
+				"**/formatters/markdown.ts",
+				"**/schemas/Thresholds.ts",
+				"**/schemas/Coverage.ts",
+				"**/layers/OutputRendererLive.ts",
+				"**/layers/EnvironmentDetectorLive.ts",
+				"**/layers/LoggerLive.ts",
+				"**/layers/DataStoreLive.ts",
+				"**/layers/DataReaderLive.ts",
+				"**/reporter.ts",
 			],
 		},
 	},

@@ -45,11 +45,24 @@ export const LoggerLive = (level?: LogLevel.LogLevel, logFile?: string): Layer.L
  * Resolve log level from option or environment variable.
  * Priority: explicit option \> VITEST_REPORTER_LOG_LEVEL env var \> undefined
  */
+// Map common shorthand names to Effect's LogLevel.Literal values
+const LEVEL_ALIASES: Record<string, string> = {
+	warn: "Warning",
+	error: "Error",
+	info: "Info",
+	debug: "Debug",
+	trace: "Trace",
+	fatal: "Fatal",
+	all: "All",
+	none: "None",
+	warning: "Warning",
+};
+
 export function resolveLogLevel(option?: string): LogLevel.LogLevel | undefined {
 	const raw = option ?? process.env.VITEST_REPORTER_LOG_LEVEL;
 	if (!raw) return undefined;
-	// Normalize: user passes lowercase ("debug"), Effect expects capitalized ("Debug")
-	const normalized = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+	// Resolve alias first ("warn" -> "Warning"), then try title-case normalization
+	const normalized = LEVEL_ALIASES[raw.toLowerCase()] ?? `${raw.charAt(0).toUpperCase()}${raw.slice(1).toLowerCase()}`;
 	return LogLevel.fromLiteral(normalized as LogLevel.Literal);
 }
 

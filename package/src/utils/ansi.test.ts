@@ -18,6 +18,11 @@ describe("ansi", () => {
 		expect(result).toContain("\x1b[");
 		expect(result).toContain("hello");
 	});
+
+	it("returns plain text for unknown color name", () => {
+		const result = ansi("hello", "nonexistent");
+		expect(result).toBe("hello");
+	});
 });
 
 describe("stripAnsi", () => {

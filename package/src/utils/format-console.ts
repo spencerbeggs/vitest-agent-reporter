@@ -157,8 +157,9 @@ export function formatConsoleMarkdown(report: AgentReport, options: ConsoleForma
 		const tier = determineTier(report);
 
 		if (tier === "green") {
-			lines.push(`Coverage: all targets met | trending ${direction} over ${runCount} runs`);
-			lines.push("");
+			// Green tier: append trend inline to the header (no separate line)
+			const trendNote = `Coverage: all targets met | trending ${direction} over ${runCount} runs`;
+			lines[0] = `${lines[0]} — ${trendNote}`;
 		} else if (tier === "yellow") {
 			const belowTargetCount = report.coverage.belowTarget?.length ?? 0;
 			let summary = `Coverage: ${belowTargetCount} file${belowTargetCount !== 1 ? "s" : ""} below target`;
@@ -334,8 +335,6 @@ export function formatConsoleMarkdown(report: AgentReport, options: ConsoleForma
 				lines.push(`- Run \`vitest-agent-reporter history\` for failure trends`);
 			}
 		}
-		lines.push("");
-	} else {
 		lines.push("");
 	}
 

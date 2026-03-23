@@ -385,6 +385,121 @@ describe("CoverageAnalyzerLive", () => {
 	});
 });
 
+describe("CoverageAnalyzerLive -- pattern thresholds and belowTarget", () => {
+	it("uses pattern-specific threshold when file path matches a glob", async () => {
+		const map = mockCoverageMap({
+			"src/utils.ts": {
+				summary: { statements: 60, branches: 60, functions: 60, lines: 60 },
+				uncoveredLines: [10, 11],
+			},
+		});
+
+		// Global threshold is 80, but pattern for src/utils.ts is only 50
+		const result = await run(
+			Effect.flatMap(CoverageAnalyzer, (ca) =>
+				ca.process(map, {
+					thresholds: {
+						global: { lines: 80, functions: 80, branches: 80, statements: 80 },
+						perFile: false,
+						patterns: [["src/utils.ts", { lines: 50, functions: 50, branches: 50, statements: 50 }]],
+					},
+					includeBareZero: false,
+				}),
+			),
+		);
+
+		const report = Option.getOrThrow(result);
+		// File is above the pattern threshold (60 > 50), so should NOT be in lowCoverage
+		expect(report.lowCoverageFiles).not.toContain("src/utils.ts");
+	});
+
+	it("uses glob pattern matching with ** wildcard", async () => {
+		const map = mockCoverageMap({
+			"src/lib/deep/file.ts": {
+				summary: { statements: 55, branches: 55, functions: 55, lines: 55 },
+				uncoveredLines: [1, 2, 3],
+			},
+		});
+
+		const result = await run(
+			Effect.flatMap(CoverageAnalyzer, (ca) =>
+				ca.process(map, {
+					thresholds: {
+						global: { lines: 80, functions: 80, branches: 80, statements: 80 },
+						perFile: false,
+						patterns: [["src/**/*.ts", { lines: 50, functions: 50, branches: 50, statements: 50 }]],
+					},
+					includeBareZero: false,
+				}),
+			),
+		);
+
+		const report = Option.getOrThrow(result);
+		// 55 > 50 pattern threshold, so NOT in lowCoverage
+		expect(report.lowCoverageFiles).not.toContain("src/lib/deep/file.ts");
+	});
+
+	it("populates belowTarget when file is above threshold but below target", async () => {
+		const map = mockCoverageMap({
+			"src/partial.ts": {
+				summary: { statements: 75, branches: 75, functions: 75, lines: 75 },
+				uncoveredLines: [20, 21, 22],
+			},
+		});
+
+		const result = await run(
+			Effect.flatMap(CoverageAnalyzer, (ca) =>
+				ca.process(map, {
+					thresholds: {
+						global: { lines: 70, functions: 70, branches: 70, statements: 70 },
+						perFile: false,
+						patterns: [],
+					},
+					targets: {
+						global: { lines: 90, functions: 90, branches: 90, statements: 90 },
+						perFile: false,
+						patterns: [],
+					},
+					includeBareZero: false,
+				}),
+			),
+		);
+
+		const report = Option.getOrThrow(result);
+		// Above threshold (75 > 70) so NOT in lowCoverage
+		expect(report.lowCoverageFiles).not.toContain("src/partial.ts");
+		// Below target (75 < 90) so should be in belowTarget
+		expect(report.belowTargetFiles).toContain("src/partial.ts");
+		expect(report.belowTarget).toHaveLength(1);
+	});
+
+	it("does not populate belowTarget fields when no targets are configured", async () => {
+		const map = mockCoverageMap({
+			"src/a.ts": {
+				summary: { statements: 95, branches: 95, functions: 95, lines: 95 },
+				uncoveredLines: [],
+			},
+		});
+
+		const result = await run(
+			Effect.flatMap(CoverageAnalyzer, (ca) =>
+				ca.process(map, {
+					thresholds: {
+						global: { lines: 80, functions: 80, branches: 80, statements: 80 },
+						perFile: false,
+						patterns: [],
+					},
+					includeBareZero: false,
+				}),
+			),
+		);
+
+		const report = Option.getOrThrow(result);
+		expect(report.belowTarget).toBeUndefined();
+		expect(report.belowTargetFiles).toBeUndefined();
+	});
+});
+
 describe("CoverageAnalyzerTest", () => {
 	it("process returns Option.some when data is provided", async () => {
 		const cannedData: CoverageReport = {

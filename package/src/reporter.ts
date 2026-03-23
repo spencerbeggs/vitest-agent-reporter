@@ -680,7 +680,7 @@ export class AgentReporter {
 			yield* Effect.logDebug("pipeline rendered").pipe(Effect.annotateLogs({ outputs: pipelineOutputs.length }));
 			for (const output of pipelineOutputs) {
 				if (output.target === "stdout") {
-					process.stdout.write(`${output.content}\n`);
+					process.stdout.write(`${output.content.trimEnd()}\n`);
 				} else if (output.target === "github-summary") {
 					const summaryFile = opts.githubSummaryFile ?? process.env.GITHUB_STEP_SUMMARY;
 					if (summaryFile) {
