@@ -1,0 +1,8 @@
+{
+	"mcpServers": {
+		"vitest-agent-reporter": {
+			"command": "npx",
+			"args": ["vitest-agent-reporter-mcp"]
+		}
+	}
+}

@@ -2,22 +2,21 @@
 
 The reporter tracks per-test pass/fail outcomes across runs in a 10-run
 sliding window. Each test is classified based on its history, and
-classifications appear in both console output and JSON cache files.
+classifications appear in both console output and the SQLite database.
 
 ## How It Works
 
 Every time `AgentReporter.onTestRunEnd` fires, the reporter:
 
 1. Extracts all test outcomes (pass/fail) from the current run
-2. Reads the existing history file for each project
+2. Reads the existing history from the SQLite database for each project
 3. Prepends the current run to each test's history, pruning to 10 entries
 4. Classifies each test based on its updated history
 5. Attaches classifications to the test report
-6. Writes the updated history file
+6. Writes the updated history to the database
 
 History is always written -- there is no toggle. The data is lightweight
-(10 entries per test, one file per project) and only useful when it has
-been accumulating.
+(10 entries per test) and only useful when it has been accumulating.
 
 ## Classifications
 
@@ -50,33 +49,9 @@ The "Next steps" section prioritizes actions based on classifications:
 1. **New failures** -- most likely caused by recent changes
 2. **Persistent failures** -- pre-existing, may not be yours
 3. **Flaky tests** -- may pass on retry
-4. Re-run commands and cache file pointer
+4. Re-run commands for affected files
 5. Hint to run `vitest-agent-reporter history` for deeper analysis
-
-## History Files
-
-History is stored per project at
-`{cacheDir}/history/{project}.history.json`:
-
-```json
-{
-  "project": "default",
-  "updatedAt": "2026-03-21T00:00:00.000Z",
-  "tests": [
-    {
-      "fullName": "Suite > test name",
-      "runs": [
-        { "timestamp": "2026-03-21T00:00:00.000Z", "state": "passed" },
-        { "timestamp": "2026-03-20T00:00:00.000Z", "state": "failed" }
-      ]
-    }
-  ]
-}
-```
-
-Runs are stored most-recent-first and pruned to 10 entries. Only
-`passed` and `failed` states are tracked -- skipped and pending tests
-do not add entries, preserving their prior history.
+6. MCP tool hints (when `mcp: true` is set)
 
 ## CLI History Command
 
@@ -91,6 +66,16 @@ This shows flaky tests (sorted by fail rate), persistent failures
 entry includes a P/F visualization showing the run pattern over time.
 
 See [CLI Commands](cli.md) for details.
+
+## MCP Tools
+
+The MCP server provides tools for querying history data:
+
+- **`test_history`** -- flaky, persistent, and recovered tests with run
+  visualization
+- **`test_errors`** -- search errors by type or message across projects
+
+See [MCP Server](mcp.md) for the full tool reference.
 
 ## Programmatic Access
 

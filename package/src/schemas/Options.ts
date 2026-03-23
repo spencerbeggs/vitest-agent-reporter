@@ -5,7 +5,7 @@
  */
 
 import { Schema } from "effect";
-import { ConsoleOutputMode, ConsoleStrategy, PluginMode } from "./Common.js";
+import { ConsoleOutputMode, ConsoleStrategy, DetailLevel, OutputFormat, PluginMode } from "./Common.js";
 
 /**
  * Configuration options for AgentReporter.
@@ -21,6 +21,13 @@ export const AgentReporterOptions = Schema.Struct({
 	includeBareZero: Schema.optional(Schema.Boolean),
 	githubActions: Schema.optional(Schema.Boolean),
 	githubSummaryFile: Schema.optional(Schema.String),
+	format: Schema.optional(OutputFormat),
+	detail: Schema.optional(DetailLevel),
+	mode: Schema.optional(PluginMode),
+	logLevel: Schema.optional(Schema.String),
+	logFile: Schema.optional(Schema.String),
+	mcp: Schema.optional(Schema.Boolean),
+	projectFilter: Schema.optional(Schema.String),
 }).annotations({ identifier: "AgentReporterOptions" });
 export type AgentReporterOptions = typeof AgentReporterOptions.Type;
 
@@ -32,7 +39,11 @@ export type AgentReporterOptions = typeof AgentReporterOptions.Type;
  */
 export const AgentPluginOptions = Schema.Struct({
 	mode: Schema.optional(PluginMode),
-	consoleStrategy: Schema.optional(ConsoleStrategy),
+	strategy: Schema.optional(ConsoleStrategy),
+	format: Schema.optional(OutputFormat),
+	logLevel: Schema.optional(Schema.String),
+	logFile: Schema.optional(Schema.String),
+	mcp: Schema.optional(Schema.Boolean),
 	reporter: Schema.optional(
 		Schema.Struct({
 			cacheDir: Schema.optional(Schema.String),

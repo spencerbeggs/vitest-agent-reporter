@@ -7,22 +7,17 @@
 import { Command, Options } from "@effect/cli";
 import { Effect, Option } from "effect";
 import type { HistoryRecord } from "../../schemas/History.js";
-import { CacheReader } from "../../services/CacheReader.js";
+import { DataReader } from "../../services/DataReader.js";
+import { splitProject } from "../../utils/split-project.js";
 import { formatHistory } from "../lib/format-history.js";
-import { resolveCacheDir } from "../lib/resolve-cache-dir.js";
 
-const cacheDirOption = Options.text("cache-dir").pipe(
-	Options.withAlias("d"),
-	Options.withDescription("Cache directory path"),
-	Options.optional,
-);
+const formatOption = Options.withDefault(Options.choice("format", ["markdown", "json"]), "markdown");
 
-export const historyCommand = Command.make("history", { cacheDir: cacheDirOption }, ({ cacheDir }) =>
+export const historyCommand = Command.make("history", { format: formatOption }, ({ format }) =>
 	Effect.gen(function* () {
-		const reader = yield* CacheReader;
-		const dir = Option.isSome(cacheDir) ? cacheDir.value : yield* resolveCacheDir;
+		const reader = yield* DataReader;
 
-		const manifestOpt = yield* reader.readManifest(dir);
+		const manifestOpt = yield* reader.getManifest();
 		if (Option.isNone(manifestOpt)) {
 			yield* Effect.sync(() => process.stdout.write("No test results found. Run tests first.\n"));
 			return;
@@ -31,13 +26,18 @@ export const historyCommand = Command.make("history", { cacheDir: cacheDirOption
 		const manifest = manifestOpt.value;
 		const records: HistoryRecord[] = [];
 		for (const entry of manifest.projects) {
-			const history = yield* reader.readHistory(dir, entry.project);
+			const { project, subProject } = splitProject(entry.project);
+			const history = yield* reader.getHistory(project, subProject);
 			if (history.tests.length > 0) {
 				records.push(history);
 			}
 		}
 
-		const output = formatHistory(records);
-		yield* Effect.sync(() => process.stdout.write(`${output}\n`));
+		if (format === "json") {
+			yield* Effect.sync(() => process.stdout.write(`${JSON.stringify(records, null, 2)}\n`));
+		} else {
+			const output = formatHistory(records);
+			yield* Effect.sync(() => process.stdout.write(`${output}\n`));
+		}
 	}),
 );

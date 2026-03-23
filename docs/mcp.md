@@ -1,0 +1,283 @@
+# MCP Server
+
+The `vitest-agent-reporter-mcp` binary provides an
+[MCP](https://modelcontextprotocol.io/) server over stdio transport,
+exposing 16 tools for querying test data, managing notes, and running
+tests. LLM agent hosts like Claude Code can call these tools directly
+during a session.
+
+## How It Works
+
+After each test run, `AgentReporter` writes structured data to a SQLite
+database. The MCP server reads this database on demand -- no background
+process, no polling. Each tool call opens the database, executes a query,
+and returns the result.
+
+The server uses the `@modelcontextprotocol/sdk` package and communicates
+over stdio (stdin/stdout JSON-RPC).
+
+## Starting the Server
+
+### Automatic (via Claude Code plugin)
+
+The Claude Code plugin registers the MCP server automatically. No manual
+configuration needed:
+
+```bash
+/plugin marketplace add spencerbeggs/bot
+/plugin install vitest-agent-reporter@spencerbeggs-bot --scope project
+```
+
+This writes a `.mcp.json` configuration that Claude Code picks up:
+
+```json
+{
+  "mcpServers": {
+    "vitest-reporter": {
+      "command": "npx",
+      "args": ["vitest-agent-reporter-mcp"]
+    }
+  }
+}
+```
+
+### Manual
+
+Start the server directly:
+
+```bash
+npx vitest-agent-reporter-mcp
+```
+
+Or add it to your `.mcp.json` manually:
+
+```json
+{
+  "mcpServers": {
+    "vitest-reporter": {
+      "command": "npx",
+      "args": ["vitest-agent-reporter-mcp"]
+    }
+  }
+}
+```
+
+## Tool Reference
+
+### Read-Only Tools
+
+These tools query the SQLite database and return markdown-formatted
+results.
+
+#### `test_status`
+
+Per-project test pass/fail state from the most recent run.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Filter to a specific project |
+
+#### `test_overview`
+
+Test landscape summary with per-project run metrics.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Filter to a specific project |
+
+#### `test_coverage`
+
+Coverage gap analysis with per-metric thresholds and targets.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project name |
+| `subProject` | `string` | No | Sub-project name |
+
+#### `test_history`
+
+Flaky tests, persistent failures, and recovered tests with run
+visualization.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | Yes | Project name |
+| `subProject` | `string` | No | Sub-project name |
+
+#### `test_trends`
+
+Per-project coverage trend with direction, metrics, and sparkline
+trajectory.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | Yes | Project name |
+| `subProject` | `string` | No | Sub-project name |
+| `limit` | `number` | No | Max number of trend entries to return |
+
+#### `test_errors`
+
+Detailed test errors with diffs and stack traces for a project.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | Yes | Project name |
+| `subProject` | `string` | No | Sub-project name |
+| `errorName` | `string` | No | Filter to a specific error name |
+
+#### `test_for_file`
+
+Find test modules that cover a given source file.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `filePath` | `string` | Yes | Source file path to find tests for |
+
+#### `configure`
+
+View captured Vitest settings for a test run.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `settingsHash` | `string` | No | Settings hash from a manifest entry or test run |
+
+#### `cache_health`
+
+Database health diagnostic: manifest presence, project states, staleness.
+
+No parameters.
+
+### Mutation Tools
+
+#### `run_tests`
+
+Execute vitest for specific files or patterns.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `files` | `string[]` | No | Test file paths to run |
+| `project` | `string` | No | Project name to filter |
+| `timeout` | `number` | No | Timeout in seconds (default: 120) |
+
+Returns JSON with the test run result.
+
+### Note Tools
+
+The notes system provides CRUD operations and full-text search for
+persisting debugging notes across sessions. Notes can be scoped to a
+project, module, suite, test, or left as free-form.
+
+#### `note_create`
+
+Create a scoped note.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `title` | `string` | Yes | Note title |
+| `content` | `string` | Yes | Note content (markdown supported) |
+| `scope` | `string` | Yes | One of: `global`, `project`, `module`, `suite`, `test`, `note` |
+| `project` | `string` | No | Project name (for project/module/suite/test scopes) |
+| `subProject` | `string` | No | Sub-project name |
+| `testFullName` | `string` | No | Full test name (for test scope) |
+| `modulePath` | `string` | No | Module file path (for module scope) |
+| `parentNoteId` | `number` | No | Parent note ID for threading |
+| `createdBy` | `string` | No | Creator identifier |
+| `expiresAt` | `string` | No | ISO 8601 expiration timestamp |
+| `pinned` | `boolean` | No | Pin the note |
+
+Returns `{ id: number }` with the created note ID.
+
+#### `note_list`
+
+List notes with optional filters.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `scope` | `string` | No | Filter by scope |
+| `project` | `string` | No | Filter by project |
+| `testFullName` | `string` | No | Filter by test full name |
+
+Returns an array of note objects.
+
+#### `note_get`
+
+Read a note by ID.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `number` | Yes | Note ID |
+
+Returns the note object or null.
+
+#### `note_update`
+
+Update an existing note.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `number` | Yes | Note ID to update |
+| `title` | `string` | No | New title |
+| `content` | `string` | No | New content |
+| `pinned` | `boolean` | No | Pin or unpin |
+| `expiresAt` | `string` | No | New expiration (ISO 8601) |
+
+Returns `{ success: true }`.
+
+#### `note_delete`
+
+Delete a note by ID.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `number` | Yes | Note ID to delete |
+
+Returns `{ success: true }`.
+
+#### `note_search`
+
+Full-text search across note titles and content.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `query` | `string` | Yes | Search query |
+
+Returns an array of matching note objects.
+
+## Notes System
+
+Notes persist debugging findings, test observations, and planning context
+across sessions. They are stored in the same SQLite database as test data.
+
+### Scopes
+
+| Scope | Use Case |
+| --- | --- |
+| `global` | Project-wide observations |
+| `project` | Scoped to a Vitest project |
+| `module` | Scoped to a test file |
+| `suite` | Scoped to a test suite |
+| `test` | Scoped to an individual test |
+| `note` | Reply to another note (threaded) |
+
+### Best Practices
+
+- Use `note_create` to record debugging findings for future sessions
+- Use `note_search` to check for existing context before investigating
+  a test failure
+- Use `pinned: true` for important notes that should not be missed
+- Use `expiresAt` for temporary notes (e.g., "skip this test until fix
+  is deployed")
+- Use the `note` scope with `parentNoteId` for threaded discussions on
+  a finding
+
+### Example Workflow
+
+```text
+Agent: "test_history" shows test X is flaky
+
+Agent: "note_search" for test X -- finds note from previous session:
+  "Flaky due to race condition in async setup. Wrapping in retry
+   workaround until #123 is merged."
+
+Agent: Skips investigation, focuses on other failures
+```

@@ -38,3 +38,9 @@ docs/superpowers/
 
 # vitest-agent-reporter cache (standalone mode default; plugin mode uses node_modules/.vite/)
 .vitest-agent-reporter/
+
+# Git worktrees
+.worktrees/
+
+# Local plugin development
+.vitest-agent-reporter-db

@@ -27,69 +27,16 @@ JSON encode/decode uses `Schema.decodeUnknownSync` and
 | `MetricThresholds` | Per-metric threshold values (lines, functions, branches, statements) |
 | `PatternThresholds` | A glob pattern paired with metric thresholds |
 | `ResolvedThresholds` | Fully resolved thresholds with global, perFile, and patterns |
-| `CoverageBaselines` | Auto-ratcheting high-water marks stored in cache |
+| `CoverageBaselines` | Auto-ratcheting high-water marks stored in database |
 | `TrendEntry` | Single coverage trend data point |
 | `TrendRecord` | Per-project trend sliding window (50 entries) |
 | `AgentReporterOptions` | Reporter configuration options |
 | `AgentPluginOptions` | Plugin configuration options |
-
-## Decoding (reading a report file)
-
-```typescript
-import { readFile } from "node:fs/promises";
-import { AgentReport } from "vitest-agent-reporter";
-import { Schema } from "effect";
-
-const json = await readFile(
-  ".vitest-agent-reporter/reports/default.json",
-  "utf-8",
-);
-const report = Schema.decodeUnknownSync(AgentReport)(JSON.parse(json));
-
-console.log(report.summary.failed); // number of failed tests
-console.log(report.failedFiles);    // array of failing file paths
-```
-
-## Reading the manifest
-
-```typescript
-import { readFile } from "node:fs/promises";
-import { CacheManifest } from "vitest-agent-reporter";
-import { Schema } from "effect";
-
-const json = await readFile(
-  "node_modules/.cache/vitest-agent-reporter/manifest.json",
-  "utf-8",
-);
-const manifest = Schema.decodeUnknownSync(CacheManifest)(JSON.parse(json));
-
-// Find projects with failures
-const failing = manifest.projects.filter((p) => p.lastResult === "failed");
-for (const entry of failing) {
-  console.log(`${entry.project}: ${entry.reportFile}`);
-}
-```
-
-## Reading failure history
-
-```typescript
-import { readFile } from "node:fs/promises";
-import { HistoryRecord } from "vitest-agent-reporter";
-import { Schema } from "effect";
-
-const json = await readFile(
-  ".vitest-agent-reporter/history/default.history.json",
-  "utf-8",
-);
-const history = Schema.decodeUnknownSync(HistoryRecord)(JSON.parse(json));
-
-for (const test of history.tests) {
-  const failures = test.runs.filter((r) => r.state === "failed").length;
-  if (failures > 0) {
-    console.log(`${test.fullName}: ${failures}/${test.runs.length} failed`);
-  }
-}
-```
+| `Environment` | Runtime environment literal (`agent-shell`, `terminal`, `ci-github`, `ci-generic`) |
+| `Executor` | Executor type literal (`human`, `agent`, `ci`) |
+| `OutputFormat` | Output format literal (`markdown`, `json`, `vitest-bypass`, `silent`) |
+| `DetailLevel` | Detail level literal (`minimal`, `neutral`, `standard`, `verbose`) |
+| `ConsoleStrategy` | Plugin console strategy literal (`own`, `complement`) |
 
 ## Type Inference
 
@@ -112,53 +59,57 @@ import { AgentReport } from "vitest-agent-reporter";
 type AgentReportType = typeof AgentReport.Type;
 ```
 
-## Validating Report Files
+## Programmatic Database Access
 
-Use schemas for custom validation:
-
-```typescript
-import { readFile } from "node:fs/promises";
-import { AgentReport } from "vitest-agent-reporter";
-import { Schema } from "effect";
-
-const raw = await readFile(
-  ".vitest-agent-reporter/reports/default.json",
-  "utf-8",
-);
-
-try {
-  const report = Schema.decodeUnknownSync(AgentReport)(JSON.parse(raw));
-  console.log("Valid report:", report.summary);
-} catch (error) {
-  console.error("Invalid report:", error);
-}
-```
-
-## Programmatic Cache Access
-
-For consumers who want to read cached data via Effect services, the
-package exports `CacheReader` and `CacheReaderLive`:
+For consumers who want to read data via Effect services, the package
+exports `DataReader` and `DataReaderLive`:
 
 ```typescript
 import {
-  CacheReader,
-  CacheReaderLive,
-  CacheError,
+  DataReader,
+  DataReaderLive,
+  DataStoreError,
 } from "vitest-agent-reporter";
 import { Effect, Layer } from "effect";
 import { NodeFileSystem } from "@effect/platform-node";
 
 const program = Effect.gen(function* () {
-  const reader = yield* CacheReader;
-  const manifest = yield* reader.readManifest("/path/to/cache");
-  // ... process manifest and reports
+  const reader = yield* DataReader;
+  const runs = yield* reader.getRunsByProject();
+  // ... process project run summaries
 });
 
-const live = CacheReaderLive.pipe(
+const live = DataReaderLive.pipe(
   Layer.provideMerge(NodeFileSystem.layer),
 );
 
 await Effect.runPromise(Effect.provide(program, live));
+```
+
+For write operations, use `DataStore` and `DataStoreLive`:
+
+```typescript
+import {
+  DataStore,
+  DataStoreLive,
+} from "vitest-agent-reporter";
+```
+
+## Output Pipeline
+
+The output pipeline services are exported for custom rendering workflows:
+
+```typescript
+import {
+  OutputRenderer,
+  OutputPipelineLive,
+  EnvironmentDetector,
+} from "vitest-agent-reporter";
+import type {
+  Formatter,
+  FormatterContext,
+  RenderedOutput,
+} from "vitest-agent-reporter";
 ```
 
 ## Schema Reference
@@ -170,7 +121,7 @@ The top-level report written per project:
 ```typescript
 {
   timestamp: string;          // ISO 8601
-  project?: string;           // project name (monorepo only)
+  project?: string;           // project name (monorepo)
   reason: "passed" | "failed" | "interrupted";
   summary: {
     total: number;
@@ -286,8 +237,8 @@ An individual test case:
 ```typescript
 {
   project: string;           // project name
-  reportFile: string;        // relative path: "reports/default.json"
-  historyFile?: string;      // "history/default.history.json"
+  reportFile: string;        // relative path (legacy compat)
+  historyFile?: string;      // relative path (legacy compat)
   lastRun: string | null;    // ISO 8601 or null before first run
   lastResult: "passed" | "failed" | "interrupted" | null;
 }
@@ -385,4 +336,28 @@ A tuple of glob pattern and metric thresholds:
 {
   entries: TrendEntry[];       // sliding window, max 50
 }
+```
+
+### Environment
+
+```typescript
+"agent-shell" | "terminal" | "ci-github" | "ci-generic"
+```
+
+### Executor
+
+```typescript
+"human" | "agent" | "ci"
+```
+
+### OutputFormat
+
+```typescript
+"markdown" | "json" | "vitest-bypass" | "silent"
+```
+
+### DetailLevel
+
+```typescript
+"minimal" | "neutral" | "standard" | "verbose"
 ```

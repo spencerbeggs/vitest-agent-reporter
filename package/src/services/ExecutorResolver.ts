@@ -1,0 +1,10 @@
+import type { Effect } from "effect";
+import { Context } from "effect";
+import type { Environment, Executor } from "../schemas/Common.js";
+
+export class ExecutorResolver extends Context.Tag("vitest-agent-reporter/ExecutorResolver")<
+	ExecutorResolver,
+	{
+		readonly resolve: (env: Environment, mode: "auto" | "agent" | "silent") => Effect.Effect<Executor>;
+	}
+>() {}

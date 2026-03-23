@@ -1,39 +1,39 @@
 # CLI Commands
 
-The `vitest-agent-reporter` CLI reads cached test data for on-demand
-queries. It does not run tests or call AI providers.
+The `vitest-agent-reporter` CLI queries the SQLite database for on-demand
+test landscape queries. It does not run tests or call AI providers.
 
-All commands accept `--cache-dir, -d` to specify the cache directory.
-When omitted, the CLI checks common locations automatically.
+All commands accept `--format` to switch between `markdown` (default) and
+`json` output.
 
 ## cache
 
-Manage the reporter cache directory.
+Manage the reporter database.
 
 ### cache path
 
-Print the resolved cache directory path and exit.
+Print the resolved database file path and exit.
 
 ```bash
 npx vitest-agent-reporter cache path
 ```
 
-Useful for scripting or verifying which directory the CLI resolves to.
+Useful for scripting or verifying which database the CLI resolves to.
 
 ### cache clean
 
-Delete the entire cache directory.
+Delete the SQLite database file.
 
 ```bash
 npx vitest-agent-reporter cache clean
 ```
 
-Removes all cached reports, history, baselines, and trend data. Run
-tests again to regenerate.
+Removes all persisted test data, history, baselines, trends, and notes.
+Run tests again to regenerate.
 
 ## doctor
 
-Diagnose cache health. Runs a series of checks and reports pass/fail
+Diagnose database health. Runs a series of checks and reports pass/fail
 for each:
 
 ```bash
@@ -42,11 +42,11 @@ npx vitest-agent-reporter doctor
 
 Checks performed:
 
-- **Cache found** -- can the cache directory be resolved?
-- **Manifest valid** -- is `manifest.json` present and parseable?
-- **Reports** -- do all referenced report files exist and decode?
-- **History** -- do all referenced history files exist and decode?
-- **Last run** -- is the cache stale (older than 24 hours)?
+- **Database found** -- can the database file be resolved?
+- **Manifest valid** -- is the manifest data present and consistent?
+- **Reports** -- do all referenced project runs have valid data?
+- **History** -- is history data present and consistent?
+- **Last run** -- is the data stale (older than 24 hours)?
 
 Exits with code 1 if any check fails. When issues are found, suggests
 running `vitest-agent-reporter cache clean` and re-running tests.
@@ -60,32 +60,30 @@ npx vitest-agent-reporter status
 ```
 
 Output includes a summary table with project names, last run timestamps,
-results, and report file paths. Failing projects show additional detail
-with failure counts and affected files.
+results, and test counts. Failing projects show additional detail with
+failure counts and affected files.
 
 ## overview
 
-Test landscape summary with file-to-test mapping and project discovery.
+Test landscape summary with per-project run metrics.
 
 ```bash
 npx vitest-agent-reporter overview
 ```
 
-Discovers test files via glob patterns, maps them to source files using
-naming conventions (strip `.test.`/`.spec.`), and shows the full test
-landscape. Useful for agents exploring an unfamiliar codebase.
+Shows the full test landscape with file-to-test mapping and project
+discovery. Useful for agents exploring an unfamiliar codebase.
 
 ## coverage
 
-Coverage gap analysis from cached report data.
+Coverage gap analysis from the database.
 
 ```bash
 npx vitest-agent-reporter coverage
 ```
 
-Reads the coverage threshold from each project's cached report (no CLI
-`--threshold` option). Shows files below threshold sorted by worst
-metric, with uncovered line ranges.
+Reads the coverage threshold from each project's stored data. Shows
+files below threshold sorted by worst metric, with uncovered line ranges.
 
 ## history
 
@@ -95,7 +93,7 @@ Failure trend analysis across runs.
 npx vitest-agent-reporter history
 ```
 
-Reads per-project history files and groups tests by classification:
+Queries per-project history data and groups tests by classification:
 
 - **Flaky tests** -- mixed pass/fail across recent runs, sorted by fail
   rate. Shows a P/F visualization (e.g., `PPFPPFPPFP`) with oldest
@@ -120,7 +118,7 @@ Coverage trend analysis across runs.
 npx vitest-agent-reporter trends
 ```
 
-Reads per-project trend files and displays:
+Queries per-project trend data and displays:
 
 - **Direction** -- whether coverage is improving, regressing, or stable
   over recent runs
@@ -130,7 +128,7 @@ Reads per-project trend files and displays:
   showing the progression
 
 Trend data is recorded automatically on each full test run and stored in
-`{cacheDir}/trends/{project}.trends.json` with a 50-entry sliding window.
+the SQLite database with a 50-entry sliding window.
 
 The trends command is most useful when you want to verify whether a
 coverage change is a one-time dip or part of a pattern. The console

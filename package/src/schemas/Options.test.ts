@@ -45,6 +45,33 @@ describe("AgentReporterOptions", () => {
 	});
 });
 
+describe("AgentReporterOptions format/detail/mode", () => {
+	it("accepts format option", () => {
+		const opts = Schema.decodeUnknownSync(AgentReporterOptions)({ format: "json" });
+		expect(opts.format).toBe("json");
+	});
+
+	it("accepts detail option", () => {
+		const opts = Schema.decodeUnknownSync(AgentReporterOptions)({ detail: "verbose" });
+		expect(opts.detail).toBe("verbose");
+	});
+
+	it("accepts mode option", () => {
+		const opts = Schema.decodeUnknownSync(AgentReporterOptions)({ mode: "agent" });
+		expect(opts.mode).toBe("agent");
+	});
+
+	it("accepts logLevel option", () => {
+		const opts = Schema.decodeUnknownSync(AgentReporterOptions)({ logLevel: "Debug" });
+		expect(opts.logLevel).toBe("Debug");
+	});
+
+	it("accepts logFile option", () => {
+		const opts = Schema.decodeUnknownSync(AgentReporterOptions)({ logFile: "./debug.log" });
+		expect(opts.logFile).toBe("./debug.log");
+	});
+});
+
 describe("AgentPluginOptions", () => {
 	it("decodes an empty object with all defaults", () => {
 		const result = Schema.decodeUnknownSync(AgentPluginOptions)({});
@@ -54,7 +81,7 @@ describe("AgentPluginOptions", () => {
 	it("decodes a fully specified object", () => {
 		const input = {
 			mode: "agent",
-			consoleStrategy: "own",
+			strategy: "own",
 			reporter: {
 				cacheDir: "/tmp/cache",
 				omitPassingTests: true,
@@ -68,7 +95,7 @@ describe("AgentPluginOptions", () => {
 		};
 		const result = Schema.decodeUnknownSync(AgentPluginOptions)(input);
 		expect(result.mode).toBe("agent");
-		expect(result.consoleStrategy).toBe("own");
+		expect(result.strategy).toBe("own");
 		expect(result.reporter?.cacheDir).toBe("/tmp/cache");
 	});
 
@@ -76,8 +103,8 @@ describe("AgentPluginOptions", () => {
 		expect(() => Schema.decodeUnknownSync(AgentPluginOptions)({ mode: "manual" })).toThrow();
 	});
 
-	it("rejects invalid consoleStrategy value", () => {
-		expect(() => Schema.decodeUnknownSync(AgentPluginOptions)({ consoleStrategy: "both" })).toThrow();
+	it("rejects invalid strategy value", () => {
+		expect(() => Schema.decodeUnknownSync(AgentPluginOptions)({ strategy: "both" })).toThrow();
 	});
 });
 

@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
 	ConsoleOutputMode,
 	ConsoleStrategy,
+	DetailLevel,
+	Environment,
+	Executor,
+	OutputFormat,
 	PackageManager,
 	PluginMode,
 	ReportError,
@@ -92,6 +96,41 @@ describe("PackageManager", () => {
 
 	it("rejects invalid values", () => {
 		expect(() => Schema.decodeUnknownSync(PackageManager)("deno")).toThrow();
+	});
+});
+
+describe("Environment", () => {
+	it("accepts valid environments", () => {
+		expect(Schema.decodeUnknownSync(Environment)("agent-shell")).toBe("agent-shell");
+		expect(Schema.decodeUnknownSync(Environment)("terminal")).toBe("terminal");
+		expect(Schema.decodeUnknownSync(Environment)("ci-github")).toBe("ci-github");
+		expect(Schema.decodeUnknownSync(Environment)("ci-generic")).toBe("ci-generic");
+	});
+});
+
+describe("Executor", () => {
+	it("accepts valid executors", () => {
+		expect(Schema.decodeUnknownSync(Executor)("human")).toBe("human");
+		expect(Schema.decodeUnknownSync(Executor)("agent")).toBe("agent");
+		expect(Schema.decodeUnknownSync(Executor)("ci")).toBe("ci");
+	});
+});
+
+describe("OutputFormat", () => {
+	it("accepts valid formats", () => {
+		expect(Schema.decodeUnknownSync(OutputFormat)("markdown")).toBe("markdown");
+		expect(Schema.decodeUnknownSync(OutputFormat)("json")).toBe("json");
+		expect(Schema.decodeUnknownSync(OutputFormat)("vitest-bypass")).toBe("vitest-bypass");
+		expect(Schema.decodeUnknownSync(OutputFormat)("silent")).toBe("silent");
+	});
+});
+
+describe("DetailLevel", () => {
+	it("accepts valid detail levels", () => {
+		expect(Schema.decodeUnknownSync(DetailLevel)("minimal")).toBe("minimal");
+		expect(Schema.decodeUnknownSync(DetailLevel)("neutral")).toBe("neutral");
+		expect(Schema.decodeUnknownSync(DetailLevel)("standard")).toBe("standard");
+		expect(Schema.decodeUnknownSync(DetailLevel)("verbose")).toBe("verbose");
 	});
 });
 

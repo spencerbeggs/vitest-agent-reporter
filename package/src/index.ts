@@ -37,6 +37,10 @@ export type { ReportError as ReportErrorType } from "./schemas/Common.js";
 export {
 	ConsoleOutputMode,
 	ConsoleStrategy,
+	DetailLevel,
+	Environment,
+	Executor,
+	OutputFormat,
 	PackageManager,
 	PluginMode,
 	ReportError,
@@ -57,13 +61,21 @@ export { TrendEntry as TrendEntrySchema, TrendRecord as TrendRecordSchema } from
 
 // --- Services (for programmatic access) ---
 
-export { CacheReaderLive } from "./layers/CacheReaderLive.js";
+export type { Formatter, FormatterContext, RenderedOutput } from "./formatters/types.js";
+export { DataReaderLive } from "./layers/DataReaderLive.js";
+export { DataStoreLive } from "./layers/DataStoreLive.js";
 export { HistoryTrackerLive } from "./layers/HistoryTrackerLive.js";
-export { AgentDetection } from "./services/AgentDetection.js";
-export { CacheReader } from "./services/CacheReader.js";
+export { OutputPipelineLive } from "./layers/OutputPipelineLive.js";
+export { DataReader } from "./services/DataReader.js";
+export { DataStore } from "./services/DataStore.js";
+export { DetailResolver } from "./services/DetailResolver.js";
+export { EnvironmentDetector } from "./services/EnvironmentDetector.js";
+export { ExecutorResolver } from "./services/ExecutorResolver.js";
+export { FormatSelector } from "./services/FormatSelector.js";
 export type { TestOutcome } from "./services/HistoryTracker.js";
 export { HistoryTracker } from "./services/HistoryTracker.js";
+export { OutputRenderer } from "./services/OutputRenderer.js";
 
 // --- Errors ---
 
-export { CacheError } from "./errors/CacheError.js";
+export { DataStoreError } from "./errors/DataStoreError.js";

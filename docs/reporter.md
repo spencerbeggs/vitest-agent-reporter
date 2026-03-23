@@ -5,7 +5,7 @@
 | Approach | Use When |
 | --- | --- |
 | `AgentPlugin` | You want zero-config environment detection and automatic reporter injection |
-| `AgentReporter` | You need full control over `consoleOutput` and `githubActions`, or are integrating with custom tooling |
+| `AgentReporter` | You need full control over output format, detail level, and GitHub Actions settings, or are integrating with custom tooling |
 
 The plugin is a thin wrapper that calls `AgentReporter` internally. Both
 produce identical output -- the difference is who manages the options.
@@ -24,8 +24,14 @@ const reporter = new AgentReporter({
   autoUpdate: true,
   coverageConsoleLimit: 10,
   includeBareZero: false,
+  format: "markdown",
+  detail: "standard",
   githubActions: false,
   githubSummaryFile: undefined,
+  logLevel: "info",
+  logFile: undefined,
+  mcp: false,
+  projectFilter: undefined,
 });
 ```
 
@@ -33,16 +39,22 @@ All options are optional. Defaults:
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `cacheDir` | `".vitest-agent-reporter"` | Directory for JSON cache files (relative to cwd) |
+| `cacheDir` | `".vitest-agent-reporter"` | Directory for the SQLite database (relative to cwd) |
 | `consoleOutput` | `"failures"` | `"failures"`, `"full"`, or `"silent"` |
-| `omitPassingTests` | `true` | Exclude passing tests from JSON reports |
+| `omitPassingTests` | `true` | Exclude passing tests from reports |
 | `coverageThresholds` | `{}` | Vitest-native threshold format (per-metric, per-glob) |
 | `coverageTargets` | -- | Aspirational targets (same format as thresholds) |
 | `autoUpdate` | `true` when targets set | Auto-ratchet baselines when coverage improves |
 | `coverageConsoleLimit` | `10` | Max low-coverage files in console |
 | `includeBareZero` | `false` | Include files where all metrics are 0% |
+| `format` | auto-detect | Output format: `"markdown"`, `"json"`, `"vitest-bypass"`, `"silent"` |
+| `detail` | auto-detect | Detail level: `"minimal"`, `"neutral"`, `"standard"`, `"verbose"` |
 | `githubActions` | auto-detect | Force GFM output on/off |
 | `githubSummaryFile` | `GITHUB_STEP_SUMMARY` env | Override GFM output path |
+| `logLevel` | `"info"` | Effect log level: `"debug"`, `"info"`, `"warn"`, `"error"`, `"none"` |
+| `logFile` | -- | Path to write log output (defaults to stderr) |
+| `mcp` | `false` | Show MCP tool hints in "Next steps" output |
+| `projectFilter` | -- | Glob pattern to filter which projects are included in output |
 
 Note: when using the plugin, `cacheDir` defaults to Vite's cache directory
 instead of `".vitest-agent-reporter"`. The reporter standalone uses a simpler default.
@@ -54,7 +66,7 @@ instead of `".vitest-agent-reporter"`. The reporter standalone uses a simpler de
 ### `onInit(vitest)`
 
 Called once at the start of the test run. Stores the Vitest instance for
-project enumeration (used in future overview generation).
+project enumeration.
 
 ### `onCoverage(coverage)`
 
@@ -68,16 +80,17 @@ peer dependency.
 
 The main hook where all output is generated. Processing steps:
 
-1. Ensure cache directory structure exists (`reports/` subdirectory)
+1. Initialize the SQLite database if needed
 2. Group test modules by `testModule.project.name`
 3. Process stashed coverage data (if available)
 4. Build per-project `AgentReport` objects
-5. Write per-project JSON files to `reports/`
-6. Write/update `manifest.json` at cache root
-7. Emit console markdown (unless `"silent"`)
+5. Write test runs, modules, test cases, errors, coverage, and history
+   to the SQLite database via `DataStore`
+6. Compute and write baselines and trends
+7. Emit console output (unless `"silent"`)
 8. Write GFM summary to `GITHUB_STEP_SUMMARY` (if GitHub Actions)
 
-File write failures are logged to stderr but never crash the test run.
+Database write failures are logged to stderr but never crash the test run.
 
 ## Vitest Configuration
 
@@ -98,7 +111,7 @@ export default defineConfig({
 ```
 
 This keeps Vitest's default reporter for human-readable output and adds
-`AgentReporter` in silent mode for JSON cache only.
+`AgentReporter` in silent mode for database persistence only.
 
 ### Agent-Only Setup
 
@@ -139,18 +152,8 @@ export default defineConfig({
 });
 ```
 
-In a monorepo with projects named `core:unit` and `api:integration`, the
-cache directory will contain:
-
-```text
-.vitest-agent-reporter/
-  manifest.json
-  reports/
-    core__unit.json
-    api__integration.json
-```
-
-Project names are sanitized for the filesystem: `/` and `:` become `__`.
+In a monorepo with projects named `core:unit` and `api:integration`, all
+data is stored in the same SQLite database, organized by project name.
 
 ### With Coverage
 

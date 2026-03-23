@@ -1,0 +1,29 @@
+{
+	"hooks": {
+		"SessionStart": [
+			{
+				"matcher": "startup",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh\"",
+						"timeout": 30,
+						"statusMessage": "Loading vitest-agent-reporter context..."
+					}
+				]
+			}
+		],
+		"PostToolUse": [
+			{
+				"matcher": "Bash",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/post-test-run.sh\"",
+						"timeout": 10
+					}
+				]
+			}
+		]
+	}
+}

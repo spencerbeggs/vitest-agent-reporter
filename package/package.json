@@ -2,7 +2,7 @@
 	"name": "vitest-agent-reporter",
 	"version": "0.3.0",
 	"private": true,
-	"description": "A Vitest reporter that outputs structured markdown to console and persistent JSON to disk for LLM coding agents, with monorepo-aware caching via a Vite plugin.",
+	"description": "A Vitest reporter and agent platform for LLM coding agents with SQLite persistence, MCP server, CLI, and Claude Code plugin.",
 	"keywords": ["vitest", "reporter", "llm", "ai", "agent", "testing", "coverage", "markdown", "github-actions"],
 	"homepage": "https://github.com/spencerbeggs/vitest-agent-reporter#readme",
 	"bugs": {
@@ -21,10 +21,12 @@
 	},
 	"type": "module",
 	"exports": {
-		".": "./src/index.ts"
+		".": "./src/index.ts",
+		"./mcp": "./src/mcp/index.ts"
 	},
 	"bin": {
-		"vitest-agent-reporter": "./src/cli/index.ts"
+		"vitest-agent-reporter": "./src/cli/index.ts",
+		"vitest-agent-reporter-mcp": "./src/mcp/index.ts"
 	},
 	"scripts": {
 		"build:dev": "rslib build --config-loader native --env-mode dev",
@@ -36,11 +38,17 @@
 		"@effect/cli": "catalog:silk",
 		"@effect/platform": "catalog:silk",
 		"@effect/platform-node": "catalog:silk",
+		"@effect/sql": "^0.51.0",
+		"@effect/sql-sqlite-node": "^0.52.0",
+		"@modelcontextprotocol/sdk": "^1.27.1",
+		"@trpc/server": "^11.14.1",
 		"effect": "catalog:silk",
-		"std-env": "^4.0.0"
+		"std-env": "^4.0.0",
+		"zod": "^4.3.6"
 	},
 	"devDependencies": {
 		"@savvy-web/rslib-builder": "^0.19.0",
+		"vite": "^8.0.2",
 		"vitest": "^4.1.0"
 	},
 	"peerDependencies": {

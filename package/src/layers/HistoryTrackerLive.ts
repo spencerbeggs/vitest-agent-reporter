@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect";
 import type { TestClassification } from "../schemas/Common.js";
 import type { TestRun } from "../schemas/History.js";
-import { CacheReader } from "../services/CacheReader.js";
+import { DataReader } from "../services/DataReader.js";
 import { HistoryTracker } from "../services/HistoryTracker.js";
 import { classifyTest } from "../utils/classify-test.js";
 
@@ -12,14 +12,14 @@ interface MutableTestHistory {
 
 const WINDOW_SIZE = 10;
 
-export const HistoryTrackerLive: Layer.Layer<HistoryTracker, never, CacheReader> = Layer.effect(
+export const HistoryTrackerLive: Layer.Layer<HistoryTracker, never, DataReader> = Layer.effect(
 	HistoryTracker,
 	Effect.gen(function* () {
-		const reader = yield* CacheReader;
+		const reader = yield* DataReader;
 		return {
-			classify: (cacheDir, project, testOutcomes, timestamp) =>
+			classify: (project, subProject, testOutcomes, timestamp) =>
 				Effect.gen(function* () {
-					const existing = yield* reader.readHistory(cacheDir, project);
+					const existing = yield* reader.getHistory(project, subProject);
 					const testMap = new Map<string, MutableTestHistory>();
 					for (const entry of existing.tests) {
 						testMap.set(entry.fullName, { ...entry, runs: [...entry.runs] });

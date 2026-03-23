@@ -3,9 +3,10 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-03-22
-last-synced: 2026-03-22
-completeness: 90
+updated: 2026-03-23
+last-synced: 2026-03-23
+post-phase5-sync: 2026-03-23
+completeness: 95
 related:
   - vitest-agent-reporter/architecture.md
   - vitest-agent-reporter/components.md
@@ -14,7 +15,7 @@ dependencies: []
 
 # Data Structures & System Layout -- vitest-agent-reporter
 
-File structure, data schemas, cache layout, output formats, error handling,
+File structure, data schemas, SQLite schema, output formats, error handling,
 and data flow diagrams.
 
 **Parent document:** [architecture.md](./architecture.md)
@@ -39,7 +40,7 @@ package/
         history.ts        -- thin wrapper, delegates to lib
         trends.ts         -- thin wrapper, delegates to lib
         cache.ts          -- cache parent with path/clean subcommands
-        doctor.ts         -- 5-point cache health diagnostic
+        doctor.ts         -- cache health diagnostic
       lib/
         format-status.ts  -- testable formatting logic
         format-overview.ts
@@ -49,30 +50,67 @@ package/
         format-doctor.ts  -- doctor diagnostic formatting
         resolve-cache-dir.ts -- searches Vite hash-based subdirectories
 
+    formatters/
+      types.ts            -- Formatter, FormatterContext, RenderedOutput interfaces
+      markdown.ts         -- tiered console markdown formatter
+      gfm.ts              -- GitHub-Flavored Markdown formatter
+      json.ts             -- raw JSON output formatter
+      silent.ts           -- no-op formatter (database-only mode)
+
+    mcp/
+      index.ts            -- MCP server entry point (resolves DB, starts stdio)
+      context.ts          -- tRPC context with ManagedRuntime
+      router.ts           -- tRPC router aggregating 16 tool procedures
+      server.ts           -- startMcpServer() registering tools with MCP SDK
+      tools/
+        status.ts         -- test_status tool
+        overview.ts       -- test_overview tool
+        coverage.ts       -- test_coverage tool
+        history.ts        -- test_history tool
+        trends.ts         -- test_trends tool
+        errors.ts         -- test_errors tool
+        test-for-file.ts  -- test_for_file tool
+        run-tests.ts      -- run_tests tool (vitest run via spawnSync)
+        cache-health.ts   -- cache_health tool
+        configure.ts      -- configure tool (view captured settings)
+        notes.ts          -- note CRUD (create/list/get/update/delete/search)
+
     services/
-      AgentDetection.ts   -- Context.Tag: std-env wrapper
-      CacheWriter.ts      -- Context.Tag: write reports/manifest/history
-      CacheReader.ts      -- Context.Tag: read reports/manifest/history
+      DataStore.ts        -- Context.Tag: write to SQLite
+      DataReader.ts       -- Context.Tag: read from SQLite
+      EnvironmentDetector.ts -- Context.Tag: std-env wrapper (4 environments)
+      ExecutorResolver.ts -- Context.Tag: env -> executor mapping
+      FormatSelector.ts   -- Context.Tag: format selection
+      DetailResolver.ts   -- Context.Tag: detail level resolution
+      OutputRenderer.ts   -- Context.Tag: formatter dispatch
       CoverageAnalyzer.ts -- Context.Tag: coverage processing
       ProjectDiscovery.ts -- Context.Tag: test file discovery
       HistoryTracker.ts   -- Context.Tag: test outcome classification
 
     layers/
-      AgentDetectionLive.ts / AgentDetectionTest.ts
-      CacheWriterLive.ts / CacheWriterTest.ts
-      CacheReaderLive.ts / CacheReaderTest.ts
+      DataStoreLive.ts / DataStoreTest.ts
+      DataReaderLive.ts
+      EnvironmentDetectorLive.ts / EnvironmentDetectorTest.ts
+      ExecutorResolverLive.ts
+      FormatSelectorLive.ts
+      DetailResolverLive.ts
+      OutputRendererLive.ts
+      OutputPipelineLive.ts   -- merged: all 5 output pipeline services
       CoverageAnalyzerLive.ts / CoverageAnalyzerTest.ts
       ProjectDiscoveryLive.ts / ProjectDiscoveryTest.ts
       HistoryTrackerLive.ts / HistoryTrackerTest.ts
-      ReporterLive.ts     -- merged layer for reporter runtime
-      CliLive.ts          -- merged layer for CLI runtime
+      LoggerLive.ts       -- Effect structured logging (NDJSON, logLevel/logFile)
+      ReporterLive.ts     -- merged layer for reporter (function of dbPath)
+      CliLive.ts          -- merged layer for CLI (function of dbPath)
+      McpLive.ts          -- merged layer for MCP server (function of dbPath)
 
     errors/
-      CacheError.ts       -- Data.TaggedError (file I/O)
+      DataStoreError.ts   -- Data.TaggedError (database I/O)
       DiscoveryError.ts   -- Data.TaggedError (project discovery)
 
     schemas/
-      Common.ts           -- shared literals (TestState, ConsoleStrategy, etc.)
+      Common.ts           -- shared literals (TestState, Environment, Executor,
+                             OutputFormat, DetailLevel, etc.)
       AgentReport.ts      -- report + module + test schemas
       CacheManifest.ts    -- manifest + entry schemas
       Coverage.ts         -- coverage report + totals + file coverage
@@ -82,6 +120,13 @@ package/
       History.ts          -- TestRun, TestHistory, HistoryRecord schemas
       Options.ts          -- reporter + plugin + coverage + formatter options
 
+    migrations/
+      0001_initial.ts     -- 25-table SQLite schema (WAL mode, FK enabled)
+
+    sql/
+      rows.ts             -- row type definitions for SQLite queries
+      assemblers.ts       -- functions to reconstruct domain types from rows
+
     utils/
       compress-lines.ts   -- range compression for uncovered lines
       safe-filename.ts    -- project name sanitization
@@ -90,13 +135,37 @@ package/
       detect-pm.ts        -- package manager detection (FileSystemAdapter)
       resolve-thresholds.ts -- Vitest thresholds format parser
       compute-trend.ts    -- coverage trend computation + hash comparison
-      format-console.ts   -- pure function: tiered console markdown
-      format-gfm.ts       -- pure function: GitHub Actions GFM
+      split-project.ts    -- splits "project:subProject" into ProjectIdentity
+      capture-env.ts      -- captures CI/GitHub/Runner env vars
+      capture-settings.ts -- captures Vitest config + computes hash
+      classify-test.ts    -- pure test classification function
+      resolve-log-level.ts -- normalizes case-insensitive log level names
+      resolve-log-file.ts -- resolves log file path with env var fallback
+      format-console.ts   -- legacy console formatter (delegates to markdown)
+      format-gfm.ts       -- legacy GFM formatter (delegates to gfm)
       build-report.ts     -- pure function: AgentReport builder + duck-typed
                              Vitest interfaces
 
   bin/
-    vitest-agent-reporter.js  -- shebang wrapper for CLI
+    vitest-agent-reporter.js      -- shebang wrapper for CLI
+    vitest-agent-reporter-mcp.js  -- shebang wrapper for MCP server
+
+plugin/
+  .claude-plugin/
+    plugin.json           -- Claude Code plugin manifest
+  .mcp.json               -- MCP server auto-registration
+  hooks/
+    hooks.json            -- hook configuration (SessionStart, PostToolUse)
+    session-start.sh      -- context injection on session start
+    post-test-run.sh      -- test run detection on Bash tool use
+  skills/
+    tdd/SKILL.md          -- TDD workflow skill
+    debugging/SKILL.md    -- test debugging skill
+    configuration/SKILL.md -- Vitest configuration skill
+  commands/
+    setup.md              -- setup command
+    configure.md          -- configure command
+  README.md
 ```
 
 ---
@@ -114,29 +183,44 @@ package/src/
     format-history.test.ts  -- history formatting logic
     format-trends.test.ts   -- trends formatting logic
     format-doctor.test.ts   -- doctor diagnostic formatting
-    resolve-cache-dir.test.ts -- cache dir resolution (includes Vite hash paths)
+    resolve-cache-dir.test.ts -- cache dir resolution
   errors/
-    errors.test.ts          -- CacheError, DiscoveryError tagged errors
+    errors.test.ts          -- DataStoreError, DiscoveryError tagged errors
+  formatters/
+    markdown.test.ts        -- markdown formatter (tiered output, coverage, trends)
+    gfm.test.ts             -- GFM formatter (single/multi-project, coverage)
+    json.test.ts            -- JSON formatter
   layers/
-    AgentDetectionLive.test.ts  -- std-env integration, live layer
-    CacheWriterLive.test.ts     -- file write via mock FileSystem
-    CacheReaderLive.test.ts     -- file read via mock FileSystem,
-                                   corrupt/invalid JSON error paths
+    EnvironmentDetectorLive.test.ts -- std-env integration, live layer
+    DataStoreLive.test.ts       -- database write via SQLite
+    DataReaderLive.test.ts      -- database read via SQLite
     CoverageAnalyzerLive.test.ts -- coverage processing, test layer
     ProjectDiscoveryLive.test.ts -- test file discovery
     HistoryTrackerLive.test.ts  -- classification logic, sliding window
     ReporterLive.test.ts        -- merged layer composition
+    ExecutorResolverLive.test.ts -- executor resolution
+    FormatSelectorLive.test.ts  -- format selection
+    DetailResolverLive.test.ts  -- detail level resolution
+    OutputRendererLive.test.ts  -- formatter dispatch
+  mcp/
+    router.test.ts          -- tRPC router integration tests
+    tools/
+      run-tests.test.ts     -- run_tests tool (spawnSync)
+  migrations/
+    0001_initial.test.ts    -- migration schema verification
   schemas/
     Common.test.ts          -- shared literal schemas
     AgentReport.test.ts     -- report schema validation
     CacheManifest.test.ts   -- manifest schema validation
-    Coverage.test.ts        -- coverage schema validation (thresholds object)
+    Coverage.test.ts        -- coverage schema validation
     Baselines.test.ts       -- baselines schema validation
     Trends.test.ts          -- TrendEntry, TrendRecord schema validation
-    History.test.ts         -- TestRun, TestHistory, HistoryRecord schema validation
-    Options.test.ts         -- reporter + plugin + coverage options schema validation
+    History.test.ts         -- TestRun, TestHistory, HistoryRecord schema
+    Options.test.ts         -- reporter + plugin + coverage options schema
   services/
     services.test.ts        -- service Context.Tag definitions
+  sql/
+    assemblers.test.ts      -- assembler function tests
   utils/
     compress-lines.test.ts  -- range compression edge cases
     safe-filename.test.ts   -- sanitization edge cases
@@ -145,41 +229,43 @@ package/src/
     detect-pm.test.ts       -- package manager detection
     resolve-thresholds.test.ts -- Vitest thresholds format parsing
     compute-trend.test.ts   -- trend computation, hash change detection
-    format-console.test.ts  -- tiered console markdown formatting
-    format-gfm.test.ts      -- GFM formatting
+    format-console.test.ts  -- legacy console markdown formatting
+    format-gfm.test.ts      -- legacy GFM formatting
     build-report.test.ts    -- report building with mock Vitest objects
+    split-project.test.ts   -- project name splitting
+    capture-env.test.ts     -- env var capture
+    capture-settings.test.ts -- settings capture + hash computation
 ```
 
-**36 test files, 429 tests total.** All coverage metrics (statements,
+**50 test files, 499 tests total.** All coverage metrics (statements,
 branches, functions, lines) are above 80%.
 
 ---
 
 ## Cache Directory Layout
 
-Cache outputs are organized under a configurable root directory. When using
-`AgentPlugin`, this defaults to Vite's `cacheDir` + `"/vitest-agent-reporter"`
-(typically `node_modules/.vite/.../vitest-agent-reporter/`). When using
+Cache outputs are stored in a SQLite database within a configurable root
+directory. When using `AgentPlugin`, this defaults to Vite's `cacheDir` +
+`"/vitest-agent-reporter"` (typically
+`node_modules/.vite/.../vitest-agent-reporter/`). When using
 `AgentReporter` standalone, it defaults to `.vitest-agent-reporter/`.
 
 ```text
 {cacheDir}/
-  manifest.json                         -- project index (CacheManifest)
-  baselines.json                        -- auto-ratcheting coverage baselines
-  reports/                              -- per-project test result JSON
-    {safe-project-name}.json            -- AgentReport encoded via codec
-    default.json                        -- single-repo fallback name
-  history/                              -- per-project failure history JSON
-    {safe-project-name}.history.json    -- HistoryRecord encoded via codec
-  trends/                               -- per-project coverage trend JSON
-    {safe-project-name}.trends.json     -- TrendRecord encoded via codec
+  data.db                               -- SQLite database (25 tables)
 ```
 
-**`safeFilename()` examples:**
+**Phase 1-4 JSON layout (removed in Phase 5):**
 
-- `"@savvy-web/my-lib:unit"` -> `"@savvy-web__my-lib__unit"`
-- `"core"` -> `"core"`
-- `""` (root project) -> `"default"`
+The previous JSON file cache (`manifest.json`, `baselines.json`,
+`reports/*.json`, `history/*.json`, `trends/*.json`) has been replaced
+entirely by the SQLite database.
+
+**`splitProject()` examples:**
+
+- `"my-app:unit"` -> `{ project: "my-app", subProject: "unit" }`
+- `"core"` -> `{ project: "core", subProject: null }`
+- `""` or `undefined` -> `{ project: "default", subProject: null }`
 
 **Package manager detection:**
 
@@ -192,15 +278,57 @@ Detection logic in `package/src/utils/detect-pm.ts`:
 
 ---
 
+## SQLite Database Schema
+
+The database schema is defined in `package/src/migrations/0001_initial.ts`
+and managed via `@effect/sql-sqlite-node` SqliteMigrator. WAL journal mode
+and foreign keys are enabled.
+
+**25 tables:**
+
+| # | Table | Purpose |
+| - | ----- | ------- |
+| 1 | `files` | Deduplicated file paths (shared FK target) |
+| 2 | `settings` | Vitest config snapshots, keyed by hash |
+| 3 | `settings_env_vars` | Environment variables per settings snapshot |
+| 4 | `test_runs` | Per-project test run records with summary stats |
+| 5 | `scoped_files` | Files included in scoped test runs |
+| 6 | `test_modules` | Test modules (files) per run |
+| 7 | `test_suites` | Test suites (describe blocks) per module |
+| 8 | `test_cases` | Individual test cases per module |
+| 9 | `test_errors` | Errors with diffs, expected/actual, stacks |
+| 10 | `stack_frames` | Parsed stack frames per error |
+| 11 | `tags` | Deduplicated tag names |
+| 12 | `test_case_tags` | Tag associations for test cases |
+| 13 | `test_suite_tags` | Tag associations for test suites |
+| 14 | `test_annotations` | Test annotations (notice/warning/error) |
+| 15 | `test_artifacts` | Test artifacts |
+| 16 | `attachments` | Binary attachments for artifacts/annotations |
+| 17 | `import_durations` | Module import timing data |
+| 18 | `task_metadata` | Key-value metadata for tasks |
+| 19 | `console_logs` | Console output (stdout/stderr) per test |
+| 20 | `test_history` | Per-test run history (sliding window) |
+| 21 | `coverage_baselines` | Auto-ratcheting coverage high-water marks |
+| 22 | `coverage_trends` | Per-project coverage trend entries |
+| 23 | `file_coverage` | Per-file coverage data per run |
+| 24 | `source_test_map` | Source file to test module mapping |
+| 25 | `notes` | Scoped notes with threading and expiration |
+
+**Plus:** `notes_fts` FTS5 virtual table with sync triggers for full-text
+search across note titles and content.
+
+For the full DDL, see `package/src/migrations/0001_initial.ts`.
+
+---
+
 ## Data Structures
 
-All types are defined as Effect Schema definitions in `package/src/schemas/` with
-TypeScript types derived via `typeof Schema.Type`.
+All types are defined as Effect Schema definitions in `package/src/schemas/`
+with TypeScript types derived via `typeof Schema.Type`.
 
 ### JSON Report (`AgentReport`)
 
 ```typescript
-// From AgentReport.ts in schemas/
 interface AgentReport {
   timestamp: string;                              // ISO 8601
   project?: string;                               // project name (monorepo)
@@ -234,7 +362,7 @@ interface TestReport {
   flaky?: boolean;                                // passed after retry
   slow?: boolean;                                 // above slowTestThreshold
   errors?: ReportError[];
-  classification?: TestClassification;            // Phase 3
+  classification?: TestClassification;
 }
 
 type TestClassification =
@@ -246,8 +374,8 @@ type TestClassification =
 
 interface ReportError {
   message: string;
-  stack?: string;                                 // from stacks[] array
-  diff?: string;                                  // expected/received diff
+  stack?: string;
+  diff?: string;
 }
 ```
 
@@ -256,20 +384,20 @@ interface ReportError {
 ```typescript
 interface CoverageReport {
   totals: CoverageTotals;
-  thresholds: {                                   // Phase 4: Vitest-native format
-    global: MetricThresholds;                     // per-metric thresholds
-    patterns?: PatternThresholds[];               // per-glob thresholds
-  };
-  targets?: {                                     // Phase 4: aspirational goals
+  thresholds: {
     global: MetricThresholds;
     patterns?: PatternThresholds[];
   };
-  baselines?: {                                   // Phase 4: high-water marks
+  targets?: {
     global: MetricThresholds;
     patterns?: PatternThresholds[];
   };
-  scoped?: boolean;                               // Phase 2: filtered to subset
-  scopedFiles?: string[];                         // Phase 2: files in scope
+  baselines?: {
+    global: MetricThresholds;
+    patterns?: PatternThresholds[];
+  };
+  scoped?: boolean;
+  scopedFiles?: string[];
   lowCoverage: FileCoverageReport[];
   lowCoverageFiles: string[];
 }
@@ -288,7 +416,7 @@ interface MetricThresholds {
   statements?: number;
 }
 
-type PatternThresholds = [string, MetricThresholds];  // [glob, metrics]
+type PatternThresholds = [string, MetricThresholds];
 
 interface FileCoverageReport {
   file: string;
@@ -302,8 +430,8 @@ interface FileCoverageReport {
 ```typescript
 interface ResolvedThresholds {
   global: MetricThresholds;
-  perFile?: boolean;                              // default: false
-  patterns?: PatternThresholds[];                 // per-glob overrides
+  perFile?: boolean;
+  patterns?: PatternThresholds[];
 }
 ```
 
@@ -312,8 +440,8 @@ interface ResolvedThresholds {
 ```typescript
 interface CoverageBaselines {
   updatedAt: string;                              // ISO 8601
-  global: MetricThresholds;                       // high-water marks
-  patterns?: PatternThresholds[];                 // per-glob high-water marks
+  global: MetricThresholds;
+  patterns?: PatternThresholds[];
 }
 ```
 
@@ -321,11 +449,11 @@ interface CoverageBaselines {
 
 ```typescript
 interface TrendEntry {
-  timestamp: string;                              // ISO 8601
-  coverage: CoverageTotals;                       // coverage at this point
-  delta: CoverageTotals;                          // change from previous entry
+  timestamp: string;
+  coverage: CoverageTotals;
+  delta: CoverageTotals;
   direction: "improving" | "regressing" | "stable";
-  targetsHash?: string;                           // hash of targets for change detection
+  targetsHash?: string;
 }
 
 interface TrendRecord {
@@ -343,20 +471,23 @@ interface CacheManifest {
 }
 
 interface CacheManifestEntry {
-  project: string;                                // project name
-  reportFile: string;                             // relative: reports/{name}.json
-  historyFile?: string;                           // relative: history/{name}.history.json
+  project: string;
+  reportFile: string;
+  historyFile?: string;
   lastRun: string | null;
   lastResult: "passed" | "failed" | "interrupted" | null;
 }
 ```
 
+**Note:** The manifest is now assembled on-the-fly by
+`DataReader.getManifest()` from the `test_runs` table rather than being
+stored as a separate file.
+
 ### Failure History (`HistoryRecord`)
 
 ```typescript
-// From History.ts in schemas/
 interface TestRun {
-  timestamp: string;                              // ISO 8601
+  timestamp: string;
   state: "passed" | "failed" | "skipped" | "pending";
 }
 
@@ -367,18 +498,110 @@ interface TestHistory {
 type HistoryRecord = Record<string, TestHistory>; // keyed by test fullName
 ```
 
+### Phase 5 Data Types
+
+```typescript
+// DataStore input types
+interface TestRunInput {
+  invocationId: string;
+  project: string;
+  subProject: string | null;
+  settingsHash: string;
+  timestamp: string;
+  commitSha: string | null;
+  branch: string | null;
+  reason: "passed" | "failed" | "interrupted";
+  duration: number;
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  scoped: boolean;
+  // ... snapshot fields
+}
+
+interface ProjectIdentity {
+  project: string;
+  subProject: string | null;
+}
+
+// DataReader output types
+interface ProjectRunSummary {
+  project: string;
+  subProject: string | null;
+  lastRun: string | null;
+  lastResult: "passed" | "failed" | "interrupted" | null;
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+}
+
+interface FlakyTest {
+  fullName: string;
+  project: string;
+  subProject: string | null;
+  passCount: number;
+  failCount: number;
+  lastState: "passed" | "failed";
+  lastTimestamp: string;
+}
+
+interface PersistentFailure {
+  fullName: string;
+  project: string;
+  subProject: string | null;
+  consecutiveFailures: number;
+  firstFailedAt: string;
+  lastFailedAt: string;
+  lastErrorMessage: string | null;
+}
+
+// Common schema literals (Phase 5)
+type Environment = "agent-shell" | "terminal" | "ci-github" | "ci-generic";
+type Executor = "human" | "agent" | "ci";
+type OutputFormat = "markdown" | "json" | "vitest-bypass" | "silent";
+type DetailLevel = "minimal" | "neutral" | "standard" | "verbose";
+
+// Formatter types
+interface RenderedOutput {
+  target: "stdout" | "file" | "github-summary";
+  content: string;
+  contentType: string;
+}
+
+interface FormatterContext {
+  detail: DetailLevel;
+  noColor: boolean;
+  coverageConsoleLimit: number;
+  trendSummary?: { direction, runCount, firstMetric? };
+  runCommand?: string;
+  mcp?: boolean;
+  githubSummaryFile?: string;
+}
+
+// MCP context
+interface McpContext {
+  runtime: ManagedRuntime<
+    DataReader | DataStore | ProjectDiscovery | OutputRenderer,
+    never
+  >;
+  cwd: string;
+}
+```
+
 ---
 
 ## Console Output Format
 
-Printed to `process.stdout`. Uses `ansi()` helper that no-ops when
-`NO_COLOR` is set.
+Printed to `process.stdout` via the markdown formatter. Uses `ansi()`
+helper that no-ops when `NO_COLOR` is set.
 
 Three modes controlled by `consoleOutput` option:
 
 - `"failures"` (default) -- tiered output based on run health
 - `"full"` -- same tiered format, includes passing test details
-- `"silent"` -- no console output, JSON only
+- `"silent"` -- no console output, database only
 
 Console output uses three tiers based on run health:
 
@@ -391,29 +614,6 @@ Console output uses three tiers based on run health:
 
 ```markdown
 ## [checkmark] Vitest -- 10 passed (120ms)
-
-[checkmark] All tests passed
-
--> Cache: `node_modules/.vite/.../vitest-agent-reporter/reports/default.json`
-```
-
-**Example output (yellow tier -- passing but below targets):**
-
-```markdown
-## [checkmark] Vitest -- 10 passed (120ms)
-
-Coverage improving over 5 runs
-
-[checkmark] All tests passed
-
-### Coverage targets
-
-- Lines: 78% (target: 90%)
-- Branches: 65% (target: 80%)
-
--> Run `pnpm vitest-agent-reporter coverage` for gap analysis
-
--> Cache: `node_modules/.vite/.../vitest-agent-reporter/reports/default.json`
 ```
 
 **Example output (red tier -- failures):**
@@ -446,25 +646,22 @@ Coverage regressing over 3 runs
 - Re-run: `pnpm vitest run src/utils.test.ts`
 - Run `pnpm vitest-agent-reporter coverage` for gap analysis
 - Run `pnpm vitest-agent-reporter trends` for coverage trajectory
-- Full report: `node_modules/.vite/.../vitest-agent-reporter/reports/default.json`
 ````
 
 ---
 
 ## Error Handling Strategy
 
-- **File write failures:** CacheError tagged error, logged to stderr, don't
-  crash the test run
-- **File read failures (corrupt cache):** CacheReaderLive wraps
-  `Schema.decodeUnknownSync` + `JSON.parse` in `Effect.try`, catching
-  both malformed JSON and schema validation failures as typed `CacheError`
-  rather than unhandled defects. `readHistory` logs a warning for corrupt
-  history files and returns an empty record rather than propagating the error
+- **Database write failures:** DataStoreError tagged error with `operation`,
+  `table`, and `reason` fields. Logged to stderr, don't crash the test run
+- **Database read failures:** DataReaderLive wraps SQL queries in
+  `Effect.try`, catching failures as typed `DataStoreError`. History reads
+  return empty records for missing data
+- **Database migration failures:** DataStoreError with `operation: "migrate"`.
+  Propagated as fatal on first access
 - **Coverage duck-type mismatch:** CoverageAnalyzer returns `Option.none()`,
   coverage section silently skipped
 - **Missing `GITHUB_STEP_SUMMARY`:** Skip GFM output (no warning)
-- **Cache directory creation:** CacheWriter.ensureDir uses
-  `mkdir({ recursive: true })`, wraps failures in CacheError
 - **Project discovery failures:** DiscoveryError tagged error, CLI reports
   the issue and continues with available data
 
@@ -477,57 +674,63 @@ Coverage regressing over 3 runs
 ```text
 onInit(vitest)
   +-- store vitest instance as this._vitest
+  +-- captureSettings(vitest.config) -> SettingsInput
+  +-- captureEnvVars(process.env) -> envVars
+  +-- DataStore.writeSettings(hash, settings, envVars)
 
 onCoverage(coverage)
   +-- stash as this.coverage
 
 onTestRunEnd(testModules, unhandledErrors, reason)
   |
+  +-- Filter testModules by projectFilter (if set)
+  |
   +-- Build Effect program:
-  |     +-- yield* CacheWriter
-  |     +-- yield* CacheReader
+  |     +-- yield* DataStore
+  |     +-- yield* DataReader
   |     +-- yield* CoverageAnalyzer
   |     +-- yield* HistoryTracker
+  |     +-- yield* OutputRenderer
   |
   +-- Group testModules by testModule.project.name
   |     +-- Map<string, VitestTestModule[]>
   |
   +-- CoverageAnalyzer.process/processScoped(coverage, options)
   |     +-- Returns Option<CoverageReport>
-  |     +-- processScoped used when partial test run detected
   |
-  +-- CacheReader.readBaselines(cacheDir)
+  +-- DataReader.getBaselines(project, subProject)
   |     +-- Returns Option<CoverageBaselines>
   |
   +-- For each project group:
+  |     +-- splitProject(name) -> { project, subProject }
   |     +-- buildAgentReport(modules, errors, reason, options, name)
-  |     |     +-- Pure function: tallies, extracts errors, builds report
   |     +-- Attach unhandledErrors to ALL project reports
   |     +-- Attach coverageReport if present
   |     +-- Extract TestOutcome[] from VitestTestModule objects
-  |     +-- HistoryTracker.classify(outcomes)
-  |     |     +-- Returns { history: HistoryRecord, classifications: Map }
+  |     +-- HistoryTracker.classify(project, subProject, outcomes, timestamp)
+  |     |     +-- Returns { history, classifications }
   |     +-- Attach classifications to TestReport.classification fields
+  |     +-- DataStore.writeRun(runInput) -> runId
+  |     +-- DataStore.writeModules(runId, modules) -> moduleIds
+  |     +-- DataStore.writeSuites(moduleId, suites)
+  |     +-- DataStore.writeTestCases(moduleId, tests) -> testCaseIds
+  |     +-- DataStore.writeErrors(runId, errors)
+  |     +-- DataStore.writeCoverage(runId, coverage)
+  |     +-- DataStore.writeHistory(...) per test
   |     +-- computeTrend() on full (non-scoped) runs
-  |     |     +-- CacheReader.readTrends(cacheDir, projectName)
-  |     |     +-- computeTrend(totals, existing, targets)
-  |     |     +-- CacheWriter.writeTrends(cacheDir, projectName, trends)
-  |     +-- CacheWriter.writeReport(cacheDir, projectName, report)
-  |     +-- CacheWriter.writeHistory(cacheDir, projectName, history)
+  |     |     +-- DataReader.getTrends(project, subProject)
+  |     |     +-- DataStore.writeTrends(project, subProject, runId, entry)
   |
   +-- Compute updated baselines (ratchet up, capped at targets)
-  +-- CacheWriter.writeBaselines(cacheDir, baselines)
-  +-- CacheWriter.writeManifest(cacheDir, manifest)
-  |     +-- historyFile field populated per project
+  +-- DataStore.writeBaselines(baselines)
   |
-  +-- Console output (if not "silent")
-  |     +-- formatConsoleMarkdown(report, options) -> stdout
-  |     +-- [new-failure] labels on failed tests with classifications
+  +-- DataReader.getTrends() -> build trendSummary for formatter context
   |
-  +-- GFM output (if GitHub Actions detected and "own" strategy)
-  |     +-- formatGfm(reports) -> FileSystem.appendFile(GITHUB_STEP_SUMMARY)
+  +-- OutputRenderer.render(reports, format, context)
+  |     +-- Returns RenderedOutput[] (target + content)
+  |     +-- Emit to stdout / GITHUB_STEP_SUMMARY as appropriate
   |
-  +-- Effect.runPromise(program.pipe(Effect.provide(ReporterLive)))
+  +-- Effect.runPromise(program.pipe(Effect.provide(ReporterLive(dbPath))))
 ```
 
 ### Flow 2: AgentPlugin (async configureVitest)
@@ -535,71 +738,61 @@ onTestRunEnd(testModules, unhandledErrors, reason)
 ```text
 async configureVitest({ vitest })
   |
-  +-- Effect.runPromise(AgentDetection.environment)
-  |     +-- Effect.provide(AgentDetectionLive)
-  |     +-- Returns "agent" | "ci" | "human"
+  +-- Effect.runPromise(EnvironmentDetector.detect())
+  |     +-- Returns "agent-shell" | "terminal" | "ci-github" | "ci-generic"
   |
-  +-- Resolve consoleStrategy (options.consoleStrategy ?? "complement")
+  +-- ExecutorResolver.resolve(env, mode)
+  |     +-- Returns "human" | "agent" | "ci"
   |
-  +-- Switch on strategy + environment:
-  |     complement + agent -> consoleOutput="silent", githubActions=false,
-  |                           warn if 'agent' reporter missing
-  |     complement + ci    -> consoleOutput="silent", githubActions=false
-  |     own + agent        -> consoleOutput="failures", githubActions=false,
-  |                           stripConsoleReporters()
-  |     own + ci           -> consoleOutput="silent", githubActions=true
-  |     * + human          -> consoleOutput="silent", githubActions=false
+  +-- Apply output behavior based on executor + strategy
   |
   +-- Resolve cacheDir:
   |     option.cacheDir ?? resolveOutputDir(outputFile) ?? vite.cacheDir/...
   |
-  +-- Resolve coverage thresholds:
-  |     resolveThresholds(option.coverageThresholds ?? coverage.thresholds)
+  +-- Resolve coverage thresholds + targets
   |
-  +-- Resolve coverage targets:
-  |     resolveThresholds(option.coverageTargets)
+  +-- Disable Vitest native autoUpdate if targets set
   |
-  +-- Disable Vitest native autoUpdate if targets set:
-  |     coverage.thresholds.autoUpdate = false
+  +-- Set coverage.reporter = [] in agent/own mode (suppress text table)
   |
-  +-- vitest.config.reporters.push(new AgentReporter({...}))
+  +-- vitest.config.reporters.push(new AgentReporter({
+  |     ...options, projectFilter: project.name
+  |   }))
 ```
 
 ### Flow 3: CLI Commands
 
 ```text
-vitest-agent-reporter <command> [options]
+vitest-agent-reporter <command> [--format <format>] [options]
   |
-  +-- NodeRuntime.runMain(cli.pipe(Effect.provide(CliLive)))
+  +-- NodeRuntime.runMain(cli.pipe(Effect.provide(CliLive(dbPath))))
   |
   +-- status:
-  |     +-- CacheReader.readManifest(cacheDir)
-  |     +-- CacheReader.readReport() for failing projects
-  |     +-- formatStatus() -> stdout
+  |     +-- DataReader.getRunsByProject()
+  |     +-- DataReader.getLatestRun() for failing projects
+  |     +-- OutputRenderer.render() -> stdout
   |
   +-- overview:
-  |     +-- CacheReader.readManifest(cacheDir)
+  |     +-- DataReader.getRunsByProject()
   |     +-- ProjectDiscovery.discoverTestFiles(rootDir)
   |     +-- ProjectDiscovery.mapTestToSource() for file mapping
-  |     +-- formatOverview() -> stdout
+  |     +-- OutputRenderer.render() -> stdout
   |
   +-- coverage:
-  |     +-- CacheReader.readManifest(cacheDir)
-  |     +-- CacheReader.readReport() for all projects
-  |     +-- formatCoverage() -> stdout
+  |     +-- DataReader.getLatestRun() for all projects
+  |     +-- OutputRenderer.render() -> stdout
   |
   +-- history:
-  |     +-- CacheReader.readManifest(cacheDir)
-  |     +-- CacheReader.readHistory() for all projects
-  |     +-- formatHistory() -> stdout (flaky, persistent, recovered tests)
+  |     +-- DataReader.getHistory() for all projects
+  |     +-- DataReader.getFlaky() / getPersistentFailures()
+  |     +-- OutputRenderer.render() -> stdout
   |
   +-- trends:
-  |     +-- CacheReader.readManifest(cacheDir)
-  |     +-- CacheReader.readTrends() for all projects
-  |     +-- formatTrends() -> stdout (direction, metrics, sparkline)
+  |     +-- DataReader.getTrends() for all projects
+  |     +-- OutputRenderer.render() -> stdout
   |
   +-- cache path:
-  |     +-- resolveCacheDir -> stdout (absolute path)
+  |     +-- resolveCacheDir -> stdout
   |
   +-- cache clean:
   |     +-- resolveCacheDir
@@ -607,11 +800,35 @@ vitest-agent-reporter <command> [options]
   |
   +-- doctor:
         +-- resolveCacheDir
-        +-- CacheReader.readManifest(cacheDir)
-        +-- CacheReader.readReport() per project (integrity)
-        +-- CacheReader.readHistory() per project (integrity)
-        +-- staleness check (last run recency)
-        +-- formatDoctor() -> stdout
+        +-- DataReader.getManifest()
+        +-- DataReader.getLatestRun() per project (integrity)
+        +-- staleness check
+        +-- OutputRenderer.render() -> stdout
+```
+
+### Flow 4: MCP Server
+
+```text
+vitest-agent-reporter-mcp
+  |
+  +-- resolveDbPath -> dbPath
+  +-- ManagedRuntime.make(McpLive(dbPath)) -> runtime
+  +-- startMcpServer({ runtime, cwd })
+  |
+  +-- StdioServerTransport connects
+  |
+  +-- Tool invocations:
+  |     +-- createCallerFactory(appRouter) -> factory
+  |     +-- factory(ctx) -> caller
+  |     +-- caller.tool_name(args)
+  |     |     +-- tRPC procedure
+  |     |     +-- ctx.runtime.runPromise(effect)
+  |     |     +-- Returns text (markdown) or JSON
+  |
+  +-- Read-only tools: query DataReader, format via OutputRenderer
+  +-- run_tests: spawnSync("npx vitest run", { files, project, timeout })
+  +-- Note CRUD: DataStore.writeNote/updateNote/deleteNote,
+  |              DataReader.getNotes/getNoteById/searchNotes
 ```
 
 ---
@@ -622,7 +839,7 @@ vitest-agent-reporter <command> [options]
 
 **Hooks used:**
 
-- `onInit(vitest: Vitest)` -- store instance for project enumeration
+- `onInit(vitest: Vitest)` -- store instance, capture settings
 - `onCoverage(coverage: unknown)` -- receives istanbul CoverageMap
 - `onTestRunEnd(testModules, unhandledErrors, reason)` -- final results
 
@@ -641,37 +858,36 @@ vitest-agent-reporter <command> [options]
 
 **Hook:** `configureVitest({ vitest, project })`
 
+- Uses `VitestPluginContext` from `vitest/node` for type safety
+- Uses `as unknown as` casts where Vitest types are too strict
 - Available since Vitest 3.1
 - Runs before reporters are instantiated
 - Now async (Vitest awaits plugin hooks)
 - Mutate `vitest.config.reporters` to inject `AgentReporter`
 - Access `vitest.vite.config.cacheDir` for cache directory resolution
 - Access `vitest.config.coverage.thresholds` for coverage threshold
+- Pass `project.name` as `projectFilter` for multi-project isolation
 
 ### Integration 3: GitHub Actions
 
-**Detection:** `process.env.GITHUB_ACTIONS === "true"` or `=== "1"`
+**Detection:** `process.env.GITHUB_ACTIONS === "true"` or `=== "1"`,
+now detected as `ci-github` environment by EnvironmentDetector.
 
 **Output target:** `process.env.GITHUB_STEP_SUMMARY` -- a file path.
 GFM content is appended (not overwritten) to support multiple steps.
 
-**In complement mode:** GFM output is left to Vitest's built-in reporter.
-**In own mode:** Our formatter writes GFM via FileSystem service.
-
 ### Integration 4: Consumer LLM Agents
 
-**Read pattern:** Manifest-first (monorepo) or single-file (single repo)
-
-1. Read `{cacheDir}/manifest.json` for project states
-2. Filter entries where `lastResult === "failed"`
-3. Read only those `reports/{name}.json` files
-4. Key fields: `failed[].tests[].errors[].diff`,
-   `coverage.lowCoverage[].uncoveredLines`
-5. Fix, re-run using commands from console "Next steps" section
+**MCP pattern (preferred):** Agents connect via MCP stdio transport and
+use the 16 tools for structured data access.
 
 **CLI pattern:** Run `vitest-agent-reporter status` for quick overview,
 `vitest-agent-reporter overview` for test landscape, or
-`vitest-agent-reporter coverage` for gap analysis.
+`vitest-agent-reporter coverage` for gap analysis. All commands support
+`--format` flag.
+
+**Direct database access:** Agents can query `data.db` directly with
+SQLite tools if needed.
 
 ### Integration 5: Effect Ecosystem
 
@@ -680,28 +896,49 @@ GFM content is appended (not overwritten) to support multiple steps.
 - `effect` -- core runtime, Schema, Context, Layer, Data
 - `@effect/cli` -- CLI command framework
 - `@effect/platform` -- FileSystem, Path abstractions
-- `@effect/platform-node` -- Node.js live implementations (NodeFileSystem,
-  NodeRuntime)
+- `@effect/platform-node` -- Node.js live implementations
+- `@effect/sql-sqlite-node` -- SQLite client and migrator
 - `std-env` -- agent and CI runtime detection
 
-**Public API exports for consumers:**
+**Phase 5 dependencies added:**
 
-- `CacheReader` service + `CacheReaderLive` layer for programmatic cache
-  access
-- `CacheError` tagged error for handling service failures
-- `HistoryRecord`, `TestHistory`, `TestRun` schemas for programmatic history
-  access
-- `HistoryTracker` service + `HistoryTrackerLive` layer for custom
-  classification workflows
-- `TestOutcome` type for constructing `HistoryTracker.classify` inputs
-- `AgentDetection` service (exported for consumers needing environment
-  detection)
-- `ResolvedThresholds`, `MetricThresholds`, `PatternThresholds` schemas for
-  threshold data access
-- `CoverageBaselines` schema for baseline data access
-- `TrendEntry`, `TrendRecord` schemas for trend data access
+- `@effect/sql-sqlite-node` -- SQLite database layer
+- `@modelcontextprotocol/sdk` -- MCP server (stdio transport)
+- `@trpc/server` -- tRPC router for MCP tool procedures
+- `zod` -- MCP tool input validation (required by tRPC)
+
+### Integration 6: Model Context Protocol (Phase 5c)
+
+**Transport:** stdio (standard input/output)
+
+**Server:** `@modelcontextprotocol/sdk` McpServer with StdioServerTransport
+
+**Router:** tRPC with `createCallerFactory` for testing
+
+**Context:** `McpContext` carrying a `ManagedRuntime` with DataReader,
+DataStore, ProjectDiscovery, and OutputRenderer services
+
+**Registration:** Via `.mcp.json` in the Claude Code plugin, or manual
+configuration pointing to `npx vitest-agent-reporter-mcp`
+
+### Integration 7: Claude Code Plugin (Phase 5d)
+
+**Plugin format:** File-based plugin at `plugin/` directory
+
+**Discovery:** Claude Code discovers the plugin via `.claude-plugin/plugin.json`
+
+**MCP registration:** `.mcp.json` auto-registers the MCP server
+
+**Hooks:**
+
+- `SessionStart` -> `hooks/session-start.sh` (context injection)
+- `PostToolUse` on `Bash` -> `hooks/post-test-run.sh` (test detection)
+
+**Skills:** TDD, debugging, configuration (markdown files)
+
+**Commands:** setup, configure (markdown files)
 
 ---
 
-**Document Status:** Current -- reflects Phase 1, Phase 2, Phase 3, and
-Phase 4 implementation as built. All phases complete.
+**Document Status:** Current -- reflects Phase 1 through Phase 5
+implementation plus post-Phase-5 refinements. All phases complete.

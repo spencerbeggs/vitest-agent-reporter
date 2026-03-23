@@ -1,77 +1,72 @@
 /**
- * CLI doctor command -- diagnose cache health.
+ * CLI doctor command -- diagnose database health.
  *
  * @packageDocumentation
  */
 
 import { Command, Options } from "@effect/cli";
-import { FileSystem } from "@effect/platform";
 import { Effect, Option } from "effect";
-import { CacheReader } from "../../services/CacheReader.js";
+import { DataReader } from "../../services/DataReader.js";
+import { splitProject } from "../../utils/split-project.js";
 import type { CheckResult } from "../lib/format-doctor.js";
 import { formatDoctor } from "../lib/format-doctor.js";
-import { resolveCacheDir } from "../lib/resolve-cache-dir.js";
+import { resolveDbPath } from "../lib/resolve-cache-dir.js";
 
-const cacheDirOption = Options.text("cache-dir").pipe(
-	Options.withAlias("d"),
-	Options.withDescription("Cache directory path"),
-	Options.optional,
-);
+const formatOption = Options.withDefault(Options.choice("format", ["markdown", "json"]), "markdown");
 
-export const doctorCommand = Command.make("doctor", { cacheDir: cacheDirOption }, ({ cacheDir }) =>
+const writeOutput = (results: CheckResult[], format: string) =>
+	Effect.sync(() => {
+		if (format === "json") {
+			process.stdout.write(`${JSON.stringify(results, null, 2)}\n`);
+		} else {
+			process.stdout.write(`${formatDoctor(results)}\n`);
+		}
+	});
+
+export const doctorCommand = Command.make("doctor", { format: formatOption }, ({ format }) =>
 	Effect.gen(function* () {
-		const reader = yield* CacheReader;
-		const fs = yield* FileSystem.FileSystem;
+		const reader = yield* DataReader;
 		const results: CheckResult[] = [];
 
-		// Check 1: Cache resolution
-		const dirResult = yield* (Option.isSome(cacheDir) ? Effect.succeed(cacheDir.value) : resolveCacheDir).pipe(
-			Effect.map((d) => ({ found: true as const, dir: d })),
+		// Check 1: Database resolution
+		const dbResult = yield* resolveDbPath.pipe(
+			Effect.map((d) => ({ found: true as const, path: d })),
 			Effect.catchAll(() =>
 				Effect.succeed({
 					found: false as const,
-					dir: undefined as string | undefined,
+					path: undefined as string | undefined,
 				}),
 			),
 		);
 
-		if (!dirResult.found || !dirResult.dir) {
+		if (!dbResult.found || !dbResult.path) {
 			results.push({
-				name: "Cache found",
+				name: "Database found",
 				passed: false,
-				detail: "not found -- run tests first or specify --cache-dir",
+				detail: "not found -- run tests first",
 			});
-			const output = formatDoctor(results);
-			yield* Effect.sync(() => process.stdout.write(`${output}\n`));
+			yield* writeOutput(results, format);
 			yield* Effect.sync(() => process.exit(1));
 			return;
 		}
 
-		const dir = dirResult.dir;
 		results.push({
-			name: "Cache found",
+			name: "Database found",
 			passed: true,
-			detail: `\`${dir}\``,
+			detail: `\`${dbResult.path}\``,
 		});
 
-		// Check 2: Manifest validation
-		const manifestOpt = yield* reader
-			.readManifest(dir)
-			.pipe(Effect.catchAll(() => Effect.succeed(Option.none<never>())));
+		// Check 2: Manifest (can read project data from DB)
+		const manifestOpt = yield* reader.getManifest().pipe(Effect.catchAll(() => Effect.succeed(Option.none<never>())));
 
 		if (Option.isNone(manifestOpt)) {
-			const manifestExists = yield* fs
-				.exists(`${dir}/manifest.json`)
-				.pipe(Effect.catchAll(() => Effect.succeed(false)));
-
 			results.push({
 				name: "Manifest",
 				passed: false,
-				detail: manifestExists ? "`manifest.json` exists but is corrupt" : "`manifest.json` missing",
+				detail: "no test run data found in database",
 			});
 
-			const output = formatDoctor(results);
-			yield* Effect.sync(() => process.stdout.write(`${output}\n`));
+			yield* writeOutput(results, format);
 			yield* Effect.sync(() => process.exit(1));
 			return;
 		}
@@ -83,24 +78,17 @@ export const doctorCommand = Command.make("doctor", { cacheDir: cacheDirOption }
 			detail: `${manifest.projects.length} project${manifest.projects.length !== 1 ? "s" : ""}`,
 		});
 
-		// Check 3: Report integrity
+		// Check 3: Report integrity (can read latest run per project)
 		let validReports = 0;
 		const reportIssues: string[] = [];
 		for (const entry of manifest.projects) {
-			const reportPath = `${dir}/${entry.reportFile}`;
-			const fileExists = yield* fs.exists(reportPath).pipe(Effect.catchAll(() => Effect.succeed(false)));
-
-			if (!fileExists) {
-				reportIssues.push(`\`${entry.reportFile}\` missing`);
-				continue;
-			}
-
+			const { project, subProject } = splitProject(entry.project);
 			const reportOpt = yield* reader
-				.readReport(dir, entry.project)
+				.getLatestRun(project, subProject)
 				.pipe(Effect.catchAll(() => Effect.succeed(Option.none<never>())));
 
 			if (Option.isNone(reportOpt)) {
-				reportIssues.push(`\`${entry.reportFile}\` corrupt`);
+				reportIssues.push(`\`${entry.project}\` no report data`);
 			} else {
 				validReports++;
 			}
@@ -121,24 +109,23 @@ export const doctorCommand = Command.make("doctor", { cacheDir: cacheDirOption }
 			});
 		}
 
-		// Check 4: History integrity
+		// Check 4: History integrity (can read history per project)
 		let validHistory = 0;
 		let totalHistory = 0;
 		const historyIssues: string[] = [];
 		for (const entry of manifest.projects) {
-			if (!entry.historyFile) continue;
 			totalHistory++;
-			const historyPath = `${dir}/${entry.historyFile}`;
-			const fileExists = yield* fs.exists(historyPath).pipe(Effect.catchAll(() => Effect.succeed(false)));
+			const { project, subProject } = splitProject(entry.project);
+			const history = yield* reader.getHistory(project, subProject).pipe(
+				Effect.map((h) => ({ ok: true as const, record: h })),
+				Effect.catchAll(() => Effect.succeed({ ok: false as const, record: null })),
+			);
 
-			if (!fileExists) {
-				historyIssues.push(`\`${entry.historyFile}\` missing`);
-				continue;
+			if (!history.ok) {
+				historyIssues.push(`\`${entry.project}\` history read error`);
+			} else {
+				validHistory++;
 			}
-
-			// readHistory returns successfully for valid files (empty is valid initial state)
-			yield* reader.readHistory(dir, entry.project);
-			validHistory++;
 		}
 
 		if (totalHistory > 0) {
@@ -182,8 +169,7 @@ export const doctorCommand = Command.make("doctor", { cacheDir: cacheDirOption }
 		}
 
 		// Output
-		const output = formatDoctor(results);
-		yield* Effect.sync(() => process.stdout.write(`${output}\n`));
+		yield* writeOutput(results, format);
 
 		const hasFailures = results.some((r) => !r.passed);
 		if (hasFailures) {

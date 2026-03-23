@@ -71,6 +71,38 @@ export const PackageManager = Schema.Literal("pnpm", "npm", "yarn", "bun").annot
 });
 export type PackageManager = typeof PackageManager.Type;
 
+/**
+ * Runtime environment where tests are being executed.
+ */
+export const Environment = Schema.Literal("agent-shell", "terminal", "ci-github", "ci-generic").annotations({
+	identifier: "Environment",
+});
+export type Environment = typeof Environment.Type;
+
+/**
+ * Who or what is executing the test run.
+ */
+export const Executor = Schema.Literal("human", "agent", "ci").annotations({
+	identifier: "Executor",
+});
+export type Executor = typeof Executor.Type;
+
+/**
+ * Output format for the reporter pipeline.
+ */
+export const OutputFormat = Schema.Literal("markdown", "json", "vitest-bypass", "silent").annotations({
+	identifier: "OutputFormat",
+});
+export type OutputFormat = typeof OutputFormat.Type;
+
+/**
+ * Level of detail in reporter output.
+ */
+export const DetailLevel = Schema.Literal("minimal", "neutral", "standard", "verbose").annotations({
+	identifier: "DetailLevel",
+});
+export type DetailLevel = typeof DetailLevel.Type;
+
 // --- Report Error ---
 
 /**
