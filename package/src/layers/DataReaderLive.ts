@@ -94,14 +94,16 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 						: [];
 
 				// Group in TypeScript
-				const testsByModule = new Map<number, typeof allTestCases>();
+				type TestCaseRow = (typeof allTestCases)[number];
+				type ErrorRow = (typeof allErrors)[number];
+				const testsByModule = new Map<number, TestCaseRow[]>();
 				for (const tc of allTestCases) {
 					const arr = testsByModule.get(tc.module_id);
 					if (arr) arr.push(tc);
 					else testsByModule.set(tc.module_id, [tc]);
 				}
-				const errorsByTestCase = new Map<number, typeof allErrors>();
-				const errorsByModule = new Map<number, typeof allErrors>();
+				const errorsByTestCase = new Map<number, ErrorRow[]>();
+				const errorsByModule = new Map<number, ErrorRow[]>();
 				for (const e of allErrors) {
 					if (e.scope === "test" && e.test_case_id != null) {
 						const arr = errorsByTestCase.get(e.test_case_id);
