@@ -23,7 +23,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 		const sql = yield* SqlClient;
 
 		// Ensure FK enforcement on every connection (PRAGMA is per-connection, not persistent)
-		yield* sql`PRAGMA foreign_keys=ON`;
+		yield* sql`PRAGMA foreign_keys=ON`.pipe(Effect.catchAll(() => Effect.void));
 
 		const ensureFile = (filePath: string): Effect.Effect<number, DataStoreError> =>
 			Effect.gen(function* () {
