@@ -4,7 +4,6 @@ import { AgentPlugin } from "./package/src/plugin.js";
 export default defineConfig({
 	plugins: [
 		AgentPlugin({
-			mode: "agent",
 			strategy: "own",
 			mcp: true,
 			reporter: {
