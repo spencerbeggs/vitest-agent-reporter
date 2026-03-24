@@ -7,9 +7,6 @@
 		"url": "https://spencerbeg.gs"
 	},
 	"homepage": "https://github.com/spencerbeggs/vitest-agent-reporter",
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/spencerbeggs/vitest-agent-reporter.git"
-	},
+	"repository": "https://github.com/spencerbeggs/vitest-agent-reporter.git",
 	"license": "MIT"
 }
