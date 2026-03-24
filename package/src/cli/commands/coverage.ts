@@ -7,22 +7,17 @@
 import { Command, Options } from "@effect/cli";
 import { Effect, Option } from "effect";
 import type { AgentReport } from "../../schemas/AgentReport.js";
-import { CacheReader } from "../../services/CacheReader.js";
+import { DataReader } from "../../services/DataReader.js";
+import { splitProject } from "../../utils/split-project.js";
 import { formatCoverage } from "../lib/format-coverage.js";
-import { resolveCacheDir } from "../lib/resolve-cache-dir.js";
 
-const cacheDirOption = Options.text("cache-dir").pipe(
-	Options.withAlias("d"),
-	Options.withDescription("Cache directory path"),
-	Options.optional,
-);
+const formatOption = Options.withDefault(Options.choice("format", ["markdown", "json"]), "markdown");
 
-export const coverageCommand = Command.make("coverage", { cacheDir: cacheDirOption }, ({ cacheDir }) =>
+export const coverageCommand = Command.make("coverage", { format: formatOption }, ({ format }) =>
 	Effect.gen(function* () {
-		const reader = yield* CacheReader;
-		const dir = Option.isSome(cacheDir) ? cacheDir.value : yield* resolveCacheDir;
+		const reader = yield* DataReader;
 
-		const manifestOpt = yield* reader.readManifest(dir);
+		const manifestOpt = yield* reader.getManifest();
 		if (Option.isNone(manifestOpt)) {
 			yield* Effect.sync(() => process.stdout.write("No test results found.\n"));
 			return;
@@ -32,13 +27,18 @@ export const coverageCommand = Command.make("coverage", { cacheDir: cacheDirOpti
 		const reportEntries: Array<{ project: string; report: AgentReport }> = [];
 
 		for (const entry of manifest.projects) {
-			const reportOpt = yield* reader.readReport(dir, entry.project);
+			const { project, subProject } = splitProject(entry.project);
+			const reportOpt = yield* reader.getLatestRun(project, subProject);
 			if (Option.isSome(reportOpt)) {
 				reportEntries.push({ project: entry.project, report: reportOpt.value });
 			}
 		}
 
-		const output = formatCoverage(reportEntries);
-		yield* Effect.sync(() => process.stdout.write(`${output}\n`));
+		if (format === "json") {
+			yield* Effect.sync(() => process.stdout.write(`${JSON.stringify(reportEntries, null, 2)}\n`));
+		} else {
+			const output = formatCoverage(reportEntries);
+			yield* Effect.sync(() => process.stdout.write(`${output}\n`));
+		}
 	}),
 );

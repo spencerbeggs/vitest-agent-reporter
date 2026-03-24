@@ -9,6 +9,7 @@ import { Command } from "@effect/cli";
 import { NodeContext, NodeRuntime } from "@effect/platform-node";
 import { Cause, Console, Effect } from "effect";
 import { CliLive } from "../layers/CliLive.js";
+import { resolveLogFile, resolveLogLevel } from "../layers/LoggerLive.js";
 import { cacheCommand } from "./commands/cache.js";
 import { coverageCommand } from "./commands/coverage.js";
 import { doctorCommand } from "./commands/doctor.js";
@@ -16,6 +17,7 @@ import { historyCommand } from "./commands/history.js";
 import { overviewCommand } from "./commands/overview.js";
 import { statusCommand } from "./commands/status.js";
 import { trendsCommand } from "./commands/trends.js";
+import { resolveDbPath } from "./lib/resolve-cache-dir.js";
 
 const rootCommand = Command.make("vitest-agent-reporter").pipe(
 	Command.withSubcommands([
@@ -34,8 +36,13 @@ const cli = Command.run(rootCommand, {
 	version: "0.0.0",
 });
 
-const main = Effect.suspend(() => cli(process.argv)).pipe(
-	Effect.provide(CliLive),
+const logLevel = resolveLogLevel();
+const logFile = resolveLogFile();
+
+const main = resolveDbPath.pipe(
+	Effect.flatMap((dbPath) =>
+		Effect.suspend(() => cli(process.argv)).pipe(Effect.provide(CliLive(dbPath, logLevel, logFile))),
+	),
 	Effect.provide(NodeContext.layer),
 	Effect.catchAllCause((cause) => {
 		const defects = Cause.defects(cause);
@@ -46,4 +53,4 @@ const main = Effect.suspend(() => cli(process.argv)).pipe(
 	}),
 );
 
-NodeRuntime.runMain(main);
+NodeRuntime.runMain(main as Effect.Effect<void>);

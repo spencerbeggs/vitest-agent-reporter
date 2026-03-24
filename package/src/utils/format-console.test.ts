@@ -219,19 +219,22 @@ describe("formatConsoleMarkdown", () => {
 		expect(result).toContain("vitest run src/auth/login.test.ts");
 	});
 
-	it("shows cache file path in next steps when provided", () => {
+	it("suggests MCP tools when mcp option is true", () => {
 		const result = formatConsoleMarkdown(failingReport, {
 			...baseOptions,
-			cacheFile: ".vitest-agent-reporter/reports/default.json",
+			mcp: true,
 		});
-		expect(result).toContain(".vitest-agent-reporter/reports/default.json");
+		expect(result).toContain("test_history");
+		expect(result).toContain("note_create");
 	});
 
 	// --- Footer ---
 
-	it("shows 'All tests passed' for passing report", () => {
+	it("shows passing header without redundant 'All tests passed' line", () => {
 		const result = formatConsoleMarkdown(passingReport, baseOptions);
-		expect(result).toContain("All tests passed");
+		expect(result).toContain("✓ Vitest");
+		expect(result).toContain("passed");
+		expect(result).not.toContain("All tests passed");
 	});
 
 	it("does NOT show summary table", () => {

@@ -1,16 +1,17 @@
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
-import { CacheWriter } from "../services/CacheWriter.js";
 import { CoverageAnalyzer } from "../services/CoverageAnalyzer.js";
+import { DataStore } from "../services/DataStore.js";
 import { HistoryTracker } from "../services/HistoryTracker.js";
+import { OutputRenderer } from "../services/OutputRenderer.js";
 import { ReporterLive } from "./ReporterLive.js";
 
 describe("ReporterLive", () => {
-	it("provides CacheWriter", async () => {
+	it("provides DataStore", async () => {
 		const result = await Effect.runPromise(
 			Effect.provide(
-				Effect.flatMap(CacheWriter, () => Effect.succeed("ok")),
-				ReporterLive,
+				Effect.flatMap(DataStore, () => Effect.succeed("ok")),
+				ReporterLive(":memory:"),
 			),
 		);
 		expect(result).toBe("ok");
@@ -20,7 +21,7 @@ describe("ReporterLive", () => {
 		const result = await Effect.runPromise(
 			Effect.provide(
 				Effect.flatMap(CoverageAnalyzer, () => Effect.succeed("ok")),
-				ReporterLive,
+				ReporterLive(":memory:"),
 			),
 		);
 		expect(result).toBe("ok");
@@ -31,9 +32,19 @@ describe("ReporterLive", () => {
 			Effect.gen(function* () {
 				const tracker = yield* HistoryTracker;
 				return tracker;
-			}).pipe(Effect.provide(ReporterLive)),
+			}).pipe(Effect.provide(ReporterLive(":memory:"))),
 		);
 		expect(result).toBeDefined();
 		expect(result.classify).toBeTypeOf("function");
+	});
+
+	it("provides OutputRenderer", async () => {
+		const result = await Effect.runPromise(
+			Effect.provide(
+				Effect.flatMap(OutputRenderer, () => Effect.succeed("ok")),
+				ReporterLive(":memory:"),
+			),
+		);
+		expect(result).toBe("ok");
 	});
 });

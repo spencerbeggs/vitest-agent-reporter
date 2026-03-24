@@ -30,11 +30,11 @@ The plugin auto-detects the environment using
 
 | Environment | Detection | Behavior |
 | --- | --- | --- |
-| Agent | `std-env` agent detection (Claude Code, Cursor, Gemini CLI, Codex, etc.) | Structured markdown or complement mode |
+| Agent | `std-env` agent detection (Claude Code, Cursor, Gemini CLI, Codex, etc.) | Structured markdown output, data persisted to SQLite |
 | CI | `GITHUB_ACTIONS`, `CI=true` | Keeps existing reporters, adds GFM to `GITHUB_STEP_SUMMARY` |
 | Human | No agent/CI detected | Keeps existing reporters, runs silently |
 
-JSON cache and failure history are always written regardless of
+Test data is always persisted to the SQLite database regardless of
 environment.
 
 ## Guides
@@ -43,6 +43,8 @@ environment.
 | --- | --- |
 | [Configuration](configuration.md) | Plugin and reporter options, thresholds, targets, trends, cache resolution, environment detection |
 | [Direct Reporter Usage](reporter.md) | Using `AgentReporter` without the plugin, lifecycle hooks, advanced configuration |
-| [Schemas](schemas.md) | Effect Schema definitions, reading cache files, type inference, programmatic validation |
+| [Schemas](schemas.md) | Effect Schema definitions, programmatic database access, type inference |
 | [CLI Commands](cli.md) | Status, overview, coverage, history, trends, cache, and doctor commands |
+| [MCP Server](mcp.md) | MCP tools reference, notes system, manual server usage |
 | [Failure History](history.md) | Test classification and failure tracking across runs |
+| [Claude Code Plugin](../plugin/README.md) | Plugin installation, hooks, skills, and commands |

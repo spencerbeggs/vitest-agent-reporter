@@ -3,9 +3,10 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-03-22
-last-synced: 2026-03-22
-completeness: 90
+updated: 2026-03-23
+last-synced: 2026-03-23
+post-phase5-sync: 2026-03-23
+completeness: 95
 related:
   - vitest-agent-reporter/architecture.md
   - vitest-agent-reporter/decisions.md
@@ -27,40 +28,55 @@ the codebase.
 
 **Location:** `package/src/reporter.ts`
 
-**Status:** COMPLETE (Phase 1-2-3-4)
+**Status:** COMPLETE (Phase 1-2-3-4-5)
 
-**Purpose:** Vitest Reporter that produces three outputs: structured markdown
-to console, persistent JSON to disk per project, and optional GFM for GitHub
-Actions. Uses Effect services for file I/O, coverage processing, failure
-history tracking, and coverage baselines/trends.
+**Purpose:** Vitest Reporter that produces three outputs: formatted output
+to console (via output pipeline), persistent data to SQLite database per
+project, and optional GFM for GitHub Actions. Uses Effect services for
+database I/O, coverage processing, failure history tracking, coverage
+baselines/trends, and output rendering.
 
 **Responsibilities:**
 
 - Store `Vitest` instance in `onInit` for project enumeration
+- Capture Vitest settings and environment variables via `captureSettings()`
+  and `captureEnvVars()`, write to database via `DataStore.writeSettings()`
 - Stash coverage data in `onCoverage` (fires before `onTestRunEnd`)
+- When `projectFilter` is set, filter `testModules` to only modules
+  matching that project name before grouping
+- Coverage dedup: only the first project (alphabetically) processes
+  global coverage. Other projects skip coverage processing
 - In `onTestRunEnd`, group `TestModule[]` by `testModule.project.name`
-- For each project: build report via `buildAgentReport()`, write per-project
-  JSON cache file via CacheWriter service
+- Split project names via `splitProject()` into `project` + `subProject`
+  for normalized storage
+- For each project: build report via `buildAgentReport()`, write to
+  database via `DataStore.writeRun()`, `writeModules()`, `writeTestCases()`,
+  `writeErrors()`, `writeCoverage()`, etc.
 - Attach `unhandledErrors` to ALL project reports (not just "default")
 - Extract `TestOutcome[]` from `VitestTestModule` objects
-- Classify tests via `HistoryTracker.classify(outcomes)`, attach resulting
-  classifications to `TestReport.classification` fields
-- Write per-project history JSON via `CacheWriter.writeHistory()`
-- Read existing baselines via `CacheReader.readBaselines()`, compute updated
-  baselines after coverage processing, write via `CacheWriter.writeBaselines()`
+- Classify tests via `HistoryTracker.classify(project, subProject, outcomes,
+  timestamp)`, attach resulting classifications to `TestReport.classification`
+  fields
+- Write per-test history rows via `DataStore.writeHistory()`
+- Read existing baselines via `DataReader.getBaselines()`, compute updated
+  baselines after coverage processing, write via `DataStore.writeBaselines()`
 - Compute coverage trends via `computeTrend()` on full (non-scoped) runs,
-  write per-project trends via `CacheWriter.writeTrends()`
-- Populate `historyFile` field in manifest entries
-- Write/update cache manifest (`manifest.json`) via CacheWriter service
+  write per-project trends via `DataStore.writeTrends()`
+- Render output via `OutputRenderer.render()` which selects the appropriate
+  formatter based on the output pipeline resolution
+- After writing trends, read them back from DB and build `trendSummary`
+  for formatter context (direction, runCount, firstMetric)
 - Format and emit tiered console markdown (green/yellow/red based on run
   health); includes `[new-failure]` classification labels on failed tests
-  and trend summary line when trend data available
+  and "trending improving over N runs" line when trend data available
+- When `mcp` option is true, Next Steps suggests MCP tools instead of
+  CLI commands
 - When `GITHUB_ACTIONS` detected or `githubActions` option enabled, append
-  GFM summary to `GITHUB_STEP_SUMMARY` file via FileSystem service
+  GFM summary to `GITHUB_STEP_SUMMARY` file
 - Process coverage via CoverageAnalyzer service with scoped coverage support
   and Vitest-native threshold format
 - Each lifecycle hook builds a scoped effect and runs it with
-  `Effect.runPromise`, providing the `ReporterLive` layer inline
+  `Effect.runPromise`, providing the `ReporterLive(dbPath)` layer inline
 
 **Key interfaces/APIs:**
 
@@ -77,14 +93,18 @@ interface AgentReporterOptions {
   includeBareZero?: boolean;                      // default: false
   githubActions?: boolean;                        // default: auto-detect
   githubSummaryFile?: string;                     // default: process.env.GITHUB_STEP_SUMMARY
+  projectFilter?: string;                         // filter to single project
+  mcp?: boolean;                                  // suggest MCP tools in Next Steps
+  logLevel?: "Debug" | "Info" | "Warning" | "Error" | "None"; // default: "None"
+  logFile?: string;                               // optional log file path
 }
 ```
 
 **Dependencies:**
 
-- Depends on: Vitest Reporter v2 API (>= 3.2.0), CacheWriter service,
-  CoverageAnalyzer service, HistoryTracker service, CacheReader service,
-  `@effect/platform` FileSystem
+- Depends on: Vitest Reporter v2 API (>= 3.2.0), DataStore service,
+  DataReader service, CoverageAnalyzer service, HistoryTracker service,
+  OutputRenderer service, `@effect/platform` FileSystem
 - Used by: `AgentPlugin`, direct consumer configuration
 
 ---
@@ -93,31 +113,35 @@ interface AgentReporterOptions {
 
 **Location:** `package/src/plugin.ts`
 
-**Status:** COMPLETE (Phase 1-2-4)
+**Status:** COMPLETE (Phase 1-2-4-5)
 
 **Purpose:** Vitest plugin that injects `AgentReporter` into the reporter
 chain via the `configureVitest` hook. Manages environment detection via
-AgentDetection service, hybrid console strategy, reporter chain
-manipulation, cache directory resolution, and coverage threshold/target
-resolution.
+EnvironmentDetector service, executor resolution via ExecutorResolver,
+reporter chain manipulation, cache directory resolution, and coverage
+threshold/target resolution.
 
 **Responsibilities:**
 
-- Detect runtime environment via AgentDetection Effect service (backed by
-  `std-env`): agent, CI, or human
-- Apply `consoleStrategy` behavior:
-  - `"complement"` (default): let Vitest's built-in agent reporter handle
-    console suppression and GFM. Our reporter adds JSON cache and manifest
-    only. Warns if `agent` reporter missing from chain
-  - `"own"`: strip built-in console reporters (including `agent`), use our
-    formatter, write our own GFM. Phase 1 behavior
+- Use `VitestPluginContext` from `vitest/node` for `configureVitest` hook
+  typing. Uses `as unknown as` casts where Vitest types are too strict
+  for config subset access
+- Detect runtime environment via EnvironmentDetector Effect service (backed
+  by `std-env`): `agent-shell`, `terminal`, `ci-github`, `ci-generic`
+- Resolve executor via ExecutorResolver: maps environment to `human`,
+  `agent`, or `ci` executor role
+- Apply output behavior based on executor and format selection
 - Resolve cache directory with priority: explicit option > `outputFile`
   config > `vite.cacheDir + "/vitest-agent-reporter"`
 - Resolve coverage thresholds from Vitest's resolved coverage config via
-  `resolveThresholds()` utility (replaces `extractCoverageThreshold`)
+  `resolveThresholds()` utility
 - Resolve coverage targets from plugin options via `resolveThresholds()`
 - Disable Vitest's native `autoUpdate` when our targets are set (prevents
   Vitest from auto-ratcheting thresholds independently)
+- In agent/own mode, suppress Vitest's native coverage text table by
+  setting `coverage.reporter = []`
+- Pass project name from `configureVitest` context as `projectFilter`
+  option on AgentReporter so each instance filters to its own project
 - Push `AgentReporter` instance into `vitest.config.reporters`
 - `configureVitest` is async (runs `Effect.runPromise` for detection)
 
@@ -127,7 +151,10 @@ resolution.
 // Effect Schema (source of truth) -- see Options.ts in schemas/
 interface AgentPluginOptions {
   mode?: "auto" | "agent" | "silent";             // default: "auto"
-  consoleStrategy?: "own" | "complement";         // default: "complement"
+  strategy?: "own" | "complement";                // default: "complement"
+  mcp?: boolean;                                  // suggest MCP tools in output
+  logLevel?: "Debug" | "Info" | "Warning" | "Error" | "None";
+  logFile?: string;                               // optional log file path
   reporter?: {
     cacheDir?: string;
     omitPassingTests?: boolean;
@@ -141,20 +168,6 @@ interface AgentPluginOptions {
 }
 ```
 
-**Console strategy behavior matrix:**
-
-| mode | consoleStrategy | Console | Reporters stripped? | GFM | JSON cache |
-| ---- | --------------- | ------- | ------------------- | --- | ---------- |
-| agent | complement | Vitest built-in | No | Vitest built-in | Yes |
-| agent | own | Our markdown | Yes | Ours | Yes |
-| silent | complement | None from us | No | No | Yes |
-| silent | own | None | No | No | Yes |
-| auto (agent) | complement | Vitest built-in | No | Vitest built-in | Yes |
-| auto (agent) | own | Our markdown | Yes | Ours | Yes |
-| auto (CI) | complement | Vitest built-in | No | Vitest built-in | Yes |
-| auto (CI) | own | Silent | No | Ours | Yes |
-| auto (human) | either | Silent | No | No | Yes |
-
 **Console reporters stripped in "own" mode (agent environment):**
 
 `default`, `verbose`, `tree`, `dot`, `tap`, `tap-flat`, `hanging-process`,
@@ -165,7 +178,8 @@ preserved.
 **Dependencies:**
 
 - Depends on: Vitest Plugin API (`configureVitest`, Vitest 3.1+),
-  `AgentReporter`, AgentDetection service, `stripConsoleReporters`
+  `AgentReporter`, EnvironmentDetector service, ExecutorResolver service,
+  `stripConsoleReporters`
 - Used by: Consumer `vitest.config.ts`
 
 ---
@@ -174,49 +188,65 @@ preserved.
 
 **Location:** `package/src/services/`
 
-**Status:** COMPLETE (Phase 2-3)
+**Status:** COMPLETE (Phase 2-3-5)
 
 **Purpose:** Effect `Context.Tag` definitions for all shared functionality.
 Each service is a tag with a typed interface. Live implementations use
-`@effect/platform` for file I/O; test implementations use mock state
-containers.
+`@effect/platform` and `@effect/sql-sqlite-node` for I/O; test
+implementations use mock state containers.
 
-**Services:**
+**Services (10 total):**
 
-- **AgentDetection** (`package/src/services/AgentDetection.ts`) -- wraps `std-env`
-  for environment detection. Provides `isAgent`, `agentName`, `isCI`, and
-  `environment` effects. Replaces the hand-rolled `detectEnvironment()`
-  utility from Phase 1
-- **CacheWriter** (`package/src/services/CacheWriter.ts`) -- writes reports,
-  history, baselines, trends, and manifest to disk via `@effect/platform`
-  FileSystem. Provides `writeReport`, `writeHistory`, `writeBaselines`,
-  `writeTrends`, `writeManifest`, and `ensureDir` effects. `writeHistory`
-  writes to `{cacheDir}/history/{safeFilename(project)}.history.json`.
-  `writeBaselines` writes to `{cacheDir}/baselines.json`. `writeTrends`
-  writes to `{cacheDir}/trends/{safeFilename(project)}.trends.json`
-- **CacheReader** (`package/src/services/CacheReader.ts`) -- reads manifest,
-  reports, history, baselines, and trends from disk. Provides `readManifest`,
-  `readReport`, `readHistory`, `readBaselines`, `readTrends`, and
-  `listReports` effects. `readHistory` returns an empty record for missing
-  or corrupt files (logs a warning for corruption). `readBaselines` and
-  `readTrends` return `Option.none()` for missing files. Shared between
-  reporter and CLI. Exported from public API for programmatic cache access
-- **CoverageAnalyzer** (`package/src/services/CoverageAnalyzer.ts`) -- processes
-  istanbul CoverageMap with optional scoping. Provides `process` (full
-  analysis) and `processScoped` (filtered to tested source files) effects.
-  Replaces the standalone `processCoverage()` function from Phase 1
-- **ProjectDiscovery** (`package/src/services/ProjectDiscovery.ts`) -- glob-based
-  test file discovery for the CLI. Provides `discoverTestFiles` and
-  `mapTestToSource` effects. Uses convention-based mapping (strip
-  `.test.`/`.spec.` suffix) with existence check via FileSystem. Live
-  layer uses a `SKIP_DIRS` set (`node_modules`, `.git`, `dist`,
-  `coverage`, `.turbo`, `.vite`) to exclude non-source directories from
-  recursive `walkDir` traversal
-- **HistoryTracker** (`package/src/services/HistoryTracker.ts`) -- classifies test
-  outcomes against stored history. Provides a `classify` method accepting
-  `TestOutcome[]` and returning history records plus a classifications map
+- **DataStore** (`package/src/services/DataStore.ts`) -- writes test runs,
+  modules, suites, test cases, errors, coverage, history, baselines, trends,
+  settings, source maps, and notes to SQLite via `@effect/sql-sqlite-node`.
+  Provides `writeRun`, `writeModules`, `writeSuites`, `writeTestCases`,
+  `writeErrors`, `writeCoverage`, `writeHistory`, `writeBaselines`,
+  `writeTrends`, `writeSettings`, `writeSourceMap`, `ensureFile`,
+  `writeNote`, `updateNote`, `deleteNote` effects. Replaces CacheWriter
+  from Phase 2-4
+- **DataReader** (`package/src/services/DataReader.ts`) -- reads test data
+  from SQLite. Provides `getLatestRun`, `getRunsByProject`, `getHistory`,
+  `getBaselines`, `getTrends`, `getFlaky`, `getPersistentFailures`,
+  `getFileCoverage`, `getTestsForFile`, `getErrors`, `getNotes`,
+  `getNoteById`, `searchNotes`, `getManifest`, `getSettings` effects.
+  Returns `Option.none()` for missing data. Shared between reporter,
+  CLI, and MCP server. Replaces CacheReader from Phase 2-4
+- **EnvironmentDetector** (`package/src/services/EnvironmentDetector.ts`) --
+  wraps `std-env` for four-environment detection. Provides `detect()`,
+  `isAgent`, and `agentName` effects. Returns `Environment` type:
+  `"agent-shell" | "terminal" | "ci-github" | "ci-generic"`. Replaces
+  AgentDetection from Phase 2
+- **ExecutorResolver** (`package/src/services/ExecutorResolver.ts`) -- maps
+  environment + mode to an executor role. Provides `resolve(env, mode)`
+  returning `Executor` type: `"human" | "agent" | "ci"`
+- **FormatSelector** (`package/src/services/FormatSelector.ts`) -- selects
+  output format based on executor and explicit override. Provides
+  `select(executor, explicitFormat?)` returning `OutputFormat` type:
+  `"markdown" | "json" | "vitest-bypass" | "silent"`
+- **DetailResolver** (`package/src/services/DetailResolver.ts`) -- determines
+  output detail level based on executor, run health, and explicit override.
+  Provides `resolve(executor, health, explicit?)` returning `DetailLevel`
+  type: `"minimal" | "neutral" | "standard" | "verbose"`. `RunHealth`
+  interface carries `hasFailures`, `belowTargets`, `hasTargets` flags
+- **OutputRenderer** (`package/src/services/OutputRenderer.ts`) -- renders
+  reports using the selected formatter. Provides `render(reports, format,
+  context)` returning `RenderedOutput[]` with target, content, and
+  contentType
+- **CoverageAnalyzer** (`package/src/services/CoverageAnalyzer.ts`) --
+  processes istanbul CoverageMap with optional scoping. Provides `process`
+  (full analysis) and `processScoped` (filtered to tested source files)
+  effects. Unchanged from Phase 2
+- **ProjectDiscovery** (`package/src/services/ProjectDiscovery.ts`) --
+  glob-based test file discovery for the CLI. Provides `discoverTestFiles`
+  and `mapTestToSource` effects. Unchanged from Phase 2
+- **HistoryTracker** (`package/src/services/HistoryTracker.ts`) -- classifies
+  test outcomes against stored history. Provides a `classify` method
+  accepting `project`, `subProject`, `testOutcomes[]`, and `timestamp`,
+  returning history records plus a classifications map
   (`Map<string, TestClassification>`). Uses a 10-entry sliding window.
-  Depends on CacheReader to load prior history
+  Depends on DataReader to load prior history. Phase 5 changed signature
+  to include `project`/`subProject` parameters (removed `cacheDir`)
 
 ---
 
@@ -224,41 +254,62 @@ containers.
 
 **Location:** `package/src/layers/`
 
-**Status:** COMPLETE (Phase 2-3)
+**Status:** COMPLETE (Phase 2-3-5)
 
 **Purpose:** Live and test implementations for all Effect services, plus
 merged composition layers.
 
 **Live layers:**
 
-- `AgentDetectionLive` -- reads `std-env` exports plus CI env vars
-- `CacheWriterLive` -- depends on `FileSystem` from `@effect/platform`
-- `CacheReaderLive` -- depends on `FileSystem` from `@effect/platform`.
-  Uses `Effect.try` to wrap `Schema.decodeUnknownSync` + `JSON.parse`
-  so corrupt or invalid cache files produce typed `CacheError` instead
-  of unhandled defects
+- `DataStoreLive` -- writes to SQLite via `@effect/sql-sqlite-node`
+- `DataReaderLive` -- reads from SQLite via `@effect/sql-sqlite-node`.
+  Uses SQL assembler functions to reconstruct `AgentReport` and other
+  domain types from normalized row data
+- `EnvironmentDetectorLive` -- reads `std-env` exports plus CI env vars
+- `ExecutorResolverLive` -- pure mapping logic
+- `FormatSelectorLive` -- format selection logic
+- `DetailResolverLive` -- detail level resolution logic
+- `OutputRendererLive` -- dispatches to registered formatter instances
 - `CoverageAnalyzerLive` -- pure computation (duck-typed CoverageMap)
 - `ProjectDiscoveryLive` -- depends on `FileSystem` for glob and stat
 - `HistoryTrackerLive` -- classification logic with 10-entry sliding window.
-  Depends on CacheReader for loading prior history
+  Depends on DataReader for loading prior history. Uses `classifyTest()`
+  pure function
 
 **Test layers:**
 
-- `AgentDetectionTest` -- accepts a fixed environment value
-- `CacheWriterTest` -- accumulates writes into mutable state container
-- `CacheReaderTest` -- returns canned data
+- `DataStoreTest` -- accumulates writes into mutable state container
+- `EnvironmentDetectorTest` -- accepts a fixed environment value
 - `CoverageAnalyzerTest` -- returns canned data
 - `ProjectDiscoveryTest` -- returns canned data
 - `HistoryTrackerTest` -- returns canned classifications
 
-**Merged layers:**
+**Merged layers (all functions of `dbPath: string`):**
 
-- `ReporterLive` (`package/src/layers/ReporterLive.ts`) -- CacheWriterLive +
-  CoverageAnalyzerLive + CacheReaderLive + HistoryTrackerLive +
-  NodeFileSystem. Used by AgentReporter via `Effect.runPromise`
-- `CliLive` (`package/src/layers/CliLive.ts`) -- CacheReaderLive +
-  ProjectDiscoveryLive + HistoryTrackerLive + NodeFileSystem. Used by CLI
+- `ReporterLive(dbPath)` (`package/src/layers/ReporterLive.ts`) --
+  DataStoreLive + CoverageAnalyzerLive + HistoryTrackerLive +
+  OutputPipelineLive + DataReaderLive + SqliteClient + Migrator +
+  NodeContext. Used by AgentReporter via `Effect.runPromise`
+- `CliLive(dbPath)` (`package/src/layers/CliLive.ts`) -- DataReaderLive +
+  ProjectDiscoveryLive + HistoryTrackerLive + OutputPipelineLive +
+  SqliteClient + Migrator + NodeContext + NodeFileSystem. Used by CLI
   via `NodeRuntime.runMain`
+- `McpLive(dbPath)` (`package/src/layers/McpLive.ts`) -- DataReaderLive +
+  DataStoreLive + ProjectDiscoveryLive + OutputPipelineLive +
+  SqliteClient + Migrator + NodeContext + NodeFileSystem. Used by MCP
+  server via `ManagedRuntime`
+- `OutputPipelineLive` (`package/src/layers/OutputPipelineLive.ts`) --
+  EnvironmentDetectorLive + ExecutorResolverLive + FormatSelectorLive +
+  DetailResolverLive + OutputRendererLive. Included in all three
+  composition layers
+
+**Removed in Phase 5:**
+
+- `AgentDetectionLive` / `AgentDetectionTest` -- replaced by
+  EnvironmentDetectorLive / EnvironmentDetectorTest
+- `CacheWriterLive` / `CacheWriterTest` -- replaced by DataStoreLive /
+  DataStoreTest
+- `CacheReaderLive` / `CacheReaderTest` -- replaced by DataReaderLive
 
 ---
 
@@ -266,15 +317,21 @@ merged composition layers.
 
 **Location:** `package/src/errors/`
 
-**Status:** COMPLETE (Phase 2)
+**Status:** COMPLETE (Phase 2-5)
 
 **Purpose:** Tagged error types for Effect service failure channels.
 
-- **CacheError** (`package/src/errors/CacheError.ts`) -- `Data.TaggedError`
-  for file I/O failures (read, write, mkdir operations)
+- **DataStoreError** (`package/src/errors/DataStoreError.ts`) --
+  `Data.TaggedError` for database failures. Fields: `operation`
+  (`"read" | "write" | "migrate"`), `table` (string), `reason` (string).
+  Replaces CacheError from Phase 2-4
 - **DiscoveryError** (`package/src/errors/DiscoveryError.ts`) --
   `Data.TaggedError` for project discovery failures (glob, read, stat
-  operations)
+  operations). Unchanged from Phase 2
+
+**Removed in Phase 5:**
+
+- `CacheError` -- replaced by DataStoreError
 
 ---
 
@@ -282,45 +339,33 @@ merged composition layers.
 
 **Location:** `package/src/schemas/`
 
-**Status:** COMPLETE (Phase 2-3-4)
+**Status:** COMPLETE (Phase 2-3-4-5)
 
 **Purpose:** Single source of truth for all data structures. Defines Effect
 Schema definitions with `typeof Schema.Type` for TypeScript types and
 `Schema.decodeUnknown`/`Schema.encodeUnknown` for JSON encode/decode.
-Replaces the Zod 4 schemas from Phase 1.
 
 **Files:**
 
 - `Common.ts` -- shared literals: `TestState`, `TestRunReason`,
   `TestClassification`, `ConsoleOutputMode`, `PluginMode`,
-  `ConsoleStrategy`, `PackageManager`
+  `ConsoleStrategy`, `PackageManager`, `Environment` (Phase 5:
+  `"agent-shell" | "terminal" | "ci-github" | "ci-generic"`),
+  `Executor` (`"human" | "agent" | "ci"`), `OutputFormat`
+  (`"markdown" | "json" | "vitest-bypass" | "silent"`), `DetailLevel`
+  (`"minimal" | "neutral" | "standard" | "verbose"`)
 - `AgentReport.ts` -- `AgentReport`, `ModuleReport`, `TestReport`,
   `ReportError` schemas
 - `Coverage.ts` -- `CoverageReport`, `CoverageTotals`,
-  `FileCoverageReport` schemas. `CoverageReport.thresholds` is now an
-  object with `global: MetricThresholds` and `patterns: PatternThresholds[]`
-  (replaces the previous `threshold: number`). Optional `targets` and
-  `baselines` fields with same shape. `scoped` (boolean, defaults false),
-  `scopedFiles` (optional string array)
-- `Thresholds.ts` -- `MetricThresholds` (per-metric optional numbers),
-  `PatternThresholds` (glob + metrics tuple), `ResolvedThresholds` (global
-  - perFile + patterns). Supports Vitest-native format including per-metric,
-  per-glob, negative numbers, `100` shorthand
-- `Baselines.ts` -- `CoverageBaselines` (updatedAt + global + patterns).
-  Stores auto-ratcheting high-water marks in the cache directory
-- `Trends.ts` -- `TrendEntry` (timestamp, coverage totals, delta, direction,
-  targetsHash), `TrendRecord` (entries array). Per-project trend data with
-  50-entry sliding window
+  `FileCoverageReport` schemas
+- `Thresholds.ts` -- `MetricThresholds`, `PatternThresholds`,
+  `ResolvedThresholds`
+- `Baselines.ts` -- `CoverageBaselines`
+- `Trends.ts` -- `TrendEntry`, `TrendRecord`
 - `CacheManifest.ts` -- `CacheManifest`, `CacheManifestEntry` schemas
 - `Options.ts` -- `AgentReporterOptions`, `AgentPluginOptions`,
-  `CoverageOptions`, `FormatterOptions` schemas. `AgentReporterOptions` now
-  has `coverageThresholds` and `coverageTargets` (Vitest-native format,
-  `Record<string, unknown>`) and `autoUpdate` (boolean, default true)
-  replacing the previous `coverageThreshold: number`
-- `History.ts` -- `TestRun`, `TestHistory`, `HistoryRecord` schemas.
-  `TestRun` captures a single test execution outcome. `TestHistory` holds
-  the sliding window of runs (up to 10) for a single test. `HistoryRecord`
-  is a `Record<string, TestHistory>` keyed by test `fullName`
+  `CoverageOptions`, `FormatterOptions` schemas
+- `History.ts` -- `TestRun`, `TestHistory`, `HistoryRecord` schemas
 
 Istanbul duck-type interfaces remain as TypeScript interfaces, not schemas.
 
@@ -330,36 +375,30 @@ Istanbul duck-type interfaces remain as TypeScript interfaces, not schemas.
 
 **Location:** `package/src/cli/`
 
-**Status:** COMPLETE (Phase 2-3-4)
+**Status:** COMPLETE (Phase 2-3-4-5)
 
 **Purpose:** On-demand test landscape queries for LLM agents. Reads cached
-test data (manifest + reports) and project structure. Does not run tests or
-call AI providers.
+test data from SQLite database and project structure. Does not run tests or
+call AI providers. All commands support `--format` flag for output format
+selection.
 
 **Entry point:** `package/src/cli/index.ts` exports `runCli()`. Bin wrapper
 at `package/bin/vitest-agent-reporter.js` is a thin shebang wrapper.
 
 **Commands:**
 
-- `status` (`package/src/cli/commands/status.ts`) -- reads manifest, shows
-  per-project pass/fail state with re-run commands
-- `overview` (`package/src/cli/commands/overview.ts`) -- test landscape
-  summary with file-to-test mapping, project discovery, and run commands
-- `coverage` (`package/src/cli/commands/coverage.ts`) -- coverage gap
-  analysis from cached reports. Reads thresholds from each project's cached
-  `report.coverage.thresholds` value
-- `history` (`package/src/cli/commands/history.ts`) -- surfaces flaky
-  tests, persistent failures, and recovered tests with pass/fail run
-  visualization
-- `trends` (`package/src/cli/commands/trends.ts`) -- per-project coverage
-  trend display with direction, metrics table, and trajectory sparkline
-- `cache path` (`package/src/cli/commands/cache.ts`) -- prints resolved
-  cache directory path
-- `cache clean` (`package/src/cli/commands/cache.ts`) -- deletes entire
-  cache directory (idempotent)
-- `doctor` (`package/src/cli/commands/doctor.ts`) -- 5-point cache health
-  diagnostic: cache resolution, manifest presence, report integrity,
-  history integrity, staleness check
+- `status` -- reads DB via DataReader, shows per-project pass/fail state
+  with re-run commands
+- `overview` -- test landscape summary with file-to-test mapping, project
+  discovery, and run commands
+- `coverage` -- coverage gap analysis from cached reports
+- `history` -- surfaces flaky tests, persistent failures, and recovered
+  tests with pass/fail run visualization
+- `trends` -- per-project coverage trend display with direction, metrics
+  table, and trajectory sparkline
+- `cache path` -- prints resolved cache directory path
+- `cache clean` -- deletes entire cache directory (idempotent)
+- `doctor` -- cache health diagnostic
 
 **Lib functions (testable pure logic):**
 
@@ -370,49 +409,70 @@ at `package/bin/vitest-agent-reporter.js` is a thin shebang wrapper.
 - `format-trends.ts` -- formats trends data as markdown
 - `format-doctor.ts` -- formats doctor diagnostic data as markdown
 - `resolve-cache-dir.ts` -- resolves cache directory from common locations;
-  now searches `node_modules/.vite/vitest/*/vitest-agent-reporter` for
+  searches `node_modules/.vite/vitest/*/vitest-agent-reporter` for
   Vite's hash-based cache subdirectory
 
 **Dependencies:**
 
-- Depends on: `@effect/cli` for command framework, CacheReader service,
-  ProjectDiscovery service, HistoryTracker service,
+- Depends on: `@effect/cli` for command framework, DataReader service,
+  ProjectDiscovery service, HistoryTracker service, OutputRenderer service,
   `@effect/platform-node` for NodeRuntime
 - Used by: `package/bin/vitest-agent-reporter.js`
 
 ---
 
-## Component 8: Console Markdown Formatter
+## Component 8: Formatters
 
-**Location:** `package/src/utils/format-console.ts`
+**Location:** `package/src/formatters/`
 
-**Status:** COMPLETE (Phase 1, relocated Phase 2, enhanced Phase 3-4)
+**Status:** COMPLETE (Phase 5b)
 
-**Purpose:** Pure function that formats an `AgentReport` as compact,
-actionable console markdown for LLM agent consumption.
+**Purpose:** Pluggable output formatters implementing the `Formatter`
+interface. Each formatter produces `RenderedOutput[]` with target, content,
+and contentType fields.
 
-**Output format:**
+**Files:**
 
-Console output uses three tiers based on run health:
+- `types.ts` -- `Formatter`, `FormatterContext`, `RenderedOutput` interfaces
+- `markdown.ts` -- structured console markdown with tiered output
+  (green/yellow/red). Replaces `utils/format-console.ts` from Phase 1-4
+- `gfm.ts` -- GitHub-Flavored Markdown for `GITHUB_STEP_SUMMARY`. Replaces
+  `utils/format-gfm.ts` from Phase 1-4
+- `json.ts` -- raw JSON output of AgentReport data
+- `silent.ts` -- produces no output (database-only mode)
 
-- **Green tier** (all pass, targets met): minimal one-line summary with
-  cache file pointer
-- **Yellow tier** (pass but below targets): shows improvements needed,
-  CLI hint for `coverage` command
-- **Red tier** (failures/threshold violations/regressions): full detail
-  with failed test errors and diffs, coverage gaps, `[new-failure]`
-  classification labels, CLI hints for `coverage` and `trends` commands
+**Key interface:**
 
-Common elements across tiers:
+```typescript
+interface Formatter {
+  readonly format: string;
+  readonly render: (
+    reports: ReadonlyArray<AgentReport>,
+    context: FormatterContext,
+  ) => ReadonlyArray<RenderedOutput>;
+}
 
-- Compact header: `## [check/cross] Vitest -- N failed, N passed (Nms)`
-- Trend summary line after header when trend data available (e.g.,
-  "Coverage improving over N runs")
-- Prioritized suggestions in Next Steps section (e.g., "N new failures since
-  last run", "N persistent failures across N runs")
-- CLI command suggestions use detected package manager from `detect-pm.ts`
-- Relative file paths throughout (not absolute)
-- ANSI color codes that no-op when `NO_COLOR` is set
+interface FormatterContext {
+  readonly detail: DetailLevel;
+  readonly noColor: boolean;
+  readonly coverageConsoleLimit: number;
+  readonly trendSummary?: { direction, runCount, firstMetric? };
+  readonly runCommand?: string;
+  readonly mcp?: boolean;
+  readonly githubSummaryFile?: string;
+}
+
+interface RenderedOutput {
+  readonly target: "stdout" | "file" | "github-summary";
+  readonly content: string;
+  readonly contentType: string;
+}
+```
+
+**Dependencies:**
+
+- Depends on: AgentReport schema, Common schema (DetailLevel)
+- Used by: OutputRendererLive
 
 ---
 
@@ -431,26 +491,7 @@ the formatter independent of the Vitest runtime.
 
 ---
 
-## Component 10: GFM Formatter
-
-**Location:** `package/src/utils/format-gfm.ts`
-
-**Status:** COMPLETE (Phase 1, relocated Phase 2)
-
-**Purpose:** Formats `AgentReport` array as GitHub-Flavored Markdown for
-`GITHUB_STEP_SUMMARY`. Handles both single-project and multi-project output.
-
-**GFM features:**
-
-- Summary table with pass/fail counts
-- Collapsible `<details>` blocks for per-project results (monorepo)
-- Coverage metrics table
-- Diff-fenced code blocks for expected/received comparisons
-- GitHub Alert callouts (`[!WARNING]`) for coverage threshold violations
-
----
-
-## Component 11: Package Manager Detection
+## Component 10: Package Manager Detection
 
 **Location:** `package/src/utils/detect-pm.ts`
 
@@ -468,11 +509,11 @@ run commands. Uses a `FileSystemAdapter` interface for testability.
 
 ---
 
-## Component 12: Utility Functions
+## Component 11: Utility Functions
 
 **Location:** `package/src/utils/`
 
-**Status:** COMPLETE (Phase 1, split into individual files Phase 2)
+**Status:** COMPLETE (Phase 1-5)
 
 **Purpose:** Pure utility functions that don't warrant Effect service
 wrapping.
@@ -485,64 +526,83 @@ wrapping.
 - `strip-console-reporters.ts` -- removes console reporters from Vitest's
   reporter chain, plus `CONSOLE_REPORTERS` constant
 - `resolve-thresholds.ts` -- parses Vitest-native coverage thresholds format
-  (per-metric, per-glob, negative numbers, `100` shorthand, `perFile`) into
-  `ResolvedThresholds`. Also provides `getMinThreshold()` for backward-
-  compatible single-number threshold extraction
+  into `ResolvedThresholds`
 - `compute-trend.ts` -- computes coverage trend entries from current run
-  data against existing trend records. Provides `computeTrend()` (sliding
-  window management, target change detection via hash comparison),
-  `hashTargets()`, and `getRecentDirection()`. 50-entry max window
+  data against existing trend records
+- `split-project.ts` (Phase 5) -- splits `"project:subProject"` into
+  `{ project, subProject }` tuple for normalized SQLite storage
+- `capture-env.ts` (Phase 5) -- captures relevant environment variables
+  (CI, NODE_ENV, GITHUB_*, RUNNER_*) for settings storage
+- `capture-settings.ts` (Phase 5) -- captures Vitest config settings
+  (pool, environment, timeouts, coverage provider, etc.) and computes
+  a deterministic hash
+- `classify-test.ts` (Phase 5) -- pure classification function extracted
+  from HistoryTrackerLive. Shared between live layer and CLI formatting
+- `format-console.ts` -- legacy console formatter (kept for backward
+  compatibility, delegates to markdown formatter)
+- `format-gfm.ts` -- legacy GFM formatter (kept for backward
+  compatibility, delegates to gfm formatter)
+- `build-report.ts` -- AgentReport builder with duck-typed Vitest interfaces
+- `detect-pm.ts` -- package manager detection
 
 ---
 
-## Component 13: Failure History & Classification
+## Component 12: Failure History & Classification
 
 **Location:** `package/src/services/HistoryTracker.ts`,
 `package/src/layers/HistoryTrackerLive.ts`,
 `package/src/layers/HistoryTrackerTest.ts`,
-`package/src/schemas/History.ts`
+`package/src/schemas/History.ts`,
+`package/src/utils/classify-test.ts`
 
-**Status:** COMPLETE (Phase 3)
+**Status:** COMPLETE (Phase 3, updated Phase 5)
 
 **Purpose:** Per-test failure persistence across runs and classification-driven
 suggestions in console output.
 
-**Responsibilities:**
+**Phase 5 changes:**
 
-- `HistoryTracker` service (`package/src/services/HistoryTracker.ts`) --
-  Context.Tag with `classify(outcomes: TestOutcome[]): Effect` returning
-  history records and a `Map<string, TestClassification>` for the current run
-- `HistoryTrackerLive` (`package/src/layers/HistoryTrackerLive.ts`) -- loads
-  prior history via CacheReader, appends the current run to each test's sliding
-  window (capped at 10 entries), then classifies each test:
-  - `new-failure` -- first failure (no prior history or prior run passed)
-  - `persistent` -- failed in two or more consecutive runs
-  - `flaky` -- mixed pass/fail across recent history
-  - `recovered` -- previously failed, now passing
-  - `stable` -- consistently passing
-- `HistoryTrackerTest` (`package/src/layers/HistoryTrackerTest.ts`) -- returns canned
-  classifications for unit tests
-- `History.ts` schema -- `TestRun` (single outcome), `TestHistory` (sliding
-  window), `HistoryRecord` (`Record<string, TestHistory>`)
+- `classify` signature changed: now accepts `(project, subProject,
+  testOutcomes, timestamp)` instead of `(cacheDir, testOutcomes)`
+- History stored in SQLite `test_history` table instead of JSON files
+- Prior history loaded via `DataReader.getHistory()` instead of
+  `CacheReader.readHistory()`
+- Classification logic extracted to pure `classifyTest()` function in
+  `utils/classify-test.ts` for reuse
 
 **Key interface:**
 
 ```typescript
 interface TestOutcome {
   fullName: string;
-  state: "passed" | "failed" | "skipped" | "pending";
+  state: "passed" | "failed";
 }
+
+// HistoryTracker.classify signature (Phase 5):
+classify: (
+  project: string,
+  subProject: string | null,
+  testOutcomes: ReadonlyArray<TestOutcome>,
+  timestamp: string,
+) => Effect<{ history, classifications }, DataStoreError>
 ```
+
+**Classifications:**
+
+- `new-failure` -- first failure (no prior history or prior run passed)
+- `persistent` -- failed in two or more consecutive runs
+- `flaky` -- mixed pass/fail across recent history
+- `recovered` -- previously failed, now passing
+- `stable` -- consistently passing
 
 **Dependencies:**
 
-- Depends on: CacheReader service (to load prior history), CacheWriter
-  service (called separately by AgentReporter to persist updated history)
+- Depends on: DataReader service (to load prior history)
 - Used by: AgentReporter (classification), CLI `history` command
 
 ---
 
-## Component 14: Coverage Thresholds
+## Component 13: Coverage Thresholds
 
 **Location:** `package/src/schemas/Thresholds.ts`,
 `package/src/utils/resolve-thresholds.ts`
@@ -550,134 +610,362 @@ interface TestOutcome {
 **Status:** COMPLETE (Phase 4)
 
 **Purpose:** Vitest-native coverage threshold parsing and resolution.
-Replaces the previous `coverageThreshold: number` with full Vitest format
-support.
-
-**Schemas:**
-
-- `MetricThresholds` -- per-metric optional numbers (lines, functions,
-  branches, statements)
-- `PatternThresholds` -- `[globPattern, MetricThresholds]` tuple for
-  per-file-pattern thresholds
-- `ResolvedThresholds` -- fully resolved structure with `global`
-  (MetricThresholds), `perFile` (boolean), and `patterns`
-  (PatternThresholds[])
-
-**Parser (`resolveThresholds`):**
-
-- Handles Vitest thresholds input format: top-level metric numbers, `100`
-  shorthand (sets all metrics to 100), `perFile` boolean, `autoUpdate`
-  boolean (consumed by plugin, not stored in resolved), and arbitrary glob
-  pattern keys with nested metric objects
-- `getMinThreshold()` extracts a single minimum number for backward-
-  compatible "low coverage" detection
-
-**Dependencies:**
-
-- Used by: AgentPlugin (threshold/target resolution), CoverageAnalyzer
-  (threshold evaluation), console formatter (gap display)
+Unchanged from Phase 4.
 
 ---
 
-## Component 15: Coverage Baselines
+## Component 14: Coverage Baselines
 
 **Location:** `package/src/schemas/Baselines.ts`
 
-**Status:** COMPLETE (Phase 4)
+**Status:** COMPLETE (Phase 4, storage updated Phase 5)
 
 **Purpose:** Auto-ratcheting coverage baselines that persist high-water
-marks per metric. Baselines advance toward targets but never past them.
+marks per metric.
 
-**Schema (`CoverageBaselines`):**
-
-- `updatedAt` -- ISO 8601 timestamp of last baseline update
-- `global` -- `MetricThresholds` (high-water mark per metric)
-- `patterns` -- `PatternThresholds[]` (per-glob high-water marks)
-
-**Lifecycle:**
-
-1. Reporter reads existing baselines via `CacheReader.readBaselines()`
-2. After coverage processing, computes updated baselines (ratchet up only)
-3. Writes updated baselines via `CacheWriter.writeBaselines()`
-4. Baselines stored at `{cacheDir}/baselines.json`
-
-**Dependencies:**
-
-- Depends on: CacheReader (read), CacheWriter (write), Thresholds schema
-- Used by: AgentReporter (baseline computation), CoverageReport (embedded)
+**Phase 5 change:** Baselines stored in SQLite `coverage_baselines` table
+instead of `baselines.json` file. Read via `DataReader.getBaselines()`,
+written via `DataStore.writeBaselines()`.
 
 ---
 
-## Component 16: Coverage Trends
+## Component 15: Coverage Trends
 
 **Location:** `package/src/schemas/Trends.ts`,
 `package/src/utils/compute-trend.ts`
 
-**Status:** COMPLETE (Phase 4)
+**Status:** COMPLETE (Phase 4, storage updated Phase 5)
 
 **Purpose:** Per-project coverage trend tracking with sliding window for
 direction analysis over time.
 
-**Schemas:**
-
-- `TrendEntry` -- single data point: timestamp, coverage totals, delta
-  (change from previous), direction (`improving` | `regressing` | `stable`),
-  optional `targetsHash` for change detection
-- `TrendRecord` -- array of entries (50-entry max sliding window)
-
-**Trend computation (`computeTrend`):**
-
-- Only recorded on full (non-scoped) test runs
-- Computes delta from previous entry's coverage totals
-- Determines direction from aggregate delta (>0.1 = improving,
-  <-0.1 = regressing, else stable)
-- Detects target changes via `hashTargets()` -- if targets hash differs
-  from last entry, trend history is cleared and current entry becomes first
-  data point
-- `getRecentDirection()` analyzes the last N entries for overall trajectory
-
-**Storage:** `{cacheDir}/trends/{safe-project-name}.trends.json`
-
-**Dependencies:**
-
-- Depends on: CacheReader (read), CacheWriter (write), Coverage schema,
-  Thresholds schema
-- Used by: AgentReporter (trend computation), CLI `trends` command,
-  console formatter (trend summary line)
+**Phase 5 change:** Trends stored in SQLite `coverage_trends` table instead
+of per-project JSON files. Read via `DataReader.getTrends()`, written via
+`DataStore.writeTrends()`.
 
 ---
 
-## Component 17: CLI Diagnostics (cache, doctor, trends)
+## Component 16: CLI Diagnostics (cache, doctor, trends)
 
 **Location:** `package/src/cli/commands/cache.ts`,
 `package/src/cli/commands/doctor.ts`,
-`package/src/cli/commands/trends.ts`,
-`package/src/cli/lib/format-doctor.ts`,
-`package/src/cli/lib/format-trends.ts`
+`package/src/cli/commands/trends.ts`
 
-**Status:** COMPLETE (Phase 4)
+**Status:** COMPLETE (Phase 4-5)
 
-**Purpose:** Additional CLI commands for cache management, health
-diagnostics, and coverage trend visualization.
+**Purpose:** CLI commands for cache management, health diagnostics, and
+coverage trend visualization. All support `--format` flag (Phase 5).
 
-**Commands:**
+---
 
-- **`cache path`** -- prints the resolved cache directory path. Uses
-  `resolveCacheDir` which now searches Vite's hash-based subdirectories
-  at `node_modules/.vite/vitest/*/vitest-agent-reporter`
-- **`cache clean`** -- deletes the entire cache directory. Idempotent
-  (succeeds even if directory does not exist)
-- **`doctor`** -- runs 5-point cache health diagnostic:
-  1. Cache directory resolution
-  2. Manifest presence and validity
-  3. Report file integrity (per-project)
-  4. History file integrity (per-project)
-  5. Staleness check (last run recency)
-- **`trends`** -- per-project coverage trend display showing direction
-  indicator, per-metric values with deltas, and trajectory sparkline
-  visualization
+## Component 17: DataStore Service
+
+**Location:** `package/src/services/DataStore.ts`,
+`package/src/layers/DataStoreLive.ts`,
+`package/src/layers/DataStoreTest.ts`
+
+**Status:** COMPLETE (Phase 5a)
+
+**Purpose:** Effect service for writing all test data to the SQLite
+database. Replaces CacheWriter from Phase 2-4.
+
+**Write operations:**
+
+- `writeSettings(hash, settings, envVars)` -- Vitest config snapshot
+- `writeRun(input: TestRunInput)` -- test run with summary stats, returns
+  `runId`
+- `writeModules(runId, modules)` -- test modules, returns `moduleId[]`
+- `writeSuites(moduleId, suites)` -- test suites, returns `suiteId[]`
+- `writeTestCases(moduleId, tests)` -- test cases, returns `testCaseId[]`
+- `writeErrors(runId, errors)` -- test/suite/module/unhandled errors
+- `writeCoverage(runId, coverage)` -- per-file coverage data
+- `writeHistory(project, subProject, fullName, runId, ...)` -- per-test
+  history entry
+- `writeBaselines(baselines)` -- coverage baselines
+- `writeTrends(project, subProject, runId, entry)` -- coverage trend entry
+- `writeSourceMap(sourceFilePath, testModuleId, mappingType)` -- source-to-
+  test file mapping
+- `ensureFile(filePath)` -- ensure file path exists in `files` table,
+  returns `fileId`
+- `writeNote(note)` / `updateNote(id, fields)` / `deleteNote(id)` -- note
+  CRUD operations
+
+**Key input types:**
+
+`TestRunInput`, `ModuleInput`, `TestCaseInput`, `TestErrorInput`,
+`FileCoverageInput`, `SuiteInput`, `NoteInput` -- all defined in
+`DataStore.ts`.
 
 **Dependencies:**
 
-- Depends on: CacheReader service, `resolveCacheDir`, FileSystem
-- Used by: LLM agents for cache diagnostics and coverage monitoring
+- Depends on: `@effect/sql-sqlite-node` SqlClient
+- Used by: AgentReporter, MCP server (note CRUD)
+
+---
+
+## Component 18: DataReader Service
+
+**Location:** `package/src/services/DataReader.ts`,
+`package/src/layers/DataReaderLive.ts`
+
+**Status:** COMPLETE (Phase 5a)
+
+**Purpose:** Effect service for reading all test data from the SQLite
+database. Replaces CacheReader from Phase 2-4.
+
+**Read operations:**
+
+- `getLatestRun(project, subProject)` -- returns `Option<AgentReport>`
+  for the most recent test run
+- `getRunsByProject()` -- returns `ProjectRunSummary[]` for all projects
+- `getHistory(project, subProject)` -- returns `HistoryRecord`
+- `getBaselines(project, subProject)` -- returns `Option<CoverageBaselines>`
+- `getTrends(project, subProject, limit?)` -- returns `Option<TrendRecord>`
+- `getFlaky(project, subProject)` -- returns flaky test records
+- `getPersistentFailures(project, subProject)` -- returns persistent
+  failure records
+- `getFileCoverage(runId)` -- returns per-file coverage
+- `getTestsForFile(filePath)` -- returns test module paths covering a
+  source file
+- `getErrors(project, subProject, errorName?)` -- returns test errors
+  with diffs and stacks
+- `getNotes(scope?, project?, testFullName?)` -- returns filtered notes
+- `getNoteById(id)` -- returns `Option<NoteRow>`
+- `searchNotes(query)` -- full-text search via FTS5
+- `getManifest()` -- returns `Option<CacheManifest>` (assembled from DB)
+- `getSettings(hash)` -- returns `Option<SettingsRow>`
+
+**Key output types:**
+
+`ProjectRunSummary`, `FlakyTest`, `PersistentFailure`, `TestError`,
+`NoteRow`, `SettingsRow` -- all defined in `DataReader.ts`.
+
+**Dependencies:**
+
+- Depends on: `@effect/sql-sqlite-node` SqlClient
+- Used by: CLI commands, MCP tools, HistoryTracker, AgentReporter
+
+---
+
+## Component 19: SQLite Migration
+
+**Location:** `package/src/migrations/0001_initial.ts`
+
+**Status:** COMPLETE (Phase 5a)
+
+**Purpose:** Initial database migration creating the 25-table normalized
+schema. Uses `@effect/sql-sqlite-node` SqliteMigrator with WAL journal
+mode and foreign keys enabled.
+
+**Tables:** `files`, `settings`, `settings_env_vars`, `test_runs`,
+`scoped_files`, `test_modules`, `test_suites`, `test_cases`, `test_errors`,
+`stack_frames`, `tags`, `test_case_tags`, `test_suite_tags`,
+`test_annotations`, `test_artifacts`, `attachments`, `import_durations`,
+`task_metadata`, `console_logs`, `test_history`, `coverage_baselines`,
+`coverage_trends`, `file_coverage`, `source_test_map`, `notes` (plus
+`notes_fts` FTS5 virtual table with sync triggers).
+
+See [data-structures.md](./data-structures.md) for the full schema
+reference.
+
+---
+
+## Component 20: SQL Helpers
+
+**Location:** `package/src/sql/rows.ts`, `package/src/sql/assemblers.ts`
+
+**Status:** COMPLETE (Phase 5a)
+
+**Purpose:** Row type definitions and assembler functions for reconstructing
+domain objects from normalized SQLite rows. Assemblers join data from
+multiple tables to build `AgentReport`, `CoverageReport`, and other
+composite types.
+
+---
+
+## Component 21: Output Pipeline
+
+**Location:** `package/src/layers/OutputPipelineLive.ts` (composition),
+`package/src/services/EnvironmentDetector.ts`,
+`package/src/services/ExecutorResolver.ts`,
+`package/src/services/FormatSelector.ts`,
+`package/src/services/DetailResolver.ts`,
+`package/src/services/OutputRenderer.ts`
+
+**Status:** COMPLETE (Phase 5b)
+
+**Purpose:** Five chained Effect services forming a pluggable output
+pipeline that determines environment, executor role, output format, detail
+level, and performs rendering.
+
+**Pipeline flow:**
+
+```text
+EnvironmentDetector.detect()
+  -> "agent-shell" | "terminal" | "ci-github" | "ci-generic"
+     |
+     v
+ExecutorResolver.resolve(env, mode)
+  -> "human" | "agent" | "ci"
+     |
+     v
+FormatSelector.select(executor, explicitFormat?)
+  -> "markdown" | "json" | "vitest-bypass" | "silent"
+     |
+     v
+DetailResolver.resolve(executor, health, explicitDetail?)
+  -> "minimal" | "neutral" | "standard" | "verbose"
+     |
+     v
+OutputRenderer.render(reports, format, context)
+  -> RenderedOutput[] (target + content + contentType)
+```
+
+**Dependencies:**
+
+- Depends on: Formatter implementations, Common schema literals
+- Used by: ReporterLive, CliLive, McpLive (via OutputPipelineLive)
+
+---
+
+## Component 22: MCP Server
+
+**Location:** `package/src/mcp/`
+
+**Status:** COMPLETE (Phase 5c)
+
+**Purpose:** Model Context Protocol server providing 16 tools for agent
+integration. Uses `@modelcontextprotocol/sdk` with stdio transport and
+tRPC for routing.
+
+**Entry point:** `package/src/mcp/index.ts` -- resolves database path,
+creates `ManagedRuntime` with `McpLive(dbPath)`, starts stdio transport.
+
+**Files:**
+
+- `context.ts` -- tRPC context definition with `ManagedRuntime` carrying
+  DataReader, DataStore, ProjectDiscovery, OutputRenderer services
+- `router.ts` -- tRPC router aggregating all 16 tool procedures
+- `server.ts` -- `startMcpServer()` registers all tools with the MCP SDK
+- `tools/status.ts` -- `test_status` tool
+- `tools/overview.ts` -- `test_overview` tool
+- `tools/coverage.ts` -- `test_coverage` tool
+- `tools/history.ts` -- `test_history` tool
+- `tools/trends.ts` -- `test_trends` tool
+- `tools/errors.ts` -- `test_errors` tool
+- `tools/test-for-file.ts` -- `test_for_file` tool
+- `tools/run-tests.ts` -- `run_tests` tool (executes `vitest run` via
+  `spawnSync`)
+- `tools/cache-health.ts` -- `cache_health` tool
+- `tools/configure.ts` -- `configure` tool (view captured settings)
+- `tools/notes.ts` -- `note_create`, `note_list`, `note_get`,
+  `note_update`, `note_delete`, `note_search` tools
+
+**Tool categories:**
+
+- **Read-only query tools** (return markdown): `test_status`,
+  `test_overview`, `test_coverage`, `test_history`, `test_trends`,
+  `test_errors`, `test_for_file`, `cache_health`, `configure`
+- **Mutation tools** (return JSON): `run_tests`
+- **Note CRUD tools** (return JSON): `note_create`, `note_list`,
+  `note_get`, `note_update`, `note_delete`, `note_search`
+
+**Dependencies:**
+
+- Depends on: `@modelcontextprotocol/sdk`, `@trpc/server`, `zod`,
+  DataReader service, DataStore service, ProjectDiscovery service,
+  OutputRenderer service, McpLive composition layer
+- Used by: Claude Code plugin (via `.mcp.json` auto-registration),
+  any MCP-compatible agent
+
+---
+
+## Component 23: tRPC Router
+
+**Location:** `package/src/mcp/router.ts`, `package/src/mcp/context.ts`
+
+**Status:** COMPLETE (Phase 5c)
+
+**Purpose:** tRPC router aggregating all MCP tool procedures. The context
+carries a `ManagedRuntime` for Effect service access, allowing tRPC
+procedures to call Effect services via `ctx.runtime.runPromise(effect)`.
+
+**Key interface:**
+
+```typescript
+interface McpContext {
+  readonly runtime: ManagedRuntime<
+    DataReader | DataStore | ProjectDiscovery | OutputRenderer,
+    never
+  >;
+  readonly cwd: string;
+}
+```
+
+---
+
+## Component 24: Claude Code Plugin
+
+**Location:** `plugin/`
+
+**Status:** COMPLETE (Phase 5d)
+
+**Purpose:** File-based Claude Code plugin providing MCP server
+auto-registration, lifecycle hooks, skills, and commands for Vitest
+integration in Claude Code sessions.
+
+**Structure:**
+
+- `.claude-plugin/plugin.json` -- plugin manifest (name, version, author)
+- `.mcp.json` -- MCP server auto-registration (runs
+  `npx vitest-agent-reporter-mcp` via stdio)
+- `hooks/hooks.json` -- hook configuration
+- `hooks/session-start.sh` -- SessionStart hook: injects test context
+  into the session via bash
+- `hooks/post-test-run.sh` -- PostToolUse hook on Bash tool: detects
+  test runs and triggers post-run actions
+- `skills/tdd/SKILL.md` -- TDD workflow skill
+- `skills/debugging/SKILL.md` -- test debugging skill
+- `skills/configuration/SKILL.md` -- Vitest configuration skill
+- `commands/setup.md` -- setup command
+- `commands/configure.md` -- configure command
+
+**Note:** The `plugin/` directory is NOT a pnpm workspace. It is a
+file-based plugin consumed by Claude Code directly.
+
+**Dependencies:**
+
+- Depends on: MCP server binary (`vitest-agent-reporter-mcp`)
+- Used by: Claude Code (automatic plugin discovery)
+
+---
+
+## Component 25: LoggerLive
+
+**Location:** `package/src/layers/LoggerLive.ts`
+
+**Status:** COMPLETE (post-Phase-5)
+
+**Purpose:** Effect-based structured logging layer factory. Provides
+NDJSON logging to stderr plus optional file logging via `Logger.zip`.
+Replaces the previous `debug` boolean option with fine-grained
+`logLevel` and `logFile` controls.
+
+**Configuration:**
+
+- `logLevel` option: `"Debug"`, `"Info"`, `"Warning"`, `"Error"`,
+  `"None"` (default). Case-insensitive via `resolveLogLevel` helper
+  (lowercase "debug" normalized to "Debug")
+- `logFile` option: optional file path for NDJSON log output
+- Environment variable fallback: `VITEST_REPORTER_LOG_LEVEL`,
+  `VITEST_REPORTER_LOG_FILE`
+- Uses `Logger.structuredLogger` for NDJSON format
+- `Logger.zip` combines stderr + file loggers when `logFile` is set
+
+**Usage:** `Effect.logDebug` calls on all 30+ DataStore and DataReader
+methods for comprehensive I/O tracing.
+
+**Dependencies:**
+
+- Depends on: `effect` (Logger, LogLevel)
+- Used by: ReporterLive, CliLive (included in composition layers)

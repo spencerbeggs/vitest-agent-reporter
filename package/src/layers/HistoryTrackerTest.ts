@@ -5,8 +5,8 @@ import { HistoryTracker } from "../services/HistoryTracker.js";
 
 export interface HistoryTrackerTestState {
 	readonly classifyCalls: Array<{
-		cacheDir: string;
 		project: string;
+		subProject: string | null;
 		timestamp: string;
 	}>;
 }
@@ -23,11 +23,11 @@ export const HistoryTrackerTest = {
 		},
 	): Layer.Layer<HistoryTracker> =>
 		Layer.succeed(HistoryTracker, {
-			classify: (cacheDir, project, _outcomes, timestamp) =>
+			classify: (project, subProject, _outcomes, timestamp) =>
 				Effect.sync(() => {
-					(state.classifyCalls as Array<{ cacheDir: string; project: string; timestamp: string }>).push({
-						cacheDir,
+					(state.classifyCalls as Array<{ project: string; subProject: string | null; timestamp: string }>).push({
 						project,
+						subProject,
 						timestamp,
 					});
 					return (

@@ -1,30 +1,99 @@
-import { Effect, Layer, Schema } from "effect";
+import * as NodeContext from "@effect/platform-node/NodeContext";
+import type { SqlClient } from "@effect/sql/SqlClient";
+import { layer as sqliteClientLayer } from "@effect/sql-sqlite-node/SqliteClient";
+import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
+import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
-import type { HistoryRecord } from "../schemas/History.js";
+import migration0001 from "../migrations/0001_initial.js";
+import type { DataReader } from "../services/DataReader.js";
+import { DataStore } from "../services/DataStore.js";
 import { HistoryTracker } from "../services/HistoryTracker.js";
-import { CacheReaderTest } from "./CacheReaderTest.js";
+import { DataReaderLive } from "./DataReaderLive.js";
+import { DataStoreLive } from "./DataStoreLive.js";
 import { HistoryTrackerLive } from "./HistoryTrackerLive.js";
 
-function makeLayer(historyData: Map<string, string> = new Map()) {
-	return HistoryTrackerLive.pipe(Layer.provide(CacheReaderTest.layer(historyData)));
-}
+const SqliteLayer = sqliteClientLayer({ filename: ":memory:" });
+const PlatformLayer = NodeContext.layer;
 
-function run<A, E>(effect: Effect.Effect<A, E, HistoryTracker>, historyData: Map<string, string> = new Map()) {
-	return Effect.runPromise(Effect.provide(effect, makeLayer(historyData)));
-}
+const MigratorLayer = SqliteMigrator.layer({
+	loader: SqliteMigrator.fromRecord({ "0001_initial": migration0001 }),
+}).pipe(Layer.provide(Layer.merge(SqliteLayer, PlatformLayer)));
 
-const CACHE_DIR = "/cache";
+const TestLayer = Layer.mergeAll(
+	DataStoreLive.pipe(Layer.provide(SqliteLayer)),
+	DataReaderLive.pipe(Layer.provide(SqliteLayer)),
+	HistoryTrackerLive.pipe(Layer.provide(DataReaderLive.pipe(Layer.provide(SqliteLayer)))),
+	MigratorLayer,
+	SqliteLayer,
+	PlatformLayer,
+);
+
+const run = <A, E>(effect: Effect.Effect<A, E, HistoryTracker | DataStore | DataReader | SqlClient>) =>
+	Effect.runPromise(Effect.provide(effect, TestLayer));
+
 const PROJECT = "default";
+const SUB_PROJECT: string | null = null;
 const TS = "2026-03-21T00:00:00.000Z";
 
-function historyKey(project: string) {
-	return `${CACHE_DIR}/history/${project}.history.json`;
-}
+// Settings needed to create runs
+const SETTINGS_HASH = "test-hash";
+const SETTINGS_INPUT = {
+	vitest_version: "3.2.0",
+	pool: "forks",
+	environment: "node",
+};
 
-function seedHistory(record: HistoryRecord): Map<string, string> {
-	const data = new Map<string, string>();
-	data.set(historyKey(record.project), JSON.stringify(Schema.encodeUnknownSync(Schema.Unknown)(record)));
-	return data;
+/**
+ * Helper: seed settings + a run, then seed history entries for a test.
+ * Returns the runId for further use.
+ */
+function seedHistoryEntries(
+	entries: ReadonlyArray<{ fullName: string; runs: ReadonlyArray<{ timestamp: string; state: "passed" | "failed" }> }>,
+) {
+	return Effect.gen(function* () {
+		const store = yield* DataStore;
+
+		// Seed settings
+		yield* store.writeSettings(SETTINGS_HASH, SETTINGS_INPUT, {});
+
+		// Seed a run for each history entry timestamp
+		let runId = 0;
+		for (const entry of entries) {
+			for (const histRun of entry.runs) {
+				runId = yield* store.writeRun({
+					invocationId: `inv-${histRun.timestamp}`,
+					project: PROJECT,
+					subProject: SUB_PROJECT,
+					settingsHash: SETTINGS_HASH,
+					timestamp: histRun.timestamp,
+					commitSha: null,
+					branch: null,
+					reason: histRun.state === "passed" ? "passed" : "failed",
+					duration: 100,
+					total: 1,
+					passed: histRun.state === "passed" ? 1 : 0,
+					failed: histRun.state === "failed" ? 1 : 0,
+					skipped: 0,
+					scoped: false,
+				});
+
+				yield* store.writeHistory(
+					PROJECT,
+					SUB_PROJECT,
+					entry.fullName,
+					runId,
+					histRun.timestamp,
+					histRun.state,
+					100,
+					false,
+					0,
+					histRun.state === "failed" ? "Test failed" : null,
+				);
+			}
+		}
+
+		return runId;
+	});
 }
 
 describe("HistoryTrackerLive", () => {
@@ -32,31 +101,29 @@ describe("HistoryTrackerLive", () => {
 		it("classifies passing tests with no prior history as stable", async () => {
 			const outcomes = [{ fullName: "Suite > test one", state: "passed" as const }];
 
-			const result = await run(Effect.flatMap(HistoryTracker, (svc) => svc.classify(CACHE_DIR, PROJECT, outcomes, TS)));
+			const result = await run(
+				Effect.flatMap(HistoryTracker, (svc) => svc.classify(PROJECT, SUB_PROJECT, outcomes, TS)),
+			);
 
 			expect(result.classifications.get("Suite > test one")).toBe("stable");
 		});
 
 		it("classifies passing tests with all prior runs passed as stable", async () => {
-			const existing: HistoryRecord = {
-				project: PROJECT,
-				updatedAt: "2026-03-20T00:00:00.000Z",
-				tests: [
-					{
-						fullName: "Suite > test one",
-						runs: [
-							{ timestamp: "2026-03-19T00:00:00.000Z", state: "passed" },
-							{ timestamp: "2026-03-18T00:00:00.000Z", state: "passed" },
-						],
-					},
-				],
-			};
-
 			const result = await run(
-				Effect.flatMap(HistoryTracker, (svc) =>
-					svc.classify(CACHE_DIR, PROJECT, [{ fullName: "Suite > test one", state: "passed" }], TS),
-				),
-				seedHistory(existing),
+				Effect.gen(function* () {
+					yield* seedHistoryEntries([
+						{
+							fullName: "Suite > test one",
+							runs: [
+								{ timestamp: "2026-03-19T00:00:00.000Z", state: "passed" },
+								{ timestamp: "2026-03-18T00:00:00.000Z", state: "passed" },
+							],
+						},
+					]);
+
+					const tracker = yield* HistoryTracker;
+					return yield* tracker.classify(PROJECT, SUB_PROJECT, [{ fullName: "Suite > test one", state: "passed" }], TS);
+				}),
 			);
 
 			expect(result.classifications.get("Suite > test one")).toBe("stable");
@@ -67,7 +134,9 @@ describe("HistoryTrackerLive", () => {
 		it("classifies failing test with no prior runs as new-failure", async () => {
 			const outcomes = [{ fullName: "Suite > broken test", state: "failed" as const }];
 
-			const result = await run(Effect.flatMap(HistoryTracker, (svc) => svc.classify(CACHE_DIR, PROJECT, outcomes, TS)));
+			const result = await run(
+				Effect.flatMap(HistoryTracker, (svc) => svc.classify(PROJECT, SUB_PROJECT, outcomes, TS)),
+			);
 
 			expect(result.classifications.get("Suite > broken test")).toBe("new-failure");
 		});
@@ -75,26 +144,27 @@ describe("HistoryTrackerLive", () => {
 
 	describe("new-failure -- failing when all prior runs were passed", () => {
 		it("classifies failing test as new-failure when all prior runs passed", async () => {
-			const existing: HistoryRecord = {
-				project: PROJECT,
-				updatedAt: "2026-03-20T00:00:00.000Z",
-				tests: [
-					{
-						fullName: "Suite > now failing",
-						runs: [
-							{ timestamp: "2026-03-19T00:00:00.000Z", state: "passed" },
-							{ timestamp: "2026-03-18T00:00:00.000Z", state: "passed" },
-							{ timestamp: "2026-03-17T00:00:00.000Z", state: "passed" },
-						],
-					},
-				],
-			};
-
 			const result = await run(
-				Effect.flatMap(HistoryTracker, (svc) =>
-					svc.classify(CACHE_DIR, PROJECT, [{ fullName: "Suite > now failing", state: "failed" }], TS),
-				),
-				seedHistory(existing),
+				Effect.gen(function* () {
+					yield* seedHistoryEntries([
+						{
+							fullName: "Suite > now failing",
+							runs: [
+								{ timestamp: "2026-03-19T00:00:00.000Z", state: "passed" },
+								{ timestamp: "2026-03-18T00:00:00.000Z", state: "passed" },
+								{ timestamp: "2026-03-17T00:00:00.000Z", state: "passed" },
+							],
+						},
+					]);
+
+					const tracker = yield* HistoryTracker;
+					return yield* tracker.classify(
+						PROJECT,
+						SUB_PROJECT,
+						[{ fullName: "Suite > now failing", state: "failed" }],
+						TS,
+					);
+				}),
 			);
 
 			expect(result.classifications.get("Suite > now failing")).toBe("new-failure");
@@ -103,50 +173,52 @@ describe("HistoryTrackerLive", () => {
 
 	describe("persistent -- failing when prior run also failed", () => {
 		it("classifies failing test as persistent when most recent prior run also failed", async () => {
-			const existing: HistoryRecord = {
-				project: PROJECT,
-				updatedAt: "2026-03-20T00:00:00.000Z",
-				tests: [
-					{
-						fullName: "Suite > persistent failure",
-						runs: [
-							{ timestamp: "2026-03-19T00:00:00.000Z", state: "failed" },
-							{ timestamp: "2026-03-18T00:00:00.000Z", state: "passed" },
-						],
-					},
-				],
-			};
-
 			const result = await run(
-				Effect.flatMap(HistoryTracker, (svc) =>
-					svc.classify(CACHE_DIR, PROJECT, [{ fullName: "Suite > persistent failure", state: "failed" }], TS),
-				),
-				seedHistory(existing),
+				Effect.gen(function* () {
+					yield* seedHistoryEntries([
+						{
+							fullName: "Suite > persistent failure",
+							runs: [
+								{ timestamp: "2026-03-19T00:00:00.000Z", state: "failed" },
+								{ timestamp: "2026-03-18T00:00:00.000Z", state: "passed" },
+							],
+						},
+					]);
+
+					const tracker = yield* HistoryTracker;
+					return yield* tracker.classify(
+						PROJECT,
+						SUB_PROJECT,
+						[{ fullName: "Suite > persistent failure", state: "failed" }],
+						TS,
+					);
+				}),
 			);
 
 			expect(result.classifications.get("Suite > persistent failure")).toBe("persistent");
 		});
 
 		it("classifies failing test as persistent when all prior runs also failed", async () => {
-			const existing: HistoryRecord = {
-				project: PROJECT,
-				updatedAt: "2026-03-20T00:00:00.000Z",
-				tests: [
-					{
-						fullName: "Suite > always fails",
-						runs: [
-							{ timestamp: "2026-03-19T00:00:00.000Z", state: "failed" },
-							{ timestamp: "2026-03-18T00:00:00.000Z", state: "failed" },
-						],
-					},
-				],
-			};
-
 			const result = await run(
-				Effect.flatMap(HistoryTracker, (svc) =>
-					svc.classify(CACHE_DIR, PROJECT, [{ fullName: "Suite > always fails", state: "failed" }], TS),
-				),
-				seedHistory(existing),
+				Effect.gen(function* () {
+					yield* seedHistoryEntries([
+						{
+							fullName: "Suite > always fails",
+							runs: [
+								{ timestamp: "2026-03-19T00:00:00.000Z", state: "failed" },
+								{ timestamp: "2026-03-18T00:00:00.000Z", state: "failed" },
+							],
+						},
+					]);
+
+					const tracker = yield* HistoryTracker;
+					return yield* tracker.classify(
+						PROJECT,
+						SUB_PROJECT,
+						[{ fullName: "Suite > always fails", state: "failed" }],
+						TS,
+					);
+				}),
 			);
 
 			expect(result.classifications.get("Suite > always fails")).toBe("persistent");
@@ -155,27 +227,27 @@ describe("HistoryTrackerLive", () => {
 
 	describe("flaky -- failing with mixed prior history", () => {
 		it("classifies failing test as flaky when prior history is mixed (pass then fail)", async () => {
-			// priorRuns[0] = most recent prior = passed, but there's also a failure
-			const existing: HistoryRecord = {
-				project: PROJECT,
-				updatedAt: "2026-03-20T00:00:00.000Z",
-				tests: [
-					{
-						fullName: "Suite > flaky test",
-						runs: [
-							{ timestamp: "2026-03-19T00:00:00.000Z", state: "passed" },
-							{ timestamp: "2026-03-18T00:00:00.000Z", state: "failed" },
-							{ timestamp: "2026-03-17T00:00:00.000Z", state: "passed" },
-						],
-					},
-				],
-			};
-
 			const result = await run(
-				Effect.flatMap(HistoryTracker, (svc) =>
-					svc.classify(CACHE_DIR, PROJECT, [{ fullName: "Suite > flaky test", state: "failed" }], TS),
-				),
-				seedHistory(existing),
+				Effect.gen(function* () {
+					yield* seedHistoryEntries([
+						{
+							fullName: "Suite > flaky test",
+							runs: [
+								{ timestamp: "2026-03-19T00:00:00.000Z", state: "passed" },
+								{ timestamp: "2026-03-18T00:00:00.000Z", state: "failed" },
+								{ timestamp: "2026-03-17T00:00:00.000Z", state: "passed" },
+							],
+						},
+					]);
+
+					const tracker = yield* HistoryTracker;
+					return yield* tracker.classify(
+						PROJECT,
+						SUB_PROJECT,
+						[{ fullName: "Suite > flaky test", state: "failed" }],
+						TS,
+					);
+				}),
 			);
 
 			// priorRuns[0].state = "passed" (not failed), and there are prior failures => flaky
@@ -185,25 +257,26 @@ describe("HistoryTrackerLive", () => {
 
 	describe("recovered -- passing with prior failures", () => {
 		it("classifies passing test as recovered when prior history has failures", async () => {
-			const existing: HistoryRecord = {
-				project: PROJECT,
-				updatedAt: "2026-03-20T00:00:00.000Z",
-				tests: [
-					{
-						fullName: "Suite > recovered test",
-						runs: [
-							{ timestamp: "2026-03-19T00:00:00.000Z", state: "failed" },
-							{ timestamp: "2026-03-18T00:00:00.000Z", state: "passed" },
-						],
-					},
-				],
-			};
-
 			const result = await run(
-				Effect.flatMap(HistoryTracker, (svc) =>
-					svc.classify(CACHE_DIR, PROJECT, [{ fullName: "Suite > recovered test", state: "passed" }], TS),
-				),
-				seedHistory(existing),
+				Effect.gen(function* () {
+					yield* seedHistoryEntries([
+						{
+							fullName: "Suite > recovered test",
+							runs: [
+								{ timestamp: "2026-03-19T00:00:00.000Z", state: "failed" },
+								{ timestamp: "2026-03-18T00:00:00.000Z", state: "passed" },
+							],
+						},
+					]);
+
+					const tracker = yield* HistoryTracker;
+					return yield* tracker.classify(
+						PROJECT,
+						SUB_PROJECT,
+						[{ fullName: "Suite > recovered test", state: "passed" }],
+						TS,
+					);
+				}),
 			);
 
 			expect(result.classifications.get("Suite > recovered test")).toBe("recovered");
@@ -212,25 +285,26 @@ describe("HistoryTrackerLive", () => {
 
 	describe("window pruning", () => {
 		it("prunes history to max 10 entries", async () => {
-			const existing: HistoryRecord = {
-				project: PROJECT,
-				updatedAt: "2026-03-20T00:00:00.000Z",
-				tests: [
-					{
-						fullName: "Suite > stable test",
-						runs: Array.from({ length: 10 }, (_, i) => ({
-							timestamp: `2026-03-${String(10 + i).padStart(2, "0")}T00:00:00.000Z`,
-							state: "passed" as const,
-						})),
-					},
-				],
-			};
-
 			const result = await run(
-				Effect.flatMap(HistoryTracker, (svc) =>
-					svc.classify(CACHE_DIR, PROJECT, [{ fullName: "Suite > stable test", state: "passed" }], TS),
-				),
-				seedHistory(existing),
+				Effect.gen(function* () {
+					yield* seedHistoryEntries([
+						{
+							fullName: "Suite > stable test",
+							runs: Array.from({ length: 10 }, (_, i) => ({
+								timestamp: `2026-03-${String(10 + i).padStart(2, "0")}T00:00:00.000Z`,
+								state: "passed" as const,
+							})),
+						},
+					]);
+
+					const tracker = yield* HistoryTracker;
+					return yield* tracker.classify(
+						PROJECT,
+						SUB_PROJECT,
+						[{ fullName: "Suite > stable test", state: "passed" }],
+						TS,
+					);
+				}),
 			);
 
 			const testHistory = result.history.tests.find((t) => t.fullName === "Suite > stable test");
@@ -242,25 +316,21 @@ describe("HistoryTrackerLive", () => {
 		});
 
 		it("keeps at most 10 entries when starting from 9 prior runs", async () => {
-			const existing: HistoryRecord = {
-				project: PROJECT,
-				updatedAt: "2026-03-20T00:00:00.000Z",
-				tests: [
-					{
-						fullName: "Suite > test",
-						runs: Array.from({ length: 9 }, (_, i) => ({
-							timestamp: `2026-03-${String(10 + i).padStart(2, "0")}T00:00:00.000Z`,
-							state: "passed" as const,
-						})),
-					},
-				],
-			};
-
 			const result = await run(
-				Effect.flatMap(HistoryTracker, (svc) =>
-					svc.classify(CACHE_DIR, PROJECT, [{ fullName: "Suite > test", state: "passed" }], TS),
-				),
-				seedHistory(existing),
+				Effect.gen(function* () {
+					yield* seedHistoryEntries([
+						{
+							fullName: "Suite > test",
+							runs: Array.from({ length: 9 }, (_, i) => ({
+								timestamp: `2026-03-${String(10 + i).padStart(2, "0")}T00:00:00.000Z`,
+								state: "passed" as const,
+							})),
+						},
+					]);
+
+					const tracker = yield* HistoryTracker;
+					return yield* tracker.classify(PROJECT, SUB_PROJECT, [{ fullName: "Suite > test", state: "passed" }], TS);
+				}),
 			);
 
 			const testHistory = result.history.tests.find((t) => t.fullName === "Suite > test");
@@ -272,22 +342,23 @@ describe("HistoryTrackerLive", () => {
 
 	describe("new test not in existing history", () => {
 		it("correctly classifies a brand new test not previously tracked", async () => {
-			const existing: HistoryRecord = {
-				project: PROJECT,
-				updatedAt: "2026-03-20T00:00:00.000Z",
-				tests: [
-					{
-						fullName: "Suite > existing test",
-						runs: [{ timestamp: "2026-03-19T00:00:00.000Z", state: "passed" }],
-					},
-				],
-			};
-
 			const result = await run(
-				Effect.flatMap(HistoryTracker, (svc) =>
-					svc.classify(CACHE_DIR, PROJECT, [{ fullName: "Suite > brand new test", state: "passed" }], TS),
-				),
-				seedHistory(existing),
+				Effect.gen(function* () {
+					yield* seedHistoryEntries([
+						{
+							fullName: "Suite > existing test",
+							runs: [{ timestamp: "2026-03-19T00:00:00.000Z", state: "passed" }],
+						},
+					]);
+
+					const tracker = yield* HistoryTracker;
+					return yield* tracker.classify(
+						PROJECT,
+						SUB_PROJECT,
+						[{ fullName: "Suite > brand new test", state: "passed" }],
+						TS,
+					);
+				}),
 			);
 
 			expect(result.classifications.get("Suite > brand new test")).toBe("stable");
@@ -300,27 +371,23 @@ describe("HistoryTrackerLive", () => {
 
 	describe("existing tests not in current run stay in history", () => {
 		it("preserves tests from prior history even if not in current run", async () => {
-			const existing: HistoryRecord = {
-				project: PROJECT,
-				updatedAt: "2026-03-20T00:00:00.000Z",
-				tests: [
-					{
-						fullName: "Suite > test A",
-						runs: [{ timestamp: "2026-03-19T00:00:00.000Z", state: "passed" }],
-					},
-					{
-						fullName: "Suite > test B",
-						runs: [{ timestamp: "2026-03-19T00:00:00.000Z", state: "failed" }],
-					},
-				],
-			};
-
 			const result = await run(
-				// Only test A in current run; test B should stay in history
-				Effect.flatMap(HistoryTracker, (svc) =>
-					svc.classify(CACHE_DIR, PROJECT, [{ fullName: "Suite > test A", state: "passed" }], TS),
-				),
-				seedHistory(existing),
+				Effect.gen(function* () {
+					yield* seedHistoryEntries([
+						{
+							fullName: "Suite > test A",
+							runs: [{ timestamp: "2026-03-19T00:00:00.000Z", state: "passed" }],
+						},
+						{
+							fullName: "Suite > test B",
+							runs: [{ timestamp: "2026-03-19T00:00:00.000Z", state: "failed" }],
+						},
+					]);
+
+					const tracker = yield* HistoryTracker;
+					// Only test A in current run; test B should stay in history
+					return yield* tracker.classify(PROJECT, SUB_PROJECT, [{ fullName: "Suite > test A", state: "passed" }], TS);
+				}),
 			);
 
 			const testAHistory = result.history.tests.find((t) => t.fullName === "Suite > test A");
@@ -339,7 +406,9 @@ describe("HistoryTrackerLive", () => {
 		it("returns updated history with correct project and timestamp", async () => {
 			const outcomes = [{ fullName: "test", state: "passed" as const }];
 
-			const result = await run(Effect.flatMap(HistoryTracker, (svc) => svc.classify(CACHE_DIR, PROJECT, outcomes, TS)));
+			const result = await run(
+				Effect.flatMap(HistoryTracker, (svc) => svc.classify(PROJECT, SUB_PROJECT, outcomes, TS)),
+			);
 
 			expect(result.history.project).toBe(PROJECT);
 			expect(result.history.updatedAt).toBe(TS);
@@ -348,7 +417,9 @@ describe("HistoryTrackerLive", () => {
 		it("includes the current run in returned history", async () => {
 			const outcomes = [{ fullName: "new test", state: "failed" as const }];
 
-			const result = await run(Effect.flatMap(HistoryTracker, (svc) => svc.classify(CACHE_DIR, PROJECT, outcomes, TS)));
+			const result = await run(
+				Effect.flatMap(HistoryTracker, (svc) => svc.classify(PROJECT, SUB_PROJECT, outcomes, TS)),
+			);
 
 			const entry = result.history.tests.find((t) => t.fullName === "new test");
 			expect(entry).toBeDefined();

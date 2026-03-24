@@ -10,26 +10,28 @@
 import { join } from "node:path";
 import type { Layer } from "effect";
 import { Effect } from "effect";
-import { AgentDetectionLive } from "./layers/AgentDetectionLive.js";
+import type { VitestPluginContext } from "vitest/node";
+import { EnvironmentDetectorLive } from "./layers/EnvironmentDetectorLive.js";
+import { resolveLogLevel } from "./layers/LoggerLive.js";
 import { AgentReporter } from "./reporter.js";
+import type { Environment, OutputFormat } from "./schemas/Common.js";
 import type { AgentPluginOptions } from "./schemas/Options.js";
-import { AgentDetection } from "./services/AgentDetection.js";
+import { EnvironmentDetector } from "./services/EnvironmentDetector.js";
 import { resolveThresholds } from "./utils/resolve-thresholds.js";
 import { stripConsoleReporters } from "./utils/strip-console-reporters.js";
 
 /**
- * Resolve console output mode based on the detected environment and console strategy.
+ * Map strategy to output format for backward compatibility.
  *
  * @internal
  */
-function resolveConsoleOutput(
-	env: "agent" | "ci" | "human",
-	strategy: "own" | "complement",
-): "failures" | "full" | "silent" {
-	if (env === "human") return "silent";
-	if (env === "agent" && strategy === "own") return "failures";
-	// complement mode or CI + own: reporter stays silent
-	return "silent";
+function resolveFormat(strategy: "own" | "complement", env: Environment, explicit?: OutputFormat): OutputFormat {
+	if (explicit) return explicit;
+	if (strategy === "own") {
+		// "own" mode: agent gets our markdown, humans get silent (Vitest handles their output)
+		return env === "agent-shell" ? "markdown" : "silent";
+	}
+	return "vitest-bypass";
 }
 
 /**
@@ -37,147 +39,115 @@ function resolveConsoleOutput(
  *
  * @internal
  */
-function resolveGithubActions(env: "agent" | "ci" | "human", strategy: "own" | "complement"): boolean {
-	if (env === "human") return false;
-	if (strategy === "complement") return false; // Vitest handles GFM
-	if (env === "agent" && strategy === "own") return false; // agent mode, no GFM
-	if (env === "ci" && strategy === "own") return true; // CI + own = we write GFM
+function resolveGithubActions(env: Environment, format: OutputFormat): boolean {
+	if (env === "terminal") return false;
+	if (format === "vitest-bypass" || format === "silent") return false;
+	if (env === "ci-github" && format === "markdown") return true;
 	return false;
 }
 
 /**
  * Vitest plugin that injects {@link AgentReporter} into the reporter chain.
  *
- * @remarks
- * Uses the `configureVitest` hook (Vitest 3.1+). The reporter always runs
- * and writes JSON cache + manifest. Cache directory defaults to Vite's
- * `cacheDir` + `"/vitest-agent-reporter"`, sitting alongside Vitest's own cache.
- *
- * Console behavior depends on the detected environment (or forced `mode`) and
- * the `consoleStrategy` option:
- *
- * - **`"complement"` (default)**: Delegates console output to Vitest's built-in
- *   reporters (including the `agent` reporter). Our reporter stays silent on
- *   console but still writes JSON cache. Warns if the `agent` reporter is missing.
- * - **`"own"`**: Our reporter takes over console output. In agent mode, strips
- *   built-in console reporters and emits structured markdown. In CI mode, writes
- *   GFM to `GITHUB_STEP_SUMMARY`.
- *
- * Cache directory resolution priority:
- * 1. Explicit `reporter.cacheDir` option
- * 2. `outputFile['vitest-agent-reporter']` from Vitest config
- * 3. Vite's `cacheDir` + `"/vitest-agent-reporter"` (default)
- *
  * @param options - Plugin configuration options
- * @param _layer - Internal: override the AgentDetection layer (for testing)
+ * @param _layer - Internal: override the EnvironmentDetector layer (for testing)
  * @returns Vitest plugin object with `configureVitest` hook
  *
- * @example
- * ```typescript
- * import { AgentPlugin } from "vitest-agent-reporter";
- * import { defineConfig } from "vitest/config";
- *
- * export default defineConfig({
- *   plugins: [AgentPlugin()],
- *   test: {
- *     // AgentReporter is injected automatically
- *   },
- * });
- * ```
- *
- * @example
- * ```typescript
- * import { AgentPlugin } from "vitest-agent-reporter";
- * import { defineConfig } from "vitest/config";
- *
- * // Force agent mode with own console strategy
- * export default defineConfig({
- *   plugins: [
- *     AgentPlugin({
- *       mode: "agent",
- *       consoleStrategy: "own",
- *       reporter: {
- *         coverageThresholds: { lines: 80, branches: 80 },
- *         coverageConsoleLimit: 5,
- *       },
- *     }),
- *   ],
- * });
- * ```
- *
- * @see {@link AgentReporter} for direct reporter usage without the plugin
- * @see {@link AgentPluginOptions} for all configuration options
  * @public
  */
-export function AgentPlugin(options: AgentPluginOptions = {}, _layer?: Layer.Layer<AgentDetection>) {
+export function AgentPlugin(options: AgentPluginOptions = {}, _layer?: Layer.Layer<EnvironmentDetector>) {
 	const mode = options.mode ?? "auto";
-	const strategy = options.consoleStrategy ?? "complement";
-	const layer = _layer ?? AgentDetectionLive;
+	const strategy = options.strategy ?? "complement";
+	const mcp = options.mcp ?? false;
+	const layer = _layer ?? EnvironmentDetectorLive;
+
+	// Resolve log level for local debug logging in the plugin.
+	// The plugin runs outside an Effect program, so we use a simple stderr function.
+	// logLevel/logFile options are passed through to AgentReporter for Effect logging.
+	const logLevel = resolveLogLevel(options.logLevel);
+	const shouldLog = logLevel !== undefined && logLevel._tag !== "None";
+	const log = shouldLog
+		? (...args: unknown[]) => process.stderr.write(`[vitest-agent-reporter:plugin] ${args.map(String).join(" ")}\n`)
+		: (..._args: unknown[]) => {};
 
 	return {
 		name: "vitest-agent-reporter",
-		async configureVitest({
-			vitest,
-		}: {
-			vitest: {
-				config: {
-					reporters: unknown[];
-					coverage: { thresholds?: Record<string, unknown> };
-					outputFile?: string | Record<string, string>;
-				};
-				vite: { config: { cacheDir: string } };
-			};
-		}) {
-			// Determine environment from AgentDetection service or forced mode
-			let env: "agent" | "ci" | "human";
+		async configureVitest(ctx: VitestPluginContext) {
+			const { vitest, project } = ctx;
+			log("configureVitest called | project:", project?.name ?? "(root)");
+
+			log("mode:", mode, "| strategy:", strategy);
+
+			// Determine environment from EnvironmentDetector service or forced mode
+			let env: Environment;
 			if (mode === "auto") {
 				env = await Effect.runPromise(
 					Effect.provide(
-						Effect.flatMap(AgentDetection, (d) => d.environment),
+						Effect.flatMap(EnvironmentDetector, (d) => d.detect()),
 						layer,
 					),
 				);
 			} else {
-				env = mode === "agent" ? "agent" : "human";
+				env = mode === "agent" ? "agent-shell" : "terminal";
 			}
+			log("env:", env);
+
+			// Map strategy + environment to format
+			const format = resolveFormat(strategy, env, options.format);
+			log("format:", format);
+
+			// Determine if this is an agent environment (for reporter stripping)
+			const isAgentEnv = env === "agent-shell";
 
 			// Only strip reporters when actively taking over console
-			if (strategy === "own" && env === "agent") {
-				vitest.config.reporters = stripConsoleReporters(vitest.config.reporters);
+			if (format === "markdown" && isAgentEnv) {
+				log("stripping console reporters");
+				const stripped = stripConsoleReporters(vitest.config.reporters as unknown[]);
+				// Write back via mutation (Vitest config is mutable at this point)
+				(vitest.config as { reporters: unknown[] }).reporters = stripped;
+
+				// Also suppress Vitest's native coverage text reporter (the big table)
+				// since our reporter handles coverage output
+				const coverageCfg = vitest.config.coverage as { reporter?: unknown[] } | undefined;
+				if (coverageCfg) {
+					log("suppressing native coverage text reporter");
+					coverageCfg.reporter = [];
+				}
 			}
 
 			// Complement mode warning: agent detected but no built-in agent reporter
-			if (env === "agent" && strategy === "complement") {
-				const hasAgentReporter = vitest.config.reporters.some(
-					(r) => r === "agent" || (Array.isArray(r) && r[0] === "agent"),
-				);
+			if (isAgentEnv && strategy === "complement" && format === "vitest-bypass") {
+				const reporters = vitest.config.reporters as unknown[];
+				const hasAgentReporter = reporters.some((r) => r === "agent" || (Array.isArray(r) && r[0] === "agent"));
 				if (!hasAgentReporter) {
 					process.stderr.write(
-						'[vitest-agent-reporter] Warning: consoleStrategy is "complement" but ' +
+						'[vitest-agent-reporter] Warning: strategy is "complement" but ' +
 							'Vitest\'s built-in "agent" reporter is not in the reporter chain. ' +
 							"Console output may be verbose. Add 'agent' to your reporters or set " +
-							'consoleStrategy: "own".\n',
+							'strategy: "own".\n',
 					);
 				}
 			}
 
-			// Resolve console output and GFM based on env + strategy matrix
-			const consoleOutput = resolveConsoleOutput(env, strategy);
-			const githubActions = resolveGithubActions(env, strategy);
+			// Resolve GFM based on env + format
+			const githubActions = resolveGithubActions(env, format);
+			log("githubActions:", githubActions);
 
 			// Resolve cache directory with priority:
 			// 1. Explicit reporter.cacheDir option
 			// 2. outputFile['vitest-agent-reporter'] from vitest config (Vitest-native)
 			// 3. Vite's cacheDir + /vitest-agent-reporter (default)
+			const outputFile = (vitest.config as { outputFile?: string | Record<string, string> }).outputFile;
 			const cacheDir =
 				options.reporter?.cacheDir ??
-				resolveOutputDir(vitest.config.outputFile) ??
+				resolveOutputDir(outputFile) ??
 				join(vitest.vite.config.cacheDir, "vitest-agent-reporter");
 
 			// Resolve coverage thresholds from plugin options or vitest config
+			const coverageConfig = vitest.config.coverage as { thresholds?: Record<string, unknown> } | undefined;
 			const coverageThresholds = resolveThresholds(
 				(options.reporter?.coverageThresholds as Record<string, unknown> | undefined) ??
-					(vitest.config.coverage?.thresholds as Record<string, unknown> | undefined),
+					(coverageConfig?.thresholds as Record<string, unknown> | undefined),
 			);
 			const coverageTargets = options.reporter?.coverageTargets
 				? resolveThresholds(options.reporter.coverageTargets as Record<string, unknown>)
@@ -186,37 +156,43 @@ export function AgentPlugin(options: AgentPluginOptions = {}, _layer?: Layer.Lay
 
 			// Disable Vitest's native autoUpdate when our targets are set
 			if (coverageTargets && autoUpdate) {
-				const thresholds = vitest.config.coverage?.thresholds;
+				const thresholds = coverageConfig?.thresholds;
 				if (thresholds && typeof thresholds === "object") {
 					(thresholds as Record<string, unknown>).autoUpdate = false;
 				}
 			}
 
-			vitest.config.reporters.push(
-				new AgentReporter({
-					...options.reporter,
-					cacheDir,
-					coverageThresholds,
-					coverageTargets,
-					autoUpdate,
-					consoleOutput,
-					githubActions,
-				}),
-			);
+			log("cacheDir:", cacheDir);
+
+			// In multi-project mode, scope this reporter to its project
+			const projectFilter = project?.name;
+			log("projectFilter:", projectFilter ?? "(none)");
+
+			const reporter = new AgentReporter({
+				...options.reporter,
+				cacheDir,
+				coverageThresholds,
+				coverageTargets,
+				autoUpdate,
+				format,
+				mode,
+				logLevel: options.logLevel,
+				logFile: options.logFile,
+				mcp,
+				githubActions,
+				...(projectFilter ? { projectFilter } : {}),
+			});
+
+			// Push reporter into the config (mutating the reporters array)
+			(vitest.config.reporters as unknown[]).push(reporter);
+
+			log("reporters after push:", vitest.config.reporters.length);
 		},
 	};
 }
 
 /**
  * Read the `outputFile` config for the `"vitest-agent-reporter"` key.
- *
- * @remarks
- * Vitest's `outputFile` can be a string (single file) or a record mapping
- * reporter names to file paths. We only use the record form and look for
- * our reporter name as the key.
- *
- * @param outputFile - Vitest's resolved `outputFile` config
- * @returns The configured output directory path, or `null`
  *
  * @internal
  */

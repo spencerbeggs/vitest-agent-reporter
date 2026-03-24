@@ -26,8 +26,6 @@ export interface ConsoleFormatOptions {
 	coverageConsoleLimit: number;
 	/** When `true`, suppress ANSI color codes for valid plain markdown. */
 	noColor: boolean;
-	/** Path to the JSON cache file, shown in "Next steps" section. */
-	cacheFile?: string;
 	/** Optional trend summary for tiered coverage output. */
 	trendSummary?: {
 		direction: "improving" | "regressing" | "stable";
@@ -36,6 +34,8 @@ export interface ConsoleFormatOptions {
 	};
 	/** CLI run command prefix for coverage/trends hints (e.g., `"pnpm vitest-agent-reporter"`). */
 	runCommand?: string;
+	/** When true, suggest MCP tools instead of CLI commands in Next Steps. */
+	mcp?: boolean;
 }
 
 // --- Helpers ---
@@ -157,8 +157,9 @@ export function formatConsoleMarkdown(report: AgentReport, options: ConsoleForma
 		const tier = determineTier(report);
 
 		if (tier === "green") {
-			lines.push(`Coverage: all targets met | trending ${direction} over ${runCount} runs`);
-			lines.push("");
+			// Green tier: append trend inline to the header (no separate line)
+			const trendNote = `Coverage: all targets met | trending ${direction} over ${runCount} runs`;
+			lines[0] = `${lines[0]} — ${trendNote}`;
 		} else if (tier === "yellow") {
 			const belowTargetCount = report.coverage.belowTarget?.length ?? 0;
 			let summary = `Coverage: ${belowTargetCount} file${belowTargetCount !== 1 ? "s" : ""} below target`;
@@ -325,21 +326,14 @@ export function formatConsoleMarkdown(report: AgentReport, options: ConsoleForma
 			for (const file of report.failedFiles) {
 				lines.push(`- Re-run: \`vitest run ${relativePath(file)}\``);
 			}
-			if (options.cacheFile) {
-				lines.push(`- Full report: \`${options.cacheFile}\``);
-			}
-			if (hasClassifications) {
+			if (options.mcp) {
+				lines.push("- Use `test_history` for failure trends");
+				lines.push("- Use `test_errors` to search errors by type");
+				lines.push("- Use `test_coverage` for coverage gap analysis");
+				lines.push("- Use `note_create` to record debugging findings");
+			} else if (hasClassifications) {
 				lines.push(`- Run \`vitest-agent-reporter history\` for failure trends`);
 			}
-		} else if (options.cacheFile) {
-			lines.push(`- Full report: \`${options.cacheFile}\``);
-		}
-		lines.push("");
-	} else {
-		lines.push(`${ansi("\u2713", "green", ao)} All tests passed`);
-		if (options.cacheFile) {
-			lines.push("");
-			lines.push(`\u2192 Cache: \`${options.cacheFile}\``);
 		}
 		lines.push("");
 	}

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AgentDetectionTest } from "./layers/AgentDetectionTest.js";
+import type { VitestPluginContext } from "vitest/node";
+import { EnvironmentDetectorTest } from "./layers/EnvironmentDetectorTest.js";
 import { AgentPlugin } from "./plugin.js";
 import { AgentReporter } from "./reporter.js";
 
@@ -28,6 +29,15 @@ function mockVitest(
 	};
 }
 
+/**
+ * Call configureVitest with a mock context.
+ * The mock satisfies the subset of VitestPluginContext that the plugin uses.
+ */
+async function callConfigureVitest(plugin: ReturnType<typeof AgentPlugin>, vitest: ReturnType<typeof mockVitest>) {
+	const ctx = { vitest, project: { name: undefined } } as unknown as VitestPluginContext;
+	await plugin.configureVitest(ctx);
+}
+
 describe("AgentPlugin", () => {
 	let stderrWrite: ReturnType<typeof vi.fn>;
 
@@ -52,302 +62,252 @@ describe("AgentPlugin", () => {
 
 	describe("always injects reporter regardless of environment", () => {
 		it("injects in human environment", async () => {
-			const plugin = AgentPlugin({}, AgentDetectionTest.layer("human"));
+			const plugin = AgentPlugin({}, EnvironmentDetectorTest.layer("terminal"));
 			const vitest = mockVitest();
-			await plugin.configureVitest({ vitest });
+			await callConfigureVitest(plugin, vitest);
 			expect(vitest.config.reporters.some((r) => r instanceof AgentReporter)).toBe(true);
 		});
 
 		it("injects in agent environment", async () => {
-			const plugin = AgentPlugin({}, AgentDetectionTest.layer("agent"));
-			const vitest = mockVitest();
-			await plugin.configureVitest({ vitest });
+			const plugin = AgentPlugin({}, EnvironmentDetectorTest.layer("agent-shell"));
+			const vitest = mockVitest(["agent"]);
+			await callConfigureVitest(plugin, vitest);
 			expect(vitest.config.reporters.some((r) => r instanceof AgentReporter)).toBe(true);
 		});
 
 		it("injects in CI environment", async () => {
-			const plugin = AgentPlugin({}, AgentDetectionTest.layer("ci"));
-			const vitest = mockVitest();
-			await plugin.configureVitest({ vitest });
+			const plugin = AgentPlugin({}, EnvironmentDetectorTest.layer("ci-github"));
+			const vitest = mockVitest(["default"]);
+			await callConfigureVitest(plugin, vitest);
+			expect(vitest.config.reporters.some((r) => r instanceof AgentReporter)).toBe(true);
+		});
+
+		it("injects in forced agent mode", async () => {
+			const plugin = AgentPlugin({ mode: "agent" }, EnvironmentDetectorTest.layer("terminal"));
+			const vitest = mockVitest(["agent"]);
+			await callConfigureVitest(plugin, vitest);
+			expect(vitest.config.reporters.some((r) => r instanceof AgentReporter)).toBe(true);
+		});
+
+		it("injects in forced silent mode", async () => {
+			const plugin = AgentPlugin({ mode: "silent" }, EnvironmentDetectorTest.layer("agent-shell"));
+			const vitest = mockVitest([]);
+			await callConfigureVitest(plugin, vitest);
 			expect(vitest.config.reporters.some((r) => r instanceof AgentReporter)).toBe(true);
 		});
 	});
 
-	describe("consoleStrategy: complement (default)", () => {
-		it("does NOT strip console reporters in agent mode", async () => {
-			const plugin = AgentPlugin({}, AgentDetectionTest.layer("agent"));
-			const vitest = mockVitest(["default", "verbose", "json"]);
-			await plugin.configureVitest({ vitest });
-			const names = vitest.config.reporters.filter((r) => typeof r === "string");
-			expect(names).toContain("default");
-			expect(names).toContain("verbose");
-			expect(names).toContain("json");
-		});
-
-		it("keeps reporters in CI mode", async () => {
-			const plugin = AgentPlugin({}, AgentDetectionTest.layer("ci"));
+	describe("reporter stripping in own mode", () => {
+		it("strips console reporters when agent + own", async () => {
+			const plugin = AgentPlugin({ strategy: "own" }, EnvironmentDetectorTest.layer("agent-shell"));
 			const vitest = mockVitest(["default", "verbose"]);
-			await plugin.configureVitest({ vitest });
-			expect(vitest.config.reporters).toContain("default");
-			expect(vitest.config.reporters).toContain("verbose");
+			await callConfigureVitest(plugin, vitest);
+			const nonAgent = vitest.config.reporters.filter((r) => !(r instanceof AgentReporter));
+			expect(nonAgent.length).toBe(0);
 		});
 
-		it("keeps reporters in human mode", async () => {
-			const plugin = AgentPlugin({}, AgentDetectionTest.layer("human"));
-			const vitest = mockVitest();
-			await plugin.configureVitest({ vitest });
-			expect(vitest.config.reporters).toContain("default");
-		});
-
-		it("warns when agent reporter is missing in agent mode", async () => {
-			const plugin = AgentPlugin({}, AgentDetectionTest.layer("agent"));
-			const vitest = mockVitest(["default"]);
-			await plugin.configureVitest({ vitest });
-			expect(stderrWrite).toHaveBeenCalledWith(expect.stringContaining('consoleStrategy is "complement"'));
-		});
-
-		it("does NOT warn when agent reporter is present", async () => {
-			const plugin = AgentPlugin({}, AgentDetectionTest.layer("agent"));
-			const vitest = mockVitest(["default", "agent"]);
-			await plugin.configureVitest({ vitest });
-			expect(stderrWrite).not.toHaveBeenCalled();
-		});
-
-		it("does NOT warn when agent reporter is tuple-style", async () => {
-			const plugin = AgentPlugin({}, AgentDetectionTest.layer("agent"));
-			const vitest = mockVitest(["default", ["agent", {}]]);
-			await plugin.configureVitest({ vitest });
-			expect(stderrWrite).not.toHaveBeenCalled();
-		});
-
-		it("sets consoleOutput to silent in agent mode", async () => {
-			const plugin = AgentPlugin({}, AgentDetectionTest.layer("agent"));
+		it("does not strip when agent + complement", async () => {
+			const plugin = AgentPlugin({ strategy: "complement" }, EnvironmentDetectorTest.layer("agent-shell"));
 			const vitest = mockVitest(["agent"]);
-			await plugin.configureVitest({ vitest });
-			const reporter = vitest.config.reporters.find((r) => r instanceof AgentReporter) as AgentReporter;
-			expect(reporter).toBeInstanceOf(AgentReporter);
-			// In complement mode, our reporter is silent -- Vitest handles console
+			await callConfigureVitest(plugin, vitest);
+			expect(vitest.config.reporters).toContain("agent");
 		});
 
-		it("sets githubActions to false (Vitest handles GFM)", async () => {
-			const plugin = AgentPlugin({}, AgentDetectionTest.layer("ci"));
+		it("does not strip when human + own", async () => {
+			const plugin = AgentPlugin({ strategy: "own" }, EnvironmentDetectorTest.layer("terminal"));
 			const vitest = mockVitest(["default"]);
-			await plugin.configureVitest({ vitest });
-			const reporter = vitest.config.reporters.find((r) => r instanceof AgentReporter) as AgentReporter;
-			expect(reporter).toBeInstanceOf(AgentReporter);
-			// In complement mode, githubActions is false -- Vitest handles GFM
-		});
-	});
-
-	describe("consoleStrategy: own", () => {
-		it("strips built-in console reporters in agent mode", async () => {
-			const plugin = AgentPlugin({ consoleStrategy: "own" }, AgentDetectionTest.layer("agent"));
-			const vitest = mockVitest(["default", "verbose", "json"]);
-			await plugin.configureVitest({ vitest });
-			const names = vitest.config.reporters.filter((r) => typeof r === "string");
-			expect(names).not.toContain("default");
-			expect(names).not.toContain("verbose");
-			expect(names).toContain("json");
+			await callConfigureVitest(plugin, vitest);
+			expect(vitest.config.reporters).toContain("default");
 		});
 
-		it("strips tuple-style console reporters in agent mode", async () => {
-			const plugin = AgentPlugin({ consoleStrategy: "own" }, AgentDetectionTest.layer("agent"));
-			const vitest = mockVitest([
-				["default", {}],
-				["json", { outputFile: "out.json" }],
-			]);
-			await plugin.configureVitest({ vitest });
-			const tupleNames = vitest.config.reporters.filter((r) => Array.isArray(r)).map((r) => (r as [string])[0]);
-			expect(tupleNames).not.toContain("default");
-			expect(tupleNames).toContain("json");
-		});
-
-		it("keeps custom reporter instances in agent mode", async () => {
-			const customReporter = { onInit() {} };
-			const plugin = AgentPlugin({ consoleStrategy: "own" }, AgentDetectionTest.layer("agent"));
+		it("preserves non-console reporters when stripping", async () => {
+			const customReporter = { onInit: () => {} };
+			const plugin = AgentPlugin({ strategy: "own" }, EnvironmentDetectorTest.layer("agent-shell"));
 			const vitest = mockVitest(["default", customReporter]);
-			await plugin.configureVitest({ vitest });
-			expect(vitest.config.reporters).toContain(customReporter);
+			await callConfigureVitest(plugin, vitest);
+			const nonAgent = vitest.config.reporters.filter((r) => !(r instanceof AgentReporter));
+			expect(nonAgent).toContain(customReporter);
 		});
+	});
 
-		it("does NOT strip reporters in CI mode", async () => {
-			const plugin = AgentPlugin({ consoleStrategy: "own" }, AgentDetectionTest.layer("ci"));
-			const vitest = mockVitest(["default", "verbose"]);
-			await plugin.configureVitest({ vitest });
-			expect(vitest.config.reporters).toContain("default");
-			expect(vitest.config.reporters).toContain("verbose");
-		});
-
-		it("does NOT strip reporters in human mode", async () => {
-			const plugin = AgentPlugin({ consoleStrategy: "own" }, AgentDetectionTest.layer("human"));
+	describe("complement mode warning", () => {
+		it("warns when agent detected but no agent reporter in complement mode", async () => {
+			const plugin = AgentPlugin({ strategy: "complement" }, EnvironmentDetectorTest.layer("agent-shell"));
 			const vitest = mockVitest(["default"]);
-			await plugin.configureVitest({ vitest });
-			expect(vitest.config.reporters).toContain("default");
+			await callConfigureVitest(plugin, vitest);
+			expect(stderrWrite).toHaveBeenCalled();
+			const output = stderrWrite.mock.calls.map((c: unknown[]) => String(c[0])).join("");
+			expect(output).toContain("complement");
 		});
 
-		it("does NOT strip reporters in silent mode", async () => {
-			const plugin = AgentPlugin({ mode: "silent", consoleStrategy: "own" });
-			const vitest = mockVitest(["default", "verbose"]);
-			await plugin.configureVitest({ vitest });
-			expect(vitest.config.reporters).toContain("default");
-			expect(vitest.config.reporters).toContain("verbose");
+		it("does not warn when agent reporter is present", async () => {
+			const plugin = AgentPlugin({ strategy: "complement" }, EnvironmentDetectorTest.layer("agent-shell"));
+			const vitest = mockVitest(["agent"]);
+			await callConfigureVitest(plugin, vitest);
+			const output = stderrWrite.mock.calls.map((c: unknown[]) => String(c[0])).join("");
+			expect(output).not.toContain("complement");
 		});
 
-		it("does NOT warn about missing agent reporter", async () => {
-			const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-			const plugin = AgentPlugin({ consoleStrategy: "own" }, AgentDetectionTest.layer("agent"));
+		it("does not warn in human environment", async () => {
+			const plugin = AgentPlugin({ strategy: "complement" }, EnvironmentDetectorTest.layer("terminal"));
 			const vitest = mockVitest(["default"]);
-			await plugin.configureVitest({ vitest });
-			expect(stderrSpy).not.toHaveBeenCalled();
-			stderrSpy.mockRestore();
+			await callConfigureVitest(plugin, vitest);
+			const output = stderrWrite.mock.calls.map((c: unknown[]) => String(c[0])).join("");
+			expect(output).not.toContain("complement");
 		});
+	});
 
-		it("enables githubActions in CI mode", async () => {
-			const plugin = AgentPlugin({ consoleStrategy: "own" }, AgentDetectionTest.layer("ci"));
-			const vitest = mockVitest(["default"]);
-			await plugin.configureVitest({ vitest });
+	describe("cache directory resolution", () => {
+		it("uses explicit cacheDir from reporter options", async () => {
+			const plugin = AgentPlugin(
+				{ reporter: { cacheDir: "/custom/cache" } },
+				EnvironmentDetectorTest.layer("agent-shell"),
+			);
+			const vitest = mockVitest(["agent"]);
+			await callConfigureVitest(plugin, vitest);
 			const reporter = vitest.config.reporters.find((r) => r instanceof AgentReporter) as AgentReporter;
-			expect(reporter).toBeInstanceOf(AgentReporter);
-			// CI + own = we write GFM
-		});
-	});
-
-	describe("mode: 'agent' (forced)", () => {
-		it("strips console reporters with own strategy", async () => {
-			const plugin = AgentPlugin({ mode: "agent", consoleStrategy: "own" });
-			const vitest = mockVitest(["default", "json"]);
-			await plugin.configureVitest({ vitest });
-			const names = vitest.config.reporters.filter((r) => typeof r === "string");
-			expect(names).not.toContain("default");
-			expect(names).toContain("json");
+			expect(reporter).toBeDefined();
 		});
 
-		it("does NOT strip reporters with complement strategy (default)", async () => {
-			const plugin = AgentPlugin({ mode: "agent" });
-			const vitest = mockVitest(["default", "json"]);
-			await plugin.configureVitest({ vitest });
-			const names = vitest.config.reporters.filter((r) => typeof r === "string");
-			expect(names).toContain("default");
-			expect(names).toContain("json");
+		it("uses outputFile when set for vitest-agent-reporter", async () => {
+			const plugin = AgentPlugin({}, EnvironmentDetectorTest.layer("agent-shell"));
+			const vitest = mockVitest(["agent"], {
+				outputFile: { "vitest-agent-reporter": "./custom-output" },
+			});
+			await callConfigureVitest(plugin, vitest);
+			expect(vitest.config.reporters.some((r) => r instanceof AgentReporter)).toBe(true);
 		});
-	});
 
-	describe("mode: 'silent'", () => {
-		it("keeps existing reporters and injects silent reporter", async () => {
-			const plugin = AgentPlugin({ mode: "silent" });
-			const vitest = mockVitest();
-			await plugin.configureVitest({ vitest });
-			expect(vitest.config.reporters).toContain("default");
+		it("falls back to Vite cacheDir", async () => {
+			const plugin = AgentPlugin({}, EnvironmentDetectorTest.layer("agent-shell"));
+			const vitest = mockVitest(["agent"]);
+			await callConfigureVitest(plugin, vitest);
 			expect(vitest.config.reporters.some((r) => r instanceof AgentReporter)).toBe(true);
 		});
 	});
 
 	describe("coverage thresholds resolution", () => {
-		it("resolves thresholds from vitest coverage config", async () => {
-			const plugin = AgentPlugin({ consoleStrategy: "own" }, AgentDetectionTest.layer("agent"));
-			const vitest = mockVitest([], {
-				thresholds: { lines: 80, statements: 90, branches: 70, functions: 85 },
+		it("passes thresholds from plugin options to reporter", async () => {
+			const plugin = AgentPlugin(
+				{
+					reporter: {
+						coverageThresholds: { lines: 80, branches: 70 },
+					},
+				},
+				EnvironmentDetectorTest.layer("agent-shell"),
+			);
+			const vitest = mockVitest(["agent"]);
+			await callConfigureVitest(plugin, vitest);
+			const reporter = vitest.config.reporters.find((r) => r instanceof AgentReporter);
+			expect(reporter).toBeDefined();
+		});
+
+		it("reads thresholds from vitest coverage config when plugin options not set", async () => {
+			const plugin = AgentPlugin({}, EnvironmentDetectorTest.layer("agent-shell"));
+			const vitest = mockVitest(["agent"], {
+				thresholds: { lines: 90, branches: 85, functions: 80, statements: 90 },
 			});
-			await plugin.configureVitest({ vitest });
-			const reporter = vitest.config.reporters.find((r) => r instanceof AgentReporter) as AgentReporter;
-			expect(reporter).toBeInstanceOf(AgentReporter);
-			// The reporter receives resolved thresholds with all four metrics
+			await callConfigureVitest(plugin, vitest);
+			const reporter = vitest.config.reporters.find((r) => r instanceof AgentReporter);
+			expect(reporter).toBeDefined();
 		});
 
-		it("resolves empty thresholds when none configured", async () => {
-			const plugin = AgentPlugin({ consoleStrategy: "own" }, AgentDetectionTest.layer("agent"));
-			const vitest = mockVitest([]);
-			await plugin.configureVitest({ vitest });
-			const reporter = vitest.config.reporters.find((r) => r instanceof AgentReporter) as AgentReporter;
-			expect(reporter).toBeInstanceOf(AgentReporter);
-		});
-
-		it("allows explicit override via reporter options", async () => {
+		it("plugin options take priority over vitest config thresholds", async () => {
 			const plugin = AgentPlugin(
-				{ consoleStrategy: "own", reporter: { coverageThresholds: { lines: 95 } } },
-				AgentDetectionTest.layer("agent"),
+				{
+					reporter: {
+						coverageThresholds: { lines: 50 },
+					},
+				},
+				EnvironmentDetectorTest.layer("agent-shell"),
 			);
-			const vitest = mockVitest([], { thresholds: { lines: 80 } });
-			await plugin.configureVitest({ vitest });
-			const reporter = vitest.config.reporters.find((r) => r instanceof AgentReporter) as AgentReporter;
-			expect(reporter).toBeInstanceOf(AgentReporter);
-			// Reporter options take priority over vitest config
-		});
-
-		it("resolves coverageTargets when provided", async () => {
-			const plugin = AgentPlugin(
-				{ consoleStrategy: "own", reporter: { coverageTargets: { lines: 90, branches: 85 } } },
-				AgentDetectionTest.layer("agent"),
-			);
-			const vitest = mockVitest([], { thresholds: { lines: 80 } });
-			await plugin.configureVitest({ vitest });
-			const reporter = vitest.config.reporters.find((r) => r instanceof AgentReporter) as AgentReporter;
-			expect(reporter).toBeInstanceOf(AgentReporter);
-		});
-
-		it("disables native autoUpdate when targets are set", async () => {
-			const plugin = AgentPlugin(
-				{ consoleStrategy: "own", reporter: { coverageTargets: { lines: 90 } } },
-				AgentDetectionTest.layer("agent"),
-			);
-			const vitest = mockVitest([], { thresholds: { lines: 80, autoUpdate: true } });
-			await plugin.configureVitest({ vitest });
-			expect(vitest.config.coverage.thresholds?.autoUpdate).toBe(false);
-		});
-
-		it("does not disable native autoUpdate when no targets set", async () => {
-			const plugin = AgentPlugin({ consoleStrategy: "own" }, AgentDetectionTest.layer("agent"));
-			const vitest = mockVitest([], { thresholds: { lines: 80, autoUpdate: true } });
-			await plugin.configureVitest({ vitest });
-			expect(vitest.config.coverage.thresholds?.autoUpdate).toBe(true);
-		});
-
-		it("does not disable native autoUpdate when autoUpdate option is false", async () => {
-			const plugin = AgentPlugin(
-				{ consoleStrategy: "own", reporter: { coverageTargets: { lines: 90 }, autoUpdate: false } },
-				AgentDetectionTest.layer("agent"),
-			);
-			const vitest = mockVitest([], { thresholds: { lines: 80, autoUpdate: true } });
-			await plugin.configureVitest({ vitest });
-			expect(vitest.config.coverage.thresholds?.autoUpdate).toBe(true);
+			const vitest = mockVitest(["agent"], {
+				thresholds: { lines: 90, branches: 85 },
+			});
+			await callConfigureVitest(plugin, vitest);
+			const reporter = vitest.config.reporters.find((r) => r instanceof AgentReporter);
+			expect(reporter).toBeDefined();
 		});
 	});
 
-	describe("outputFile cache directory resolution", () => {
-		it("uses outputFile['vitest-agent-reporter'] as cache directory", async () => {
-			const plugin = AgentPlugin({ consoleStrategy: "own" }, AgentDetectionTest.layer("agent"));
-			const vitest = mockVitest([], {
-				outputFile: { "vitest-agent-reporter": "./custom-output" },
-			});
-			await plugin.configureVitest({ vitest });
-			expect(vitest.config.reporters.some((r) => r instanceof AgentReporter)).toBe(true);
+	describe("coverage targets", () => {
+		it("passes targets to reporter when set", async () => {
+			const plugin = AgentPlugin(
+				{
+					reporter: {
+						coverageTargets: { lines: 95 },
+					},
+				},
+				EnvironmentDetectorTest.layer("agent-shell"),
+			);
+			const vitest = mockVitest(["agent"]);
+			await callConfigureVitest(plugin, vitest);
+			const reporter = vitest.config.reporters.find((r) => r instanceof AgentReporter);
+			expect(reporter).toBeDefined();
 		});
 
-		it("ignores outputFile when it is a plain string", async () => {
-			const plugin = AgentPlugin({ consoleStrategy: "own" }, AgentDetectionTest.layer("agent"));
-			const vitest = mockVitest([], { outputFile: "./some-file.json" });
-			await plugin.configureVitest({ vitest });
-			expect(vitest.config.reporters.some((r) => r instanceof AgentReporter)).toBe(true);
+		it("disables Vitest native autoUpdate when targets set", async () => {
+			const thresholds: Record<string, unknown> = { lines: 80 };
+			const plugin = AgentPlugin(
+				{
+					reporter: {
+						coverageTargets: { lines: 95 },
+					},
+				},
+				EnvironmentDetectorTest.layer("agent-shell"),
+			);
+			const vitest = mockVitest(["agent"], { thresholds });
+			await callConfigureVitest(plugin, vitest);
+			expect(thresholds.autoUpdate).toBe(false);
 		});
 
-		it("falls back to vite cacheDir when outputFile has no our key", async () => {
-			const plugin = AgentPlugin({ consoleStrategy: "own" }, AgentDetectionTest.layer("agent"));
-			const vitest = mockVitest([], {
-				outputFile: { json: "./json-report.json" },
-			});
-			await plugin.configureVitest({ vitest });
-			expect(vitest.config.reporters.some((r) => r instanceof AgentReporter)).toBe(true);
+		it("does not disable autoUpdate when no targets", async () => {
+			const thresholds: Record<string, unknown> = { lines: 80 };
+			const plugin = AgentPlugin({}, EnvironmentDetectorTest.layer("agent-shell"));
+			const vitest = mockVitest(["agent"], { thresholds });
+			await callConfigureVitest(plugin, vitest);
+			expect(thresholds.autoUpdate).toBeUndefined();
+		});
+
+		it("respects autoUpdate false in reporter options", async () => {
+			const thresholds: Record<string, unknown> = { lines: 80 };
+			const plugin = AgentPlugin(
+				{
+					reporter: {
+						coverageTargets: { lines: 95 },
+						autoUpdate: false,
+					},
+				},
+				EnvironmentDetectorTest.layer("agent-shell"),
+			);
+			const vitest = mockVitest(["agent"], { thresholds });
+			await callConfigureVitest(plugin, vitest);
+			expect(thresholds.autoUpdate).toBeUndefined();
 		});
 	});
 
-	describe("passes reporter options through", () => {
-		it("forwards reporter config", async () => {
-			const plugin = AgentPlugin(
-				{ consoleStrategy: "own", reporter: { cacheDir: ".custom-cache", coverageThresholds: { lines: 90 } } },
-				AgentDetectionTest.layer("agent"),
-			);
-			const vitest = mockVitest([]);
-			await plugin.configureVitest({ vitest });
+	describe("environment detection modes", () => {
+		it("auto mode detects agent-shell", async () => {
+			const plugin = AgentPlugin({ strategy: "own" }, EnvironmentDetectorTest.layer("agent-shell"));
+			const vitest = mockVitest(["default"]);
+			await callConfigureVitest(plugin, vitest);
+			const nonAgent = vitest.config.reporters.filter((r) => !(r instanceof AgentReporter));
+			expect(nonAgent.length).toBe(0);
+		});
+
+		it("auto mode detects ci-github", async () => {
+			const plugin = AgentPlugin({ strategy: "own" }, EnvironmentDetectorTest.layer("ci-github"));
+			const vitest = mockVitest(["default"]);
+			await callConfigureVitest(plugin, vitest);
+			expect(vitest.config.reporters).toContain("default");
+			expect(vitest.config.reporters.some((r) => r instanceof AgentReporter)).toBe(true);
+		});
+
+		it("auto mode detects terminal", async () => {
+			const plugin = AgentPlugin({ strategy: "own" }, EnvironmentDetectorTest.layer("terminal"));
+			const vitest = mockVitest(["default"]);
+			await callConfigureVitest(plugin, vitest);
+			expect(vitest.config.reporters).toContain("default");
 			expect(vitest.config.reporters.some((r) => r instanceof AgentReporter)).toBe(true);
 		});
 	});

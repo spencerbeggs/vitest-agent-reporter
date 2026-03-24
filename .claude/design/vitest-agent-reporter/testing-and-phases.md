@@ -3,9 +3,10 @@ status: current
 module: vitest-agent-reporter
 category: testing
 created: 2026-03-20
-updated: 2026-03-22
-last-synced: 2026-03-22
-completeness: 90
+updated: 2026-03-23
+last-synced: 2026-03-23
+post-phase5-sync: 2026-03-23
+completeness: 95
 related:
   - vitest-agent-reporter/architecture.md
   - vitest-agent-reporter/components.md
@@ -27,9 +28,10 @@ Testing approach, test patterns, and implementation phase history.
 **Location:** `package/src/**/*.test.ts`
 
 **Test structure mirrors source.** Services are tested through their layers.
-CLI logic is tested through lib functions.
+CLI logic is tested through lib functions. Formatters are tested directly.
+MCP tools are tested via tRPC caller factory.
 
-**Implemented tests (Phase 1-2-3-4):**
+**Implemented tests (Phase 1-2-3-4-5):**
 
 - `utils/compress-lines.test.ts` -- `compressLines()` edge cases
 - `utils/safe-filename.test.ts` -- `safeFilename()` sanitization
@@ -40,39 +42,60 @@ CLI logic is tested through lib functions.
   `getRunCommand()` for all package managers
 - `utils/build-report.test.ts` -- `buildAgentReport()` with mock Vitest
   objects, tallying, error extraction, omitPassingTests behavior
-- `utils/format-console.test.ts` -- `formatConsoleMarkdown()` tiered
-  output, coverage gaps, trend summaries, CLI hints
-- `utils/format-gfm.test.ts` -- `formatGfm()` single and multi-project
-  output, coverage tables, details blocks
+- `utils/format-console.test.ts` -- legacy `formatConsoleMarkdown()` tests
+- `utils/format-gfm.test.ts` -- legacy `formatGfm()` tests
 - `utils/resolve-thresholds.test.ts` -- `resolveThresholds()` Vitest-native
   format parsing, `100` shorthand, per-glob patterns, `getMinThreshold()`
 - `utils/compute-trend.test.ts` -- `computeTrend()` trend entry computation,
   sliding window, target hash change detection, `getRecentDirection()`
-- `schemas/Common.test.ts` -- shared literal schema validation
+- `utils/split-project.test.ts` -- `splitProject()` project name splitting,
+  colon handling, empty/undefined input
+- `utils/capture-env.test.ts` -- `captureEnvVars()` CI, GitHub, Runner
+  var capture logic
+- `utils/capture-settings.test.ts` -- `captureSettings()` config extraction
+  and hash computation
+- `schemas/Common.test.ts` -- shared literal schema validation including
+  Environment, Executor, OutputFormat, DetailLevel
 - `schemas/AgentReport.test.ts` -- report schema validation and encoding
 - `schemas/CacheManifest.test.ts` -- manifest schema validation
 - `schemas/Coverage.test.ts` -- coverage schema validation, thresholds
   object format, targets, baselines
 - `schemas/Baselines.test.ts` -- CoverageBaselines schema validation
 - `schemas/Trends.test.ts` -- TrendEntry, TrendRecord schema validation
+- `schemas/History.test.ts` -- TestRun, TestHistory, HistoryRecord schema
+  validation
 - `schemas/Options.test.ts` -- reporter + plugin + coverage options schema
   validation
-- `services/services.test.ts` -- service Context.Tag definitions
-- `errors/errors.test.ts` -- CacheError and DiscoveryError tagged error types
-- `layers/AgentDetectionLive.test.ts` -- std-env integration, live layer
-- `layers/CacheWriterLive.test.ts` -- file write via mock FileSystem,
-  including writeBaselines and writeTrends
-- `layers/CacheReaderLive.test.ts` -- file read via mock FileSystem,
-  corrupt/invalid JSON error paths, readBaselines, readTrends
+- `services/services.test.ts` -- service Context.Tag definitions (all 10)
+- `errors/errors.test.ts` -- DataStoreError and DiscoveryError tagged
+  error types
+- `layers/EnvironmentDetectorLive.test.ts` -- std-env integration, 4
+  environment types
+- `layers/DataStoreLive.test.ts` -- database write operations via SQLite
+- `layers/DataReaderLive.test.ts` -- database read operations via SQLite,
+  assembler integration
 - `layers/CoverageAnalyzerLive.test.ts` -- coverage processing, scoped
   coverage, bare-zero handling, test layer
 - `layers/ProjectDiscoveryLive.test.ts` -- test file discovery, source
   mapping
 - `layers/HistoryTrackerLive.test.ts` -- classification logic, sliding
   window (new-failure, persistent, flaky, stable, recovered)
-- `layers/ReporterLive.test.ts` -- merged layer composition
-- `schemas/History.test.ts` -- TestRun, TestHistory, HistoryRecord schema
-  validation
+- `layers/ReporterLive.test.ts` -- merged layer composition with SQLite
+- `layers/ExecutorResolverLive.test.ts` -- environment to executor mapping
+- `layers/FormatSelectorLive.test.ts` -- format selection logic
+- `layers/DetailResolverLive.test.ts` -- detail level resolution
+- `layers/OutputRendererLive.test.ts` -- formatter dispatch
+- `formatters/markdown.test.ts` -- tiered console markdown formatting,
+  coverage gaps, trend summaries, CLI hints
+- `formatters/gfm.test.ts` -- GFM formatting, single and multi-project
+  output, coverage tables, details blocks
+- `formatters/json.test.ts` -- JSON output formatting
+- `migrations/0001_initial.test.ts` -- migration schema verification,
+  table creation, index creation
+- `sql/assemblers.test.ts` -- assembler functions for reconstructing
+  domain types from row data
+- `mcp/router.test.ts` -- tRPC router integration tests via caller factory
+- `mcp/tools/run-tests.test.ts` -- run_tests tool spawnSync behavior
 - `cli/lib/format-status.test.ts` -- status formatting
 - `cli/lib/format-overview.test.ts` -- overview formatting
 - `cli/lib/format-coverage.test.ts` -- coverage formatting with thresholds
@@ -85,8 +108,7 @@ CLI logic is tested through lib functions.
 - `cli/lib/resolve-cache-dir.test.ts` -- cache dir resolution including
   Vite hash-based subdirectory search
 - `reporter.test.ts` -- `AgentReporter` lifecycle integration tests,
-  including history classification, writeHistory, writeBaselines,
-  writeTrends invocation
+  including history classification, DataStore write invocations
 - `plugin.test.ts` -- `AgentPlugin` environment detection, reporter
   injection, cache directory resolution, coverage threshold/target
   resolution, consoleStrategy behavior, autoUpdate disabling
@@ -96,38 +118,47 @@ CLI logic is tested through lib functions.
 Each service test follows the state-container pattern:
 
 ```typescript
-const run = <A, E>(effect: Effect.Effect<A, E, CacheReader>) =>
+const run = <A, E>(effect: Effect.Effect<A, E, DataReader>) =>
   Effect.runPromise(Effect.provide(effect, testLayer));
 
-const readManifest = (dir: string) =>
-  Effect.flatMap(CacheReader, (svc) => svc.readManifest(dir));
+const getLatestRun = (project: string, subProject: string | null) =>
+  Effect.flatMap(DataReader, (svc) => svc.getLatestRun(project, subProject));
 ```
 
-Test layers swap `@effect/platform` FileSystem for mock implementations.
-Reporter integration tests compose test layers:
+Test layers swap `@effect/platform` FileSystem and `@effect/sql-sqlite-node`
+SqlClient for mock implementations. Reporter integration tests compose test
+layers:
 
 ```typescript
 const TestReporterLive = Layer.mergeAll(
-  CacheWriterTest.layer(writeState),
+  DataStoreTest.layer(writeState),
   CoverageAnalyzerTest.layer(),
   HistoryTrackerTest.layer(),
-  CacheReaderTest.layer(readState),
 );
 ```
 
 CLI commands are not tested directly (thin wrappers). Logic lives in
 `cli/lib/` and is tested as pure functions.
 
+MCP tools are tested via tRPC's `createCallerFactory` without starting
+the MCP server:
+
+```typescript
+const factory = createCallerFactory(appRouter);
+const caller = factory(mockCtx);
+const result = await caller.test_status({ project: "my-app" });
+```
+
 ### Integration Tests
 
 **What to test:**
 
 - End-to-end reporter behavior with actual Vitest test runs
-- Per-project cache file generation in multi-project setup
-- Manifest creation and correctness
+- Per-project database records in multi-project setup
 - GFM output written to GITHUB_STEP_SUMMARY mock file
 - Reporter injection via `AgentPlugin`
 - CLI bin invocation with cached test data
+- MCP server tool invocations via caller factory
 
 ---
 
@@ -215,8 +246,7 @@ and whether failures are new, persistent, or flaky.
 - `History.ts` schema (`TestRun`, `TestHistory`, `HistoryRecord`) for
   failure persistence
 - `HistoryTracker` Effect service (`package/src/services/HistoryTracker.ts`)
-  with
-  `classify(outcomes: TestOutcome[])` method
+  with `classify(outcomes: TestOutcome[])` method
 - `HistoryTrackerLive` with 10-entry sliding window and five classifications:
   `new-failure`, `persistent`, `flaky`, `recovered`, `stable`
 - `HistoryTrackerTest` test layer with canned classifications
@@ -345,6 +375,310 @@ commands for cache management and diagnostics.
 **Depends on:** Phase 2 (Effect services, CacheReader/CacheWriter, CLI
 framework), Phase 3 (HistoryTracker, ReporterLive/CliLive composition)
 
+### Phase 5: SQLite Data Layer, Output Pipeline, MCP Server, Claude Code Plugin -- COMPLETE
+
+**Goal:** Replace JSON file cache with SQLite database, add pluggable
+output pipeline with formatter system, expose test data via MCP server,
+and provide a Claude Code plugin for seamless agent integration.
+
+Four sub-phases executed on the `feat/db-mcp` branch:
+
+#### Phase 5a: SQLite Data Layer
+
+**Deliverables (all implemented):**
+
+- **SQLite database:** 25-table normalized schema via
+  `@effect/sql-sqlite-node` with WAL journal mode and foreign key
+  enforcement. Single `data.db` file replaces all JSON cache files
+- **DataStore service** (`package/src/services/DataStore.ts`) -- replaces
+  CacheWriter. Writes test runs, modules, suites, test cases, errors,
+  coverage, history, baselines, trends, settings, source maps, and notes
+- **DataReader service** (`package/src/services/DataReader.ts`) -- replaces
+  CacheReader. Reads all test data from SQLite with rich query methods
+  (getFlaky, getPersistentFailures, getTestsForFile, searchNotes, etc.)
+- **DataStoreError** (`package/src/errors/DataStoreError.ts`) -- replaces
+  CacheError. Fields: `operation`, `table`, `reason`
+- **Migration system** (`package/src/migrations/0001_initial.ts`) --
+  migration-based schema management via SqliteMigrator
+- **SQL helpers** (`package/src/sql/rows.ts`, `package/src/sql/assemblers.ts`)
+  -- row type definitions and assembler functions for reconstructing domain
+  types from normalized row data
+- **Composition layers as functions of `dbPath`:** `ReporterLive(dbPath)`,
+  `CliLive(dbPath)` now construct SqliteClient + Migrator layers inline
+- **New utilities:** `split-project.ts` (project:subProject parsing),
+  `capture-env.ts` (environment variable capture), `capture-settings.ts`
+  (Vitest config capture + hash)
+- **HistoryTracker signature change:** `classify` now accepts
+  `(project, subProject, testOutcomes, timestamp)` instead of
+  `(cacheDir, testOutcomes)`; depends on DataReader instead of CacheReader
+- **classifyTest()** pure function extracted to `utils/classify-test.ts`
+  from HistoryTrackerLive for reuse in CLI formatting
+
+**Breaking changes from Phase 4:**
+
+- `CacheWriter` / `CacheReader` services removed, replaced by
+  `DataStore` / `DataReader`
+- `CacheError` removed, replaced by `DataStoreError`
+- `CacheWriterLive` / `CacheReaderLive` removed, replaced by
+  `DataStoreLive` / `DataReaderLive`
+- `ReporterLive` and `CliLive` changed from static layers to functions
+  of `dbPath: string`
+- JSON cache files no longer produced (all data in `data.db`)
+
+**Deleted files:**
+
+- `package/src/services/CacheWriter.ts`,
+  `package/src/services/CacheReader.ts`
+- `package/src/layers/CacheWriterLive.ts`,
+  `package/src/layers/CacheReaderLive.ts`,
+  `package/src/layers/CacheWriterTest.ts`,
+  `package/src/layers/CacheReaderTest.ts`
+- `package/src/errors/CacheError.ts`
+
+**New files:**
+
+- `package/src/services/DataStore.ts`, `package/src/services/DataReader.ts`
+- `package/src/layers/DataStoreLive.ts`, `package/src/layers/DataReaderLive.ts`,
+  `package/src/layers/DataStoreTest.ts`
+- `package/src/migrations/0001_initial.ts`
+- `package/src/sql/rows.ts`, `package/src/sql/assemblers.ts`
+- `package/src/errors/DataStoreError.ts`
+- `package/src/utils/split-project.ts`, `package/src/utils/capture-env.ts`,
+  `package/src/utils/capture-settings.ts`, `package/src/utils/classify-test.ts`
+
+**New test files:**
+
+- `layers/DataStoreLive.test.ts`
+- `layers/DataReaderLive.test.ts`
+- `migrations/0001_initial.test.ts`
+- `sql/assemblers.test.ts`
+- `utils/split-project.test.ts`
+- `utils/capture-env.test.ts`
+- `utils/capture-settings.test.ts`
+
+**Dependencies added:** `@effect/sql-sqlite-node`
+
+#### Phase 5b: Output Pipeline
+
+**Deliverables (all implemented):**
+
+- **5 new Effect services forming output pipeline:**
+  `EnvironmentDetector`, `ExecutorResolver`, `FormatSelector`,
+  `DetailResolver`, `OutputRenderer`
+- **EnvironmentDetector** replaces AgentDetection with finer granularity:
+  `agent-shell`, `terminal`, `ci-github`, `ci-generic` (4 environments
+  vs previous 3)
+- **ExecutorResolver** maps environment + mode to executor role:
+  `human`, `agent`, `ci`
+- **FormatSelector** selects output format based on executor + explicit
+  override: `markdown`, `json`, `vitest-bypass`, `silent`
+- **DetailResolver** determines detail level based on executor + run
+  health: `minimal`, `neutral`, `standard`, `verbose`
+- **OutputRenderer** dispatches to registered formatter instances
+- **4 built-in formatters:** `MarkdownFormatter` (tiered console),
+  `GfmFormatter` (GitHub Actions), `JsonFormatter` (raw JSON),
+  `SilentFormatter` (no output)
+- **OutputPipelineLive** composition layer included in `ReporterLive`,
+  `CliLive`, and `McpLive`
+- **New schema literals** in Common.ts: `Environment`, `Executor`,
+  `OutputFormat`, `DetailLevel`
+- **`--format` flag** on all CLI commands for explicit format selection
+- **`format` option** replaces `consoleStrategy` internally for format
+  selection
+
+**Breaking changes from Phase 4:**
+
+- `AgentDetection` service removed, replaced by `EnvironmentDetector`
+- `AgentDetectionLive` / `AgentDetectionTest` removed, replaced by
+  `EnvironmentDetectorLive` / `EnvironmentDetectorTest`
+- Three-environment model (`agent`, `ci`, `human`) replaced by
+  four-environment model + executor resolution
+
+**Deleted files:**
+
+- `package/src/services/AgentDetection.ts`
+- `package/src/layers/AgentDetectionLive.ts`,
+  `package/src/layers/AgentDetectionTest.ts`
+
+**New files:**
+
+- `package/src/services/EnvironmentDetector.ts`,
+  `package/src/services/ExecutorResolver.ts`,
+  `package/src/services/FormatSelector.ts`,
+  `package/src/services/DetailResolver.ts`,
+  `package/src/services/OutputRenderer.ts`
+- `package/src/layers/EnvironmentDetectorLive.ts`,
+  `package/src/layers/ExecutorResolverLive.ts`,
+  `package/src/layers/FormatSelectorLive.ts`,
+  `package/src/layers/DetailResolverLive.ts`,
+  `package/src/layers/OutputRendererLive.ts`,
+  `package/src/layers/OutputPipelineLive.ts`,
+  `package/src/layers/EnvironmentDetectorTest.ts`
+- `package/src/formatters/types.ts`, `package/src/formatters/markdown.ts`,
+  `package/src/formatters/gfm.ts`, `package/src/formatters/json.ts`,
+  `package/src/formatters/silent.ts`
+
+**New test files:**
+
+- `layers/EnvironmentDetectorLive.test.ts`
+- `layers/ExecutorResolverLive.test.ts`
+- `layers/FormatSelectorLive.test.ts`
+- `layers/DetailResolverLive.test.ts`
+- `layers/OutputRendererLive.test.ts`
+- `formatters/markdown.test.ts`
+- `formatters/gfm.test.ts`
+- `formatters/json.test.ts`
+
+#### Phase 5c: MCP Server
+
+**Deliverables (all implemented):**
+
+- **tRPC router** (`package/src/mcp/router.ts`) with 16 procedures
+  aggregating all MCP tools
+- **MCP server** (`package/src/mcp/server.ts`) using
+  `@modelcontextprotocol/sdk` with StdioServerTransport, registers all
+  16 tools with Zod input schemas
+- **tRPC context** (`package/src/mcp/context.ts`) carrying `ManagedRuntime`
+  for Effect service access
+- **Entry point** (`package/src/mcp/index.ts`) resolves DB path, creates
+  ManagedRuntime with McpLive, starts server
+- **McpLive composition layer** (`package/src/layers/McpLive.ts`) --
+  DataReaderLive + DataStoreLive + ProjectDiscoveryLive +
+  OutputPipelineLive + SqliteClient + Migrator + NodeContext +
+  NodeFileSystem
+- **16 MCP tools:**
+  - Read-only (markdown): `test_status`, `test_overview`, `test_coverage`,
+    `test_history`, `test_trends`, `test_errors`, `test_for_file`,
+    `cache_health`, `configure`
+  - Mutation (JSON): `run_tests`
+  - Note CRUD (JSON): `note_create`, `note_list`, `note_get`,
+    `note_update`, `note_delete`, `note_search`
+- **11 tool implementation files** in `package/src/mcp/tools/`
+
+**Dependencies added:** `@modelcontextprotocol/sdk`, `@trpc/server`, `zod`
+
+**New files:**
+
+- `package/src/mcp/context.ts`, `package/src/mcp/router.ts`,
+  `package/src/mcp/server.ts`, `package/src/mcp/index.ts`
+- `package/src/mcp/tools/status.ts`, `package/src/mcp/tools/overview.ts`,
+  `package/src/mcp/tools/coverage.ts`, `package/src/mcp/tools/history.ts`,
+  `package/src/mcp/tools/trends.ts`, `package/src/mcp/tools/errors.ts`,
+  `package/src/mcp/tools/test-for-file.ts`,
+  `package/src/mcp/tools/run-tests.ts`,
+  `package/src/mcp/tools/cache-health.ts`,
+  `package/src/mcp/tools/configure.ts`, `package/src/mcp/tools/notes.ts`
+- `package/src/layers/McpLive.ts`
+
+**New test files:**
+
+- `mcp/router.test.ts`
+- `mcp/tools/run-tests.test.ts`
+
+#### Phase 5d: Claude Code Plugin
+
+**Deliverables (all implemented):**
+
+- **Plugin manifest** (`plugin/.claude-plugin/plugin.json`) -- name,
+  version, author, homepage, repository
+- **MCP auto-registration** (`plugin/.mcp.json`) -- configures
+  `vitest-reporter` MCP server via `npx vitest-agent-reporter-mcp`
+- **Hooks:**
+  - `SessionStart` -> `plugin/hooks/session-start.sh` -- injects test
+    context into the Claude Code session via bash
+  - `PostToolUse` on `Bash` -> `plugin/hooks/post-test-run.sh` -- detects
+    vitest test runs and triggers post-run actions
+- **3 Skills:**
+  - `plugin/skills/tdd/SKILL.md` -- TDD workflow guidance
+  - `plugin/skills/debugging/SKILL.md` -- test debugging workflow
+  - `plugin/skills/configuration/SKILL.md` -- Vitest configuration guidance
+- **2 Commands:**
+  - `plugin/commands/setup.md` -- initial setup instructions
+  - `plugin/commands/configure.md` -- configuration management
+
+**Note:** The `plugin/` directory is NOT a pnpm workspace. It contains
+only static files (JSON, shell scripts, markdown) with no dependencies,
+build step, or tests.
+
+**New files:**
+
+- `plugin/.claude-plugin/plugin.json`
+- `plugin/.mcp.json`
+- `plugin/hooks/hooks.json`
+- `plugin/hooks/session-start.sh`
+- `plugin/hooks/post-test-run.sh`
+- `plugin/skills/tdd/SKILL.md`
+- `plugin/skills/debugging/SKILL.md`
+- `plugin/skills/configuration/SKILL.md`
+- `plugin/commands/setup.md`
+- `plugin/commands/configure.md`
+
+**Depends on:** Phase 2 (Effect services, CLI framework), Phase 3
+(HistoryTracker), Phase 4 (coverage thresholds, baselines, trends,
+tiered output)
+
+### Post-Phase-5 Refinements (on `feat/db-mcp` branch)
+
+Incremental improvements made after the Phase 5 implementation was
+complete. These are not a new phase but a set of fixes and enhancements.
+
+**Changes:**
+
+- **Multi-project support fix:** `projectFilter` option on AgentReporter.
+  Plugin passes project name from `configureVitest` context. Reporter
+  filters testModules to only its own project. Coverage dedup: only
+  first project (alphabetically) processes global coverage
+- **Proper Vitest plugin types:** Plugin uses `VitestPluginContext` from
+  `vitest/node` for `configureVitest` hook typing. Uses `as unknown as`
+  casts where Vitest types are too strict
+- **`mcp` option:** Boolean on plugin and reporter. When true, Next Steps
+  suggests MCP tools instead of CLI commands
+- **Cache file line removed:** The `-> Cache:` line no longer appears in
+  console output. `cacheFile` removed from `FormatterContext`
+- **`consoleStrategy` renamed to `strategy`:** Shorter option name on
+  `AgentPluginOptions`
+- **`debug` replaced by `logLevel`/`logFile`:** Effect-based structured
+  logging via `Logger.structuredLogger`. New `LoggerLive` layer factory
+  with NDJSON to stderr + optional file logging via `Logger.zip`.
+  `resolveLogLevel`/`resolveLogFile` helpers with env var fallback
+  (`VITEST_REPORTER_LOG_LEVEL`, `VITEST_REPORTER_LOG_FILE`).
+  `Effect.logDebug` calls on all 30+ DataStore/DataReader methods.
+  Case-insensitive level names
+- **Native coverage table suppression:** Plugin sets
+  `coverage.reporter = []` in agent/own mode to prevent Vitest from
+  printing the large text table
+- **Redundant "All tests passed" line removed:** Header already conveys
+  pass/fail state
+- **Trend summary wired up:** Reporter reads trends back from DB after
+  writing and builds `trendSummary` for formatter context. Shows
+  "trending improving over N runs" line
+- **DataStoreError fix:** `err.stacks[0]` (object) replaced with
+  `err.stack` (string) for SQL parameters. Improved error extraction
+  from Effect FiberFailure in catch block
+- **Vitest config:** Plain `defineConfig` from `vitest/config` replaces
+  `@savvy-web/vitest`. Projects use `extends: true`. Coverage excludes
+  added for new files
+- **Turbo config:** Removed redundant uncached `build` wrapper from
+  `package/turbo.json`. Excluded test/markdown files from build hashes
+- **New file:** `package/src/layers/LoggerLive.ts`
+- **`vite` added as devDependency** to `package/`
+
+**New/modified files:**
+
+- `package/src/layers/LoggerLive.ts` (new)
+- `package/src/reporter.ts` (projectFilter, logLevel, mcp, trend summary)
+- `package/src/plugin.ts` (strategy rename, projectFilter, coverage
+  suppression, VitestPluginContext)
+- `package/src/formatters/markdown.ts` (cache line removed, "All tests
+  passed" removed, MCP-aware suggestions)
+- `package/src/formatters/types.ts` (cacheFile removed, mcp added)
+- `package/src/schemas/Options.ts` (strategy, logLevel, logFile, mcp,
+  projectFilter)
+- `package/src/layers/DataStoreLive.ts` (logDebug calls, error fix)
+- `package/src/layers/DataReaderLive.ts` (logDebug calls)
+- `vitest.config.ts` (plain defineConfig, extends: true)
+- `package/turbo.json` (build wrapper removed)
+
 ---
 
 ## Related Documentation
@@ -367,9 +701,12 @@ framework), Phase 3 (HistoryTracker, ReporterLive/CliLive composition)
 - [GitHub Actions Job Summaries](https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/workflow-commands-for-github-actions#adding-a-job-summary)
 - [Effect Documentation](https://effect.website/)
 - [std-env](https://github.com/unjs/std-env)
+- [Model Context Protocol](https://spec.modelcontextprotocol.io/)
+- [tRPC Documentation](https://trpc.io/docs)
+- [@effect/sql-sqlite-node](https://effect.website/docs/integrations/sql)
 
 ---
 
-**Document Status:** Current -- reflects Phase 1, Phase 2, Phase 3, and
-Phase 4 implementation as built. 429 tests across 36 files, all coverage
-metrics above 80%. All phases complete.
+**Document Status:** Current -- reflects Phase 1 through Phase 5
+implementation plus post-Phase-5 refinements. 499 tests across 50 files,
+all coverage metrics above 80%. All phases complete.

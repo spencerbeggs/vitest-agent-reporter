@@ -3,9 +3,10 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-03-22
-last-synced: 2026-03-22
-completeness: 90
+updated: 2026-03-23
+last-synced: 2026-03-23
+post-phase5-sync: 2026-03-23
+completeness: 95
 related:
   - vitest-agent-reporter/architecture.md
   - vitest-agent-reporter/components.md
@@ -59,27 +60,31 @@ and was unnecessary since the Reporter API provides project info natively.
 **Chosen approach:** Reporter-native grouping via `TestProject` API. Zero
 configuration; works in monorepos and single repos; no mirror projects;
 single reporter instance. Uses `testModule.project.name` for grouping.
+Phase 5 added `splitProject()` to separate `"project:subProject"` for
+normalized database storage.
 
-### Decision 3: Three-Environment Detection
+### Decision 3: Four-Environment Detection (Phase 5 update)
 
 **Context:** The reporter needs to behave differently depending on who is
-running tests: an LLM agent, a CI system, or a human developer.
+running tests and in what context.
 
-**Original approach (Phase 1):** Hand-rolled `detectEnvironment()` checking
-9+ individual env vars (`AI_AGENT`, `CLAUDECODE`, `CURSOR_TRACE_ID`, etc.).
+**Phase 1 approach:** Hand-rolled `detectEnvironment()` checking 9+
+individual env vars.
 
-**Chosen approach (Phase 2):** AgentDetection Effect service backed by
-`std-env`. `std-env` maintains agent detection upstream (currently covers
-Claude, Cursor, Devin, Replit, Gemini, Codex, Auggie, OpenCode, Kiro,
-Goose, Pi). CI detection stays custom because we need the specific
-`GITHUB_ACTIONS` check for GFM behavior. Three tiers:
+**Phase 2 approach:** AgentDetection Effect service backed by `std-env`
+with three environments: agent, CI, human.
 
-- **Agent**: structured markdown or complement mode, write JSON cache
-- **CI** (GITHUB_ACTIONS, CI): keep existing reporters, GFM, JSON cache
-- **Human**: keep existing reporters, reporter runs silently (JSON
-  cache only)
+**Phase 5 approach (current):** EnvironmentDetector service with four
+granular environments: `agent-shell` (LLM agent in a shell), `terminal`
+(human in terminal), `ci-github` (GitHub Actions specifically),
+`ci-generic` (other CI systems). The ExecutorResolver then maps these to
+three executor roles (`human`, `agent`, `ci`) for output behavior.
 
-The reporter always writes JSON cache regardless of environment.
+**Why changed:** The CI split (`ci-github` vs `ci-generic`) enables
+GFM-specific behavior without conflating all CI environments. The
+`agent-shell` vs `terminal` distinction supports finer-grained output
+format selection. The two-stage pipeline (environment detection -> executor
+resolution) separates fact-finding from behavior decisions.
 
 ### Decision 4: Duck-typed Istanbul Interface
 
@@ -110,21 +115,32 @@ consumers can validate report files.
 service architecture. Eliminates the Zod dependency. Unified ecosystem
 means schemas compose with Effect services without bridging.
 
+**Note:** Phase 5c re-introduced `zod` as a dependency for tRPC procedure
+input validation in the MCP server. This is separate from the data schema
+layer -- Effect Schema remains the source of truth for data structures,
+while Zod is used only for MCP tool input schemas where `@trpc/server`
+requires it.
+
 ### Decision 6: Effect Services over Plain Functions (Phase 2)
 
 **Context:** The reporter and CLI share functionality (cache reading,
 coverage processing). Both need testable I/O without mocking Node APIs
 directly.
 
-**Chosen approach:** Five Effect services with `Context.Tag` definitions:
-AgentDetection, CacheWriter, CacheReader, CoverageAnalyzer,
-ProjectDiscovery. Live layers use `@effect/platform` FileSystem; test
-layers swap in mock implementations.
+**Phase 2 approach:** Five Effect services: AgentDetection, CacheWriter,
+CacheReader, CoverageAnalyzer, ProjectDiscovery.
 
-**Why chosen:** Effect's dependency injection gives testable layers without
-mocking Node APIs. `@effect/platform` provides the FileSystem abstraction.
-The reporter and CLI compose different layer sets (ReporterLive vs CliLive)
-from the same service definitions.
+**Phase 5 approach (current):** Ten Effect services: DataStore, DataReader,
+EnvironmentDetector, ExecutorResolver, FormatSelector, DetailResolver,
+OutputRenderer, CoverageAnalyzer, ProjectDiscovery, HistoryTracker. Live
+layers use `@effect/platform` FileSystem and `@effect/sql-sqlite-node`;
+test layers swap in mock implementations.
+
+**Why expanded:** The output pipeline needed distinct stages
+(detect -> resolve -> select -> resolve detail -> render) to be
+individually testable. The data layer split (DataStore write vs DataReader
+read) enables different composition in different contexts (reporter writes,
+CLI/MCP reads).
 
 ### Decision 7: Scoped Effect.runPromise in Reporter (Phase 2)
 
@@ -132,14 +148,18 @@ from the same service definitions.
 construction. We need to use Effect services inside class methods.
 
 **Chosen approach:** Each lifecycle hook (`onTestRunEnd`) builds a scoped
-effect and runs it with `Effect.runPromise`, providing the `ReporterLive`
-layer inline. No `ManagedRuntime` needed.
+effect and runs it with `Effect.runPromise`, providing the
+`ReporterLive(dbPath)` layer inline. No `ManagedRuntime` needed for the
+reporter.
 
-**Why chosen:** The layer is lightweight (FileSystem + pure services), so
+**Why chosen:** The layer is lightweight (SQLite + pure services), so
 per-call construction is acceptable. Avoids `ManagedRuntime` lifecycle
 concerns (no resource leak, no disposal needed). For the plugin,
 `configureVitest` is async (Vitest awaits plugin hooks), so
 `Effect.runPromise` is also safe there.
+
+**Note:** The MCP server (Phase 5c) does use `ManagedRuntime` because it
+is a long-running process where per-call construction would be wasteful.
 
 ### Decision 8: CLI-First Overview (Phase 2)
 
@@ -147,7 +167,7 @@ concerns (no resource leak, no disposal needed). For the plugin,
 (in the reporter's `onInit` hook) or on-demand by a separate tool.
 
 **Chosen approach:** The CLI generates overview/status on-demand. The
-reporter writes test results and manifest; the CLI reads them plus does
+reporter writes test results to the database; the CLI reads them plus does
 its own project discovery when asked.
 
 **Why chosen:** Keeps the reporter lean. Overview generation requires
@@ -155,15 +175,16 @@ filesystem discovery (globbing for test files, reading source files) that
 would slow down every test run. On-demand generation is more appropriate
 for discovery data that changes infrequently.
 
-### Decision 9: Hybrid Console Strategy (Phase 2)
+### Decision 9: Hybrid Console Strategy (Phase 2, renamed post-Phase-5)
 
 **Context:** Vitest 4.1 added a built-in `agent` reporter. Our plugin
 originally stripped all console reporters and took over output entirely.
 
-**Chosen approach:** New `consoleStrategy` option:
+**Chosen approach:** New `strategy` option (originally `consoleStrategy`,
+renamed post-Phase-5 -- see Decision 27):
 
 - `"complement"` (default) -- layers on top of Vitest's built-in agent
-  reporter. Does not strip reporters. Writes JSON cache and manifest only.
+  reporter. Does not strip reporters. Writes to database only.
   Warns if `agent` reporter missing from chain
 - `"own"` -- strips built-in console reporters, uses our formatter, writes
   our own GFM. Phase 1 behavior
@@ -187,8 +208,8 @@ left to Vitest's built-in reporter.
 ### Decision 11: Cache Directory Resolution
 
 **Context:** The cache directory needs to work in multiple contexts:
-standalone reporter, plugin with Vite, CLI reading cached data, and
-consumer-specified paths.
+standalone reporter, plugin with Vite, CLI reading cached data, MCP
+server, and consumer-specified paths.
 
 **Chosen approach:** Three-priority resolution in `AgentPlugin`:
 
@@ -197,9 +218,8 @@ consumer-specified paths.
 3. `vite.cacheDir + "/vitest-agent-reporter"` (default, typically
    `node_modules/.vite/.../vitest-agent-reporter/`)
 
-CLI cache dir resolution checks common locations: `.vitest-agent-reporter/`
-in project root, then `node_modules/.vite/vitest-agent-reporter/`. Uses
-the first location containing a `manifest.json`.
+CLI and MCP cache dir resolution check common locations. The database
+file is `data.db` within the resolved cache directory.
 
 When using `AgentReporter` standalone (without the plugin), the default is
 `.vitest-agent-reporter` in the project root.
@@ -214,38 +234,32 @@ should maximize signal-to-noise ratio.
 - Single-line header with pass/fail counts and duration
 - No summary tables (counts are in the header)
 - No coverage totals table (only files below threshold with uncovered lines)
-- "Next steps" section with specific re-run commands
+- "Next steps" section with specific re-run commands (or MCP tools when
+  `mcp: true`)
 - Relative file paths throughout
-- All-pass output collapses to one line with cache file pointer
+- No redundant "All tests passed" line (header already conveys this)
+- No cache file pointer line (removed post-Phase-5; not useful to agents)
 
 ### Decision 13: History Always-On (Phase 3)
 
 **Context:** Failure history could be an opt-in feature (toggle in
-`AgentReporterOptions`) or always enabled alongside the existing report cache.
+`AgentReporterOptions`) or always enabled alongside the existing report
+cache.
 
 **Options considered:**
 
 1. **Always-on (Chosen):**
    - Pros: Zero configuration; agents always have classification data;
      consistent behavior across all consumer setups; simpler code paths
-   - Cons: Writes an additional file per project on every run
-   - Why chosen: History files are small (one JSON object per test, capped
-     at 10 runs). The write cost is negligible. An opt-in toggle adds API
-     surface without meaningful benefit -- agents that don't use history data
-     simply never read the history files
+   - Cons: Writes additional rows per test on every run
+   - Why chosen: History rows are small. The write cost is negligible.
+     An opt-in toggle adds API surface without meaningful benefit
 
 2. **Opt-in toggle:**
-   - Pros: Slightly reduces disk writes for users who don't need history
-   - Cons: Feature must be explicitly enabled to be useful; agents cannot
-     rely on history being present; adds `enableHistory?: boolean` to
-     `AgentReporterOptions`
-   - Why rejected: The opt-in overhead outweighs the marginal write savings.
-     Disk I/O for a small JSON file is not a meaningful performance concern
-     compared to a full test run
+   - Why rejected: The opt-in overhead outweighs the marginal write savings
 
-**Implementation:** `CacheWriter.writeHistory` is called unconditionally
-alongside `CacheWriter.writeReport` in `onTestRunEnd`. History files are
-always populated in `CacheManifestEntry.historyFile`.
+**Implementation:** `DataStore.writeHistory` is called unconditionally
+for each test case in `onTestRunEnd`.
 
 ### Decision 14: Vitest-Native Threshold Format (Phase 4)
 
@@ -254,23 +268,12 @@ across all metrics). Vitest supports a richer format with per-metric
 thresholds, per-glob patterns, negative numbers (relative thresholds),
 `100` shorthand, and `perFile` mode.
 
-**Phase 3 approach:** `coverageThreshold: number` -- a single minimum
-extracted via `extractCoverageThreshold()` from Vitest's config.
-
 **Phase 4 approach (current):** `coverageThresholds` accepts the full
 Vitest thresholds format (`Record<string, unknown>`). Parsed by
-`resolveThresholds()` into a typed `ResolvedThresholds` structure with
-`global` (MetricThresholds), `perFile` (boolean), and `patterns`
-(PatternThresholds[]). `extractCoverageThreshold()` removed entirely.
-
-**Why changed:** The single-number approach lost per-metric granularity.
-Agents benefit from knowing exactly which metric is below threshold and
-by how much. The Vitest-native format means users can copy their existing
-coverage config directly into our plugin options without translation.
+`resolveThresholds()` into a typed `ResolvedThresholds` structure.
 
 **Breaking change:** `coverageThreshold: number` replaced by
-`coverageThresholds: Record<string, unknown>`. `CoverageReport.threshold`
-(number) replaced by `CoverageReport.thresholds` (object).
+`coverageThresholds: Record<string, unknown>`.
 
 ### Decision 15: Three-Level Coverage Model (Phase 4)
 
@@ -280,82 +283,242 @@ serves one purpose but not both.
 
 **Chosen approach:** Three levels:
 
-1. **Thresholds** (`coverageThresholds`) -- enforced minimums. Same as
-   Vitest's `coverage.thresholds`. Violations are reported as failures
-2. **Targets** (`coverageTargets`) -- aspirational goals. Same format as
-   thresholds but informational only. Console output shows progress
-   toward targets in the yellow tier
-3. **Baselines** (`baselines.json`) -- auto-ratcheting high-water marks.
-   Updated automatically after each run. Advance toward targets but
-   never past them. Regressions below baselines are flagged
-
-**Why chosen:** Separating enforcement from aspiration lets teams set
-aggressive goals without breaking CI. Baselines provide a ratchet
-mechanism so coverage never goes backward without explicit acknowledgment.
-
-**Implementation:** Plugin disables Vitest's native `autoUpdate` when our
-targets are set (prevents double-ratcheting). Reporter reads baselines,
-computes updated values, writes them back. `autoUpdate` option (default
-true) controls whether baselines auto-advance.
+1. **Thresholds** (`coverageThresholds`) -- enforced minimums
+2. **Targets** (`coverageTargets`) -- aspirational goals
+3. **Baselines** (stored in SQLite `coverage_baselines` table) --
+   auto-ratcheting high-water marks
 
 ### Decision 16: Coverage Trend Tracking (Phase 4)
 
 **Context:** Point-in-time coverage data doesn't show whether coverage is
-improving or degrading over time. LLM agents need trajectory information
-to prioritize coverage work.
+improving or degrading over time.
 
 **Chosen approach:** Per-project trend tracking with 50-entry sliding
-window. Only recorded on full (non-scoped) test runs to avoid mixing
-partial and full coverage data. Target change detection via hash
-comparison resets trend history when targets change (old data is no
-longer comparable).
-
-**Options considered:**
-
-1. **50-entry sliding window (Chosen):**
-   - Pros: Bounded storage, sufficient history for trajectory analysis,
-     constant-space per project
-   - Cons: Loses older history
-   - Why chosen: 50 runs provides weeks of daily trend data without
-     unbounded growth
-
-2. **Unlimited history:**
-   - Pros: Complete record
-   - Cons: Unbounded file growth, slower reads
-   - Why rejected: Cache files should be lightweight and disposable
-
-**Why target hash comparison:** When targets change, historical deltas
-are no longer meaningful (the goalpost moved). Resetting provides a
-clean baseline for the new target regime rather than showing misleading
-"improvements" that are actually just threshold changes.
+window (now stored in SQLite `coverage_trends` table). Only recorded on
+full (non-scoped) test runs. Target change detection via hash comparison
+resets trend history when targets change.
 
 ### Decision 17: Tiered Console Output (Phase 4)
 
 **Context:** Phase 1-3 console output showed the same format regardless
-of run health. LLM agents with limited context windows benefit from
-adaptive verbosity -- minimal output when everything is fine, detailed
-output when action is needed.
+of run health.
 
 **Chosen approach:** Three tiers based on run health:
 
-- **Green** (all pass, targets met): one-line summary with cache pointer.
-  Minimal context consumption
-- **Yellow** (pass but below targets): shows improvements needed and
-  CLI hint for the `coverage` command. Moderate detail
-- **Red** (failures/threshold violations/regressions): full detail with
-  failed tests, errors, diffs, coverage gaps, and CLI hints for
-  `coverage` and `trends` commands. Maximum actionable information
+- **Green** (all pass, targets met): one-line summary
+- **Yellow** (pass but below targets): improvements needed + CLI hint
+- **Red** (failures/threshold violations/regressions): full detail +
+  CLI hints
 
-**Why chosen:** The green tier reduces noise for stable runs (the
-majority case). The yellow tier surfaces coverage work without
-overwhelming. The red tier provides everything needed to diagnose and
-fix issues. CLI command suggestions at yellow/red tiers guide agents to
-deeper analysis tools.
+**Phase 5 update:** Tiered output is now implemented in the markdown
+formatter (`package/src/formatters/markdown.ts`) and controlled by the
+DetailResolver service, which maps `(executor, runHealth)` to a
+`DetailLevel` enum.
 
-**Implementation:** Console formatter receives trend data and computes
-the tier from report state. Trend summary line added after the header
-when trend data is available. CLI command suggestions use detected
-package manager from `detect-pm.ts` for correct invocation syntax.
+### Decision 18: SQLite over JSON Files (Phase 5a)
+
+**Context:** Phase 2-4 stored all data in JSON files: per-project report
+files, history files, trends files, baselines file, and a manifest file.
+This created issues with concurrent access, atomicity, querying across
+projects, and file proliferation in monorepos.
+
+**Options considered:**
+
+1. **SQLite with normalized schema (Chosen):**
+   - Pros: ACID transactions, concurrent reads (WAL mode), efficient
+     queries across projects, relational integrity via foreign keys,
+     single file per cache directory, FTS5 for note search, migration-
+     based schema evolution
+   - Cons: Binary format (not human-readable), requires SQLite dependency
+   - Why chosen: The benefits of structured queries, relational integrity,
+     and single-file storage dramatically simplify the data layer
+
+2. **Keep JSON files:**
+   - Pros: Human-readable, no external dependencies
+   - Cons: No cross-project queries, no atomicity, file proliferation,
+     no FTS, manual file management in CacheWriter/CacheReader
+   - Why rejected: The growing number of file types (reports, history,
+     trends, baselines, manifest) created increasing complexity
+
+3. **Embedded key-value store (LevelDB, etc.):**
+   - Pros: Simple API, single file
+   - Cons: No relational queries, no SQL, custom migration story
+   - Why rejected: We need relational queries for cross-project analysis
+
+**Implementation:** 25-table normalized schema via `@effect/sql-sqlite-node`
+with `@effect/sql-sqlite-node` SqliteMigrator. WAL journal mode for
+concurrent reads. All composition layers (`ReporterLive`, `CliLive`,
+`McpLive`) are now functions of `dbPath` that construct the SqliteClient
+layer inline.
+
+### Decision 19: tRPC for MCP Routing (Phase 5c)
+
+**Context:** The MCP server needs to expose 16 tools. Each tool needs
+input validation, type-safe context access, and testable procedure logic.
+
+**Options considered:**
+
+1. **tRPC router (Chosen):**
+   - Pros: Type-safe procedures, `createCallerFactory` for testing without
+     MCP transport, middleware support, input validation via Zod schemas,
+     clean separation of routing from transport
+   - Cons: Adds tRPC and Zod as dependencies
+   - Why chosen: The `createCallerFactory` pattern enables unit testing
+     of tool procedures without starting the MCP server
+
+2. **Direct MCP SDK handlers:**
+   - Pros: Fewer dependencies, simpler
+   - Cons: No type-safe context, harder to test without transport
+   - Why rejected: Testing would require mocking the MCP SDK, which is
+     more complex than tRPC's built-in caller factory
+
+3. **Effect-native routing:**
+   - Pros: Stay in the Effect ecosystem
+   - Cons: No established MCP integration pattern
+   - Why rejected: Effect doesn't have an MCP SDK equivalent; bridging
+     would add more complexity than tRPC
+
+**Implementation:** tRPC context carries a `ManagedRuntime` for Effect
+service access. Each procedure calls `ctx.runtime.runPromise(effect)` to
+execute Effect programs. Zod is used only for MCP tool input schemas.
+
+### Decision 20: File-Based Claude Code Plugin (Phase 5d)
+
+**Context:** Claude Code supports file-based plugins via a `.claude-plugin/`
+directory with hooks, skills, and commands. The plugin needs to integrate
+the MCP server and provide test-specific workflows.
+
+**Chosen approach:** A `plugin/` directory (NOT a pnpm workspace) containing:
+
+- `.claude-plugin/plugin.json` manifest for plugin identity
+- `.mcp.json` for automatic MCP server registration
+- Shell-based hooks for session startup and post-test-run detection
+- Markdown skill files for TDD, debugging, and configuration workflows
+- Markdown command files for setup and configure operations
+
+**Why file-based:** Claude Code's plugin system discovers plugins via
+filesystem conventions. The hooks use shell scripts for broad compatibility.
+Skills and commands are markdown files that Claude Code reads directly --
+no compilation or runtime needed.
+
+**Why NOT a workspace:** The plugin directory contains only static files
+(JSON, shell scripts, markdown). It has no dependencies, no build step,
+and no tests. Making it a pnpm workspace would add unnecessary
+configuration overhead.
+
+### Decision 21: spawnSync for run_tests (Phase 5c)
+
+**Context:** The `run_tests` MCP tool needs to execute `vitest run` and
+return results. The MCP server is a long-running stdio process.
+
+**Chosen approach:** `spawnSync` with configurable timeout (default 120s)
+to execute `npx vitest run` with optional file and project filters.
+
+**Why synchronous:** MCP tool handlers are already async (tRPC procedures
+return Promises). Using `spawnSync` within the handler keeps the
+implementation simple -- the tool blocks until Vitest completes, then
+returns the result. The timeout prevents runaway test runs from blocking
+the MCP server indefinitely.
+
+**Trade-off:** The MCP server cannot process other tool requests while
+`run_tests` is executing. This is acceptable because agents typically
+wait for test results before proceeding.
+
+### Decision 22: Output Pipeline Architecture (Phase 5b)
+
+**Context:** Phase 1-4 had formatting logic scattered across the reporter,
+plugin, and utility files. The format was determined by a combination of
+`consoleOutput`, `consoleStrategy`, and environment detection.
+
+**Chosen approach:** Five chained Effect services forming a pipeline:
+
+1. **EnvironmentDetector** -- fact-finding: what environment are we in?
+2. **ExecutorResolver** -- mapping: what role does this environment imply?
+3. **FormatSelector** -- selection: what output format should we use?
+4. **DetailResolver** -- calibration: how much detail should we show?
+5. **OutputRenderer** -- execution: render reports using selected formatter
+
+**Why a pipeline:** Each stage has a single responsibility and is
+independently testable. The pipeline can be short-circuited (e.g., explicit
+`--format` flag bypasses FormatSelector's automatic selection). New
+formatters can be added without modifying the pipeline services.
+
+### Decision 23: Normalized Project Identity (Phase 5a)
+
+**Context:** Vitest project names can include colons for sub-projects
+(e.g., `"my-app:unit"`, `"my-app:e2e"`). Phase 1-4 treated these as
+opaque strings.
+
+**Chosen approach:** `splitProject()` utility separates the project name
+at the first colon into `project` and `subProject` fields. Both fields
+are stored in the database and used for querying. The `ProjectIdentity`
+interface (`{ project: string, subProject: string | null }`) is used
+throughout the data layer.
+
+**Why split:** Normalized project/sub-project fields enable queries like
+"all sub-projects of my-app" or "all unit test results across projects"
+without string parsing at query time.
+
+### Decision 24: Effect-Based Structured Logging (post-Phase-5)
+
+**Context:** The previous `debug: boolean` option was too coarse and
+produced unstructured output. Debugging data layer issues required
+more granular, machine-readable logging.
+
+**Chosen approach:** `LoggerLive` layer factory using
+`Logger.structuredLogger` for NDJSON format. `logLevel` option with
+5 levels (`Debug`, `Info`, `Warning`, `Error`, `None`). Optional
+`logFile` for file output via `Logger.zip`. Env var fallback
+(`VITEST_REPORTER_LOG_LEVEL`, `VITEST_REPORTER_LOG_FILE`).
+Case-insensitive level names via `resolveLogLevel` helper.
+
+**Why chosen:** Effect's native `Logger` integrates directly with
+`Effect.logDebug` calls already used throughout the service layer.
+NDJSON is parseable by log aggregation tools. The env var fallback
+enables logging without config changes (useful for CI debugging).
+
+### Decision 25: Per-Project Reporter Instances (post-Phase-5)
+
+**Context:** In multi-project Vitest configs, a single reporter
+instance receives all test modules from all projects. This caused
+duplicate output and duplicate coverage processing.
+
+**Chosen approach:** Plugin passes the project name from the
+`configureVitest` context as `projectFilter` on AgentReporter. Each
+reporter instance filters `testModules` to only modules matching
+its project. Coverage dedup: only the first project alphabetically
+processes global coverage data.
+
+**Why chosen:** Vitest calls `configureVitest` per project, giving
+each project its own reporter instance. Filtering at the reporter
+level is simpler than coordinating between instances. Alphabetical
+coverage dedup is deterministic and requires no shared state.
+
+### Decision 26: Native Coverage Table Suppression (post-Phase-5)
+
+**Context:** Vitest prints a large text coverage table to the console
+by default. This duplicates the reporter's own compact coverage output
+and wastes context window tokens for LLM agents.
+
+**Chosen approach:** In agent/own mode, the plugin sets
+`coverage.reporter = []` to suppress Vitest's built-in text table.
+Our reporter produces its own compact coverage gaps section.
+
+**Why chosen:** Setting `coverage.reporter` to empty array is the
+cleanest way to suppress the table without affecting coverage data
+collection. The table is redundant with our output.
+
+### Decision 27: `consoleStrategy` Renamed to `strategy` (post-Phase-5)
+
+**Context:** The `consoleStrategy` option name was verbose and the
+`console` prefix was redundant given the plugin context.
+
+**Chosen approach:** Renamed to `strategy` on `AgentPluginOptions`.
+Same values (`"own" | "complement"`, default `"complement"`).
+
+**Why chosen:** Shorter, cleaner API. The option controls the
+overall strategy for how the plugin interacts with Vitest's reporter
+chain, not just console behavior.
 
 ---
 
@@ -363,11 +526,11 @@ package manager from `detect-pm.ts` for correct invocation syntax.
 
 ### Pattern: Manifest-First Read
 
-- **Where used:** Cache directory output, CLI commands
-- **Why used:** Agents read one file to discover all project states, then
-  selectively read only failing project caches
-- **Implementation:** `manifest.json` maps project names to cache file
-  paths, last run timestamps, and pass/fail status
+- **Where used:** DataReader (backward-compatible manifest assembly)
+- **Why used:** Agents and CLI commands can quickly assess project states
+  before fetching detailed data
+- **Implementation:** `DataReader.getManifest()` assembles a
+  `CacheManifest` from the latest test run per project in the database
 
 ### Pattern: Range Compression
 
@@ -383,7 +546,7 @@ package manager from `detect-pm.ts` for correct invocation syntax.
 - **Why used:** Group test results by `TestProject.name` during the run,
   then emit per-project outputs
 - **Implementation:** `Map<string, VitestTestModule[]>` keyed by
-  `testModule.project.name`
+  `testModule.project.name`, then `splitProject()` for database storage
 
 ### Pattern: Duck-Typed External APIs
 
@@ -394,12 +557,12 @@ package manager from `detect-pm.ts` for correct invocation syntax.
 
 ### Pattern: Effect Service / Layer Separation
 
-- **Where used:** All Effect services (Phase 2)
+- **Where used:** All Effect services (Phase 2+)
 - **Why used:** Clean separation between service interface (Context.Tag)
   and implementation (Layer). Enables swapping live I/O for test mocks
 - **Implementation:** Service tags in `package/src/services/`, live and
-  test layers in `package/src/layers/`, merged composition layers (`ReporterLive`,
-  `CliLive`)
+  test layers in `package/src/layers/`, merged composition layers
+  (`ReporterLive`, `CliLive`, `McpLive`, `OutputPipelineLive`)
 
 ### Pattern: Scoped Effect.runPromise
 
@@ -409,14 +572,33 @@ package manager from `detect-pm.ts` for correct invocation syntax.
 - **Implementation:** Each hook builds a self-contained effect, provides
   the layer inline, and runs via `Effect.runPromise`
 
+### Pattern: ManagedRuntime for Long-Lived Processes
+
+- **Where used:** MCP server (Phase 5c)
+- **Why used:** The MCP server is a long-running stdio process where
+  per-call layer construction would be wasteful
+- **Implementation:** `ManagedRuntime.make(McpLive(dbPath))` creates a
+  shared runtime. tRPC context carries the runtime so procedures call
+  `ctx.runtime.runPromise(effect)`. Database connection is held for the
+  process lifetime
+
 ### Pattern: Hash-Based Change Detection
 
 - **Where used:** Coverage trend tracking (target change detection)
 - **Why used:** Detect when coverage targets have changed between runs,
   invalidating historical trend data
 - **Implementation:** `hashTargets()` serializes `ResolvedThresholds` to
-  JSON string, stored as `targetsHash` on each `TrendEntry`. When the
-  hash differs from the last entry, trend history is cleared
+  JSON string, stored as `targetsHash` on each trend entry. When the
+  hash differs, trend history is reset
+
+### Pattern: Pipeline Architecture
+
+- **Where used:** Output pipeline (Phase 5b)
+- **Why used:** Each stage of output determination has a single
+  responsibility and is independently testable
+- **Implementation:** Five chained services: detect -> resolve executor ->
+  select format -> resolve detail -> render. Explicit overrides can
+  short-circuit automatic selection at any stage
 
 ---
 
@@ -436,13 +618,14 @@ package manager from `detect-pm.ts` for correct invocation syntax.
 - **Why it's worth it:** Simple pattern; coverage and results merge in
   one output pass
 
-### Trade-off: Per-Call Layer Construction
+### Trade-off: Per-Call Layer Construction (Reporter)
 
 - **What we gained:** No ManagedRuntime lifecycle concerns, no resource
   leaks, no disposal needed
 - **What we sacrificed:** Layer constructed on each `onTestRunEnd` call
-- **Why it's acceptable:** The layer is lightweight (FileSystem + pure
-  services). Construction cost is negligible compared to test run duration
+- **Why it's acceptable:** The layer is lightweight. Construction cost is
+  negligible compared to test run duration. SQLite connections are fast
+  to establish
 
 ### Trade-off: Convention-Based Source Mapping
 
@@ -451,4 +634,27 @@ package manager from `detect-pm.ts` for correct invocation syntax.
 - **What we sacrificed:** Cannot detect tests that cover source files
   with non-matching names
 - **Why it's acceptable:** Convention covers the vast majority of cases.
-  Import analysis remains a potential future enhancement
+  Import analysis remains a potential future enhancement. The
+  `source_test_map` table supports multiple mapping types for future
+  expansion
+
+### Trade-off: Zod Re-introduction for tRPC (Phase 5c)
+
+- **What we gained:** tRPC integration with type-safe procedures and
+  testable caller factory
+- **What we sacrificed:** Added Zod as a runtime dependency alongside
+  Effect Schema
+- **Why it's acceptable:** Zod is scoped to MCP tool input schemas only.
+  Effect Schema remains the source of truth for all domain data structures.
+  tRPC requires Zod for input validation; there is no Effect Schema adapter
+  for tRPC procedures
+
+### Trade-off: SQLite Binary Format
+
+- **What we gained:** ACID transactions, concurrent reads, efficient
+  queries, relational integrity, FTS5, migration-based schema evolution
+- **What we sacrificed:** Human-readable cache files (JSON)
+- **Why it's acceptable:** The CLI and MCP tools provide all the access
+  patterns agents need. Humans who need to inspect data can use
+  `sqlite3` CLI or the `doctor` command. The benefits of relational
+  storage far outweigh readability concerns

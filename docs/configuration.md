@@ -16,6 +16,7 @@ export default defineConfig({
       mode: "auto",
       reporter: {
         coverageThresholds: { lines: 80, branches: 80 },
+        coverageTargets: { lines: 95, branches: 90 },
         coverageConsoleLimit: 5,
       },
     }),
@@ -29,23 +30,63 @@ export default defineConfig({
 | --- | --- |
 | `"auto"` (default) | Detect environment from env vars -- agent, CI, or human |
 | `"agent"` | Force agent mode: suppress built-in reporters, show markdown |
-| `"silent"` | Force silent mode: cache/JSON only, no console output |
+| `"silent"` | Force silent mode: database only, no console output |
 
 When `mode` is `"auto"`, the plugin checks environment variables to determine
 the runtime context. See [Agent Detection](#agent-detection) for the full
 list.
 
-### `consoleStrategy`
+### `strategy`
 
 | Value | Behavior |
 | --- | --- |
-| `"complement"` (default) | Layer on Vitest's built-in `agent` reporter. Adds JSON cache and manifest only. Does not strip any reporters from the chain. |
-| `"own"` | Take over console output entirely. Strips built-in console reporters (including `agent`), uses this reporter's markdown formatter, and writes its own GFM. |
+| `"complement"` (default) | Layer on top of Vitest's built-in reporters; does not strip console reporters |
+| `"own"` | Strip built-in console reporters and take over console output entirely |
+
+Controls how `AgentPlugin` interacts with existing reporters in the chain.
+`"complement"` is additive -- it keeps Vitest's built-in reporters and adds
+database persistence. `"own"` removes console reporters and uses the agent
+formatter exclusively (Phase 1 behavior).
+
+This option was previously named `consoleStrategy`. The old name is still
+accepted for backward compatibility and mapped internally.
+
+### `format`
+
+| Value | Behavior |
+| --- | --- |
+| `"markdown"` | Structured markdown output (default for agents) |
+| `"json"` | JSON output |
+| `"vitest-bypass"` | Let Vitest's built-in reporters handle console output |
+| `"silent"` | No console output |
+
+When not set, the format is automatically selected based on the detected
+environment and executor.
+
+### `logLevel`
+
+Log level for Effect runtime logging. Accepts `"debug"`, `"info"`,
+`"warn"`, `"error"`, or `"none"`. Case-insensitive. When set to `"debug"`,
+the reporter emits detailed logs for each lifecycle hook and Effect service
+call. Defaults to `"info"`.
+
+### `logFile`
+
+Path to a log file. When set, Effect runtime log output is written to this
+file instead of stderr. Useful for capturing debug output without polluting
+the terminal.
+
+### `mcp`
+
+When `true`, the "Next steps" section of console output includes a hint
+to use MCP tools (`test_history`, `test_coverage`, `test_trends`) for
+deeper analysis. Defaults to `false`. Set automatically when the Claude
+Code plugin is active.
 
 ### `reporter`
 
 Nested reporter options passed through to `AgentReporter`. The plugin manages
-`consoleOutput` and `githubActions` automatically based on environment
+console output and GitHub Actions detection automatically based on environment
 detection, so those fields are not available through the plugin interface.
 
 | Option | Type | Default | Description |
@@ -55,7 +96,7 @@ detection, so those fields are not available through the plugin interface.
 | `coverageTargets` | `object` | -- | Aspirational coverage targets (same format as thresholds) |
 | `autoUpdate` | `boolean` | `true` when targets set | Auto-ratchet baselines when coverage improves |
 | `coverageConsoleLimit` | `number` | `10` | Max low-coverage files shown in console |
-| `omitPassingTests` | `boolean` | `true` | Exclude passing tests from JSON reports |
+| `omitPassingTests` | `boolean` | `true` | Exclude passing tests from reports |
 | `includeBareZero` | `boolean` | `false` | Include files where all four metrics are 0% |
 | `githubSummaryFile` | `string` | `GITHUB_STEP_SUMMARY` env var | Override the GFM output file path |
 
@@ -78,6 +119,8 @@ export default defineConfig({
         coverageThresholds: { lines: 80, branches: 80 },
         coverageConsoleLimit: 10,
         includeBareZero: false,
+        format: "markdown",
+        detail: "standard",
         githubActions: false,
         githubSummaryFile: undefined,
       }),
@@ -88,16 +131,48 @@ export default defineConfig({
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `cacheDir` | `string` | `".vitest-agent-reporter"` | Directory for JSON cache files |
+| `cacheDir` | `string` | `".vitest-agent-reporter"` | Directory for the SQLite database (`data.db`) |
 | `consoleOutput` | `"failures"` `"full"` `"silent"` | `"failures"` | Console output verbosity |
-| `omitPassingTests` | `boolean` | `true` | Exclude passing tests from JSON reports |
+| `omitPassingTests` | `boolean` | `true` | Exclude passing tests from reports |
 | `coverageThresholds` | `object` | `{}` | Vitest-native threshold format (see below) |
 | `coverageTargets` | `object` | -- | Aspirational coverage targets (same format) |
 | `autoUpdate` | `boolean` | `true` when targets set | Auto-ratchet baselines when coverage improves |
 | `coverageConsoleLimit` | `number` | `10` | Max low-coverage files shown in console |
 | `includeBareZero` | `boolean` | `false` | Include files where all four metrics are 0% |
+| `format` | `OutputFormat` | auto-detect | Output format: `"markdown"`, `"json"`, `"vitest-bypass"`, `"silent"` |
+| `detail` | `DetailLevel` | auto-detect | Detail level: `"minimal"`, `"neutral"`, `"standard"`, `"verbose"` |
 | `githubActions` | `boolean` | auto-detect | Force GFM output on/off |
 | `githubSummaryFile` | `string` | `GITHUB_STEP_SUMMARY` env var | Override the GFM output file path |
+| `logLevel` | `string` | `"info"` | Effect log level: `"debug"`, `"info"`, `"warn"`, `"error"`, `"none"` |
+| `logFile` | `string` | -- | Path to write log output (defaults to stderr) |
+| `mcp` | `boolean` | `false` | Show MCP tool hints in "Next steps" output |
+| `projectFilter` | `string` | -- | Glob pattern to filter which projects are included in output |
+
+### `format` (OutputFormat)
+
+Controls the output format for console output:
+
+| Value | Behavior |
+| --- | --- |
+| `"markdown"` | Structured markdown (default for agent environments) |
+| `"json"` | JSON output |
+| `"vitest-bypass"` | Defer to Vitest's built-in reporters |
+| `"silent"` | No console output |
+
+### `detail` (DetailLevel)
+
+Controls the verbosity of console output:
+
+| Value | Behavior |
+| --- | --- |
+| `"minimal"` | One-line summary (used for green-tier all-pass runs) |
+| `"neutral"` | Summary with coverage hints (used for yellow-tier below-target runs) |
+| `"standard"` | Full detail with errors and diffs (used for red-tier failures) |
+| `"verbose"` | Maximum detail including passing tests |
+
+When not set, the detail level is resolved automatically based on the
+executor (agent, human, CI) and run health (all pass, below targets,
+failures).
 
 ## Cache Directory Resolution
 
@@ -106,28 +181,25 @@ When using `AgentPlugin`, the cache directory is resolved with this priority:
 1. **Explicit option** -- `reporter.cacheDir` in plugin options
 2. **Vitest outputFile** -- `outputFile['vitest-agent-reporter']` in Vitest
    config
-3. **Vite cacheDir** -- `node_modules/.cache` (Vite default) +
+3. **Vite cacheDir** -- `node_modules/.vite` (Vite default) +
    `/vitest-agent-reporter`
 
 When using `AgentReporter` directly, the `cacheDir` option defaults to
 `".vitest-agent-reporter"` relative to the working directory.
 
-The plugin default places cache files alongside Vitest's own cache:
+The cache directory contains the SQLite database:
 
 ```text
-node_modules/.cache/
-  vitest/                    # Vitest's own cache
-  vitest-agent-reporter/     # reporter cache
-    manifest.json
-    reports/
-      default.json
+node_modules/.vite/
+  vitest-agent-reporter/
+    data.db                # SQLite database with all test data
 ```
 
 ## Coverage Thresholds
 
 The `coverageThresholds` option uses Vitest's native threshold format. Files
 with any metric below their applicable threshold appear in the "Coverage gaps"
-section of console output and JSON reports.
+section of console output and reports.
 
 ```typescript
 AgentPlugin({
@@ -189,8 +261,8 @@ per-glob patterns are supported.
 
 When `coverageTargets` is set, the reporter automatically tracks a
 high-water mark (baseline) for each metric. When coverage improves, the
-baseline ratchets up so it never regresses. Baselines are stored in
-`{cacheDir}/baselines.json`.
+baseline ratchets up so it never regresses. Baselines are stored in the
+SQLite database.
 
 Set `autoUpdate: false` to disable auto-ratcheting:
 
@@ -206,8 +278,8 @@ AgentPlugin({
 ## Coverage Trends
 
 The reporter records a coverage trend entry on each full test run. Trends
-are stored per project at `{cacheDir}/trends/{project}.trends.json` with a
-50-entry sliding window.
+are stored per project in the SQLite database with a 50-entry sliding
+window.
 
 Console output uses a three-tier system based on coverage state:
 
@@ -240,7 +312,7 @@ listings.
 
 ### `"silent"`
 
-No console output. JSON cache files and manifest are still written. GFM
+No console output. Data is still written to the SQLite database. GFM
 output is still produced when in GitHub Actions.
 
 This is the mode used automatically when the plugin detects a human
@@ -261,7 +333,7 @@ AgentPlugin({ mode: "silent" })
 This is useful for:
 
 - **Testing the reporter** -- force agent mode to see markdown output
-- **CI pipelines** -- force silent mode when you only want JSON cache
+- **CI pipelines** -- force silent mode when you only want database persistence
 - **Custom tooling** -- agents not yet in the detection list
 
 ## Agent Detection
