@@ -3,8 +3,7 @@
 	"changelog": [
 		"@savvy-web/changesets/changelog",
 		{
-			"repo": "spencerbeggs/vitest-agent-reporter",
-			"versionFiles": [{ "glob": "plugin/.claude-plugin/plugin.json", "paths": ["$.version"] }]
+			"repo": "spencerbeggs/vitest-agent-reporter"
 		}
 	],
 	"commit": false,
