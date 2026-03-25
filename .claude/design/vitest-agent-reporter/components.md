@@ -3,9 +3,9 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-03-23
-last-synced: 2026-03-23
-post-phase5-sync: 2026-03-23
+updated: 2026-03-25
+last-synced: 2026-03-25
+post-phase5-sync: 2026-03-25
 completeness: 95
 related:
   - vitest-agent-reporter/architecture.md
@@ -57,6 +57,8 @@ baselines/trends, and output rendering.
 - Classify tests via `HistoryTracker.classify(project, subProject, outcomes,
   timestamp)`, attach resulting classifications to `TestReport.classification`
   fields
+- Write convention-based source-to-test mappings via
+  `DataStore.writeSourceMap()` for each test module in `onTestRunEnd`
 - Write per-test history rows via `DataStore.writeHistory()`
 - Read existing baselines via `DataReader.getBaselines()`, compute updated
   baselines after coverage processing, write via `DataStore.writeBaselines()`
@@ -208,10 +210,12 @@ implementations use mock state containers.
 - **DataReader** (`package/src/services/DataReader.ts`) -- reads test data
   from SQLite. Provides `getLatestRun`, `getRunsByProject`, `getHistory`,
   `getBaselines`, `getTrends`, `getFlaky`, `getPersistentFailures`,
-  `getFileCoverage`, `getTestsForFile`, `getErrors`, `getNotes`,
-  `getNoteById`, `searchNotes`, `getManifest`, `getSettings` effects.
-  Returns `Option.none()` for missing data. Shared between reporter,
-  CLI, and MCP server. Replaces CacheReader from Phase 2-4
+  `getFileCoverage`, `getCoverage`, `getTestsForFile`, `getErrors`,
+  `getNotes`, `getNoteById`, `searchNotes`, `getManifest`, `getSettings`,
+  `getLatestSettings`, `listTests`, `listModules`, `listSuites`,
+  `listSettings` effects. Returns `Option.none()` for missing data.
+  Shared between reporter, CLI, and MCP server. Replaces CacheReader
+  from Phase 2-4
 - **EnvironmentDetector** (`package/src/services/EnvironmentDetector.ts`) --
   wraps `std-env` for four-environment detection. Provides `detect()`,
   `isAgent`, and `agentName` effects. Returns `Environment` type:
@@ -725,6 +729,8 @@ database. Replaces CacheReader from Phase 2-4.
 - `getPersistentFailures(project, subProject)` -- returns persistent
   failure records
 - `getFileCoverage(runId)` -- returns per-file coverage
+- `getCoverage(project, subProject)` -- returns coverage report from
+  the latest run for a project (used by MCP `test_coverage` tool)
 - `getTestsForFile(filePath)` -- returns test module paths covering a
   source file
 - `getErrors(project, subProject, errorName?)` -- returns test errors
@@ -734,11 +740,23 @@ database. Replaces CacheReader from Phase 2-4.
 - `searchNotes(query)` -- full-text search via FTS5
 - `getManifest()` -- returns `Option<CacheManifest>` (assembled from DB)
 - `getSettings(hash)` -- returns `Option<SettingsRow>`
+- `getLatestSettings()` -- returns `Option<SettingsRow>` for the most
+  recent settings snapshot (used by MCP `configure` tool when no hash
+  is specified)
+- `listTests(project?, subProject?, state?, limit?)` -- returns
+  `TestListEntry[]` for test case discovery
+- `listModules(project?, subProject?, state?, limit?)` -- returns
+  `ModuleListEntry[]` for test module discovery
+- `listSuites(project?, subProject?, limit?)` -- returns
+  `SuiteListEntry[]` for test suite discovery
+- `listSettings(limit?)` -- returns `SettingsListEntry[]` for settings
+  snapshot discovery
 
 **Key output types:**
 
 `ProjectRunSummary`, `FlakyTest`, `PersistentFailure`, `TestError`,
-`NoteRow`, `SettingsRow` -- all defined in `DataReader.ts`.
+`NoteRow`, `SettingsRow`, `TestListEntry`, `ModuleListEntry`,
+`SuiteListEntry`, `SettingsListEntry` -- all defined in `DataReader.ts`.
 
 **Dependencies:**
 
@@ -834,7 +852,7 @@ OutputRenderer.render(reports, format, context)
 
 **Status:** COMPLETE (Phase 5c)
 
-**Purpose:** Model Context Protocol server providing 16 tools for agent
+**Purpose:** Model Context Protocol server providing 21 tools for agent
 integration. Uses `@modelcontextprotocol/sdk` with stdio transport and
 tRPC for routing.
 
@@ -845,7 +863,7 @@ creates `ManagedRuntime` with `McpLive(dbPath)`, starts stdio transport.
 
 - `context.ts` -- tRPC context definition with `ManagedRuntime` carrying
   DataReader, DataStore, ProjectDiscovery, OutputRenderer services
-- `router.ts` -- tRPC router aggregating all 16 tool procedures
+- `router.ts` -- tRPC router aggregating all 21 tool procedures
 - `server.ts` -- `startMcpServer()` registers all tools with the MCP SDK
 - `tools/status.ts` -- `test_status` tool
 - `tools/overview.ts` -- `test_overview` tool
@@ -860,15 +878,20 @@ creates `ManagedRuntime` with `McpLive(dbPath)`, starts stdio transport.
 - `tools/configure.ts` -- `configure` tool (view captured settings)
 - `tools/notes.ts` -- `note_create`, `note_list`, `note_get`,
   `note_update`, `note_delete`, `note_search` tools
+- `tools/discovery.ts` -- `project_list`, `test_list`, `module_list`,
+  `suite_list`, `settings_list` tools
 
 **Tool categories:**
 
 - **Read-only query tools** (return markdown): `test_status`,
   `test_overview`, `test_coverage`, `test_history`, `test_trends`,
   `test_errors`, `test_for_file`, `cache_health`, `configure`
-- **Mutation tools** (return JSON): `run_tests`
-- **Note CRUD tools** (return JSON): `note_create`, `note_list`,
-  `note_get`, `note_update`, `note_delete`, `note_search`
+- **Discovery tools** (return markdown): `project_list`, `test_list`,
+  `module_list`, `suite_list`, `settings_list`
+- **Mutation tools** (return text): `run_tests`
+- **Note CRUD tools** (return markdown for list/search, JSON for
+  create/get/update/delete): `note_create`, `note_list`, `note_get`,
+  `note_update`, `note_delete`, `note_search`
 
 **Dependencies:**
 
@@ -886,7 +909,7 @@ creates `ManagedRuntime` with `McpLive(dbPath)`, starts stdio transport.
 
 **Status:** COMPLETE (Phase 5c)
 
-**Purpose:** tRPC router aggregating all MCP tool procedures. The context
+**Purpose:** tRPC router aggregating all 21 MCP tool procedures. The context
 carries a `ManagedRuntime` for Effect service access, allowing tRPC
 procedures to call Effect services via `ctx.runtime.runPromise(effect)`.
 

@@ -3,9 +3,9 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-03-23
-last-synced: 2026-03-23
-post-phase5-sync: 2026-03-23
+updated: 2026-03-25
+last-synced: 2026-03-25
+post-phase5-sync: 2026-03-25
 completeness: 95
 related:
   - vitest-agent-reporter/architecture.md
@@ -60,7 +60,7 @@ package/
     mcp/
       index.ts            -- MCP server entry point (resolves DB, starts stdio)
       context.ts          -- tRPC context with ManagedRuntime
-      router.ts           -- tRPC router aggregating 16 tool procedures
+      router.ts           -- tRPC router aggregating 21 tool procedures
       server.ts           -- startMcpServer() registering tools with MCP SDK
       tools/
         status.ts         -- test_status tool
@@ -74,6 +74,8 @@ package/
         cache-health.ts   -- cache_health tool
         configure.ts      -- configure tool (view captured settings)
         notes.ts          -- note CRUD (create/list/get/update/delete/search)
+        discovery.ts      -- project_list, test_list, module_list,
+                             suite_list, settings_list tools
 
     services/
       DataStore.ts        -- Context.Tag: write to SQLite
@@ -206,6 +208,7 @@ package/src/
     router.test.ts          -- tRPC router integration tests
     tools/
       run-tests.test.ts     -- run_tests tool (spawnSync)
+      discovery.test.ts     -- discovery tools (project/test/module/suite/settings)
   migrations/
     0001_initial.test.ts    -- migration schema verification
   schemas/
@@ -237,7 +240,7 @@ package/src/
     capture-settings.test.ts -- settings capture + hash computation
 ```
 
-**50 test files, 499 tests total.** All coverage metrics (statements,
+**51 test files, 547 tests total.** All coverage metrics (statements,
 branches, functions, lines) are above 80%.
 
 ---
@@ -557,6 +560,41 @@ interface PersistentFailure {
   lastErrorMessage: string | null;
 }
 
+// DataReader discovery types (feat/upgrade)
+interface TestListEntry {
+  fullName: string;
+  state: "passed" | "failed" | "skipped" | "pending";
+  modulePath: string;
+  duration: number | null;
+  project: string;
+  subProject: string | null;
+}
+
+interface ModuleListEntry {
+  filePath: string;
+  state: "passed" | "failed" | "skipped" | "pending";
+  duration: number | null;
+  testCount: number;
+  project: string;
+  subProject: string | null;
+}
+
+interface SuiteListEntry {
+  name: string;
+  fullName: string;
+  state: "passed" | "failed" | "skipped" | "pending";
+  modulePath: string;
+  project: string;
+  subProject: string | null;
+}
+
+interface SettingsListEntry {
+  hash: string;
+  createdAt: string;
+  pool: string | null;
+  coverageProvider: string | null;
+}
+
 // Common schema literals (Phase 5)
 type Environment = "agent-shell" | "terminal" | "ci-github" | "ci-generic";
 type Executor = "human" | "agent" | "ci";
@@ -717,6 +755,7 @@ onTestRunEnd(testModules, unhandledErrors, reason)
   |     +-- DataStore.writeErrors(runId, errors)
   |     +-- DataStore.writeCoverage(runId, coverage)
   |     +-- DataStore.writeHistory(...) per test
+  |     +-- DataStore.writeSourceMap() per module (convention-based)
   |     +-- computeTrend() on full (non-scoped) runs
   |     |     +-- DataReader.getTrends(project, subProject)
   |     |     +-- DataStore.writeTrends(project, subProject, runId, entry)
@@ -879,7 +918,7 @@ GFM content is appended (not overwritten) to support multiple steps.
 ### Integration 4: Consumer LLM Agents
 
 **MCP pattern (preferred):** Agents connect via MCP stdio transport and
-use the 16 tools for structured data access.
+use the 21 tools for structured data access.
 
 **CLI pattern:** Run `vitest-agent-reporter status` for quick overview,
 `vitest-agent-reporter overview` for test landscape, or

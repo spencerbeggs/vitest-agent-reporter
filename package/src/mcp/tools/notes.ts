@@ -60,7 +60,21 @@ export const noteList = publicProcedure
 		return ctx.runtime.runPromise(
 			Effect.gen(function* () {
 				const reader = yield* DataReader;
-				return yield* reader.getNotes(input.scope, input.project, input.testFullName);
+				const notes = yield* reader.getNotes(input.scope, input.project, input.testFullName);
+
+				if (notes.length === 0) {
+					return "No notes found.";
+				}
+
+				const lines: string[] = ["## Notes", ""];
+				lines.push("| ID | Title | Scope | Project | Created |");
+				lines.push("| --- | --- | --- | --- | --- |");
+				for (const note of notes) {
+					const project = note.project ?? "\u2014";
+					const created = note.createdAt.split("T")[0];
+					lines.push(`| ${note.id} | ${note.title} | ${note.scope} | ${project} | ${created} |`);
+				}
+				return lines.join("\n");
 			}),
 		);
 	});
@@ -142,7 +156,21 @@ export const noteSearch = publicProcedure
 		return ctx.runtime.runPromise(
 			Effect.gen(function* () {
 				const reader = yield* DataReader;
-				return yield* reader.searchNotes(input.query);
+				const notes = yield* reader.searchNotes(input.query);
+
+				if (notes.length === 0) {
+					return "No notes found.";
+				}
+
+				const lines: string[] = [`## Notes matching "${input.query}"`, ""];
+				lines.push("| ID | Title | Scope | Project | Created |");
+				lines.push("| --- | --- | --- | --- | --- |");
+				for (const note of notes) {
+					const project = note.project ?? "\u2014";
+					const created = note.createdAt.split("T")[0];
+					lines.push(`| ${note.id} | ${note.title} | ${note.scope} | ${project} | ${created} |`);
+				}
+				return lines.join("\n");
 			}),
 		);
 	});

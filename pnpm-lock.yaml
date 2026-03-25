@@ -48,8 +48,8 @@ importers:
         specifier: ^0.4.3
         version: 0.4.3(@commitlint/cli@20.5.0(@types/node@25.5.0)(conventional-commits-parser@6.3.0)(typescript@5.9.3))(@commitlint/config-conventional@20.5.0)(@effect/experimental@0.60.0(@effect/platform@0.96.0(effect@3.21.0))(effect@3.21.0))(@effect/typeclass@0.40.0(effect@3.21.0))(@effect/workflow@0.18.0(@effect/experimental@0.60.0(@effect/platform@0.96.0(effect@3.21.0))(effect@3.21.0))(@effect/platform@0.96.0(effect@3.21.0))(@effect/rpc@0.75.0(@effect/platform@0.96.0(effect@3.21.0))(effect@3.21.0))(effect@3.21.0))(husky@9.1.7)
       '@savvy-web/lint-staged':
-        specifier: ^0.6.2
-        version: 0.6.2(79c1900b38129fc6c96694cef3d3ee26)
+        specifier: ^0.6.3
+        version: 0.6.3(79c1900b38129fc6c96694cef3d3ee26)
       '@types/node':
         specifier: catalog:silk
         version: 25.5.0
@@ -1071,8 +1071,8 @@ packages:
       commitizen:
         optional: true
 
-  '@savvy-web/lint-staged@0.6.2':
-    resolution: {integrity: sha512-nhXpNZ3hCo/2g1J4FxwAf+Kn0bPb5Z2UXrvaFlIhm5xjQZVGLJxJ90ilBzC1idTOnZCBo8rOyGukkZnTVikaJg==}
+  '@savvy-web/lint-staged@0.6.3':
+    resolution: {integrity: sha512-r84pBuNK9QgJBhqX7bHsFghyLI8cgXv9S+0qzGR6KLXU56TSDzPrJ8A3LDVwnSnoKO0nMs3+5mylegHbzbOh6A==}
     engines: {node: '>=24.0.0'}
     hasBin: true
     peerDependencies:
@@ -3462,8 +3462,8 @@ packages:
   undici-types@7.18.2:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
 
-  undici@7.24.5:
-    resolution: {integrity: sha512-3IWdCpjgxp15CbJnsi/Y9TCDE7HWVN19j1hmzVhoAkY/+CJx449tVxT5wZc1Gwg8J+P0LWvzlBzxYRnHJ+1i7Q==}
+  undici@7.24.6:
+    resolution: {integrity: sha512-Xi4agocCbRzt0yYMZGMA6ApD7gvtUFaxm4ZmeacWI4cZxaF6C+8I8QfofC20NAePiB/IcvZmzkJ7XPa471AEtA==}
     engines: {node: '>=20.18.1'}
 
   unicorn-magic@0.4.0:
@@ -4095,7 +4095,7 @@ snapshots:
       '@effect/sql': 0.51.0(@effect/experimental@0.60.0(@effect/platform@0.96.0(effect@3.21.0))(effect@3.21.0))(@effect/platform@0.96.0(effect@3.21.0))(effect@3.21.0)
       effect: 3.21.0
       mime: 3.0.0
-      undici: 7.24.5
+      undici: 7.24.6
       ws: 8.20.0
     transitivePeerDependencies:
       - bufferutil
@@ -4792,7 +4792,7 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@savvy-web/lint-staged@0.6.2(79c1900b38129fc6c96694cef3d3ee26)':
+  '@savvy-web/lint-staged@0.6.3(79c1900b38129fc6c96694cef3d3ee26)':
     dependencies:
       '@effect/cli': 0.75.0(@effect/platform@0.96.0(effect@3.21.0))(@effect/printer-ansi@0.49.0(@effect/typeclass@0.40.0(effect@3.21.0))(effect@3.21.0))(@effect/printer@0.49.0(@effect/typeclass@0.40.0(effect@3.21.0))(effect@3.21.0))(effect@3.21.0)
       '@effect/platform': 0.96.0(effect@3.21.0)
@@ -7403,7 +7403,7 @@ snapshots:
 
   undici-types@7.18.2: {}
 
-  undici@7.24.5: {}
+  undici@7.24.6: {}
 
   unicorn-magic@0.4.0: {}
 

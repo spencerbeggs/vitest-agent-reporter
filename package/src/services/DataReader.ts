@@ -4,7 +4,7 @@ import type { DataStoreError } from "../errors/DataStoreError.js";
 import type { AgentReport } from "../schemas/AgentReport.js";
 import type { CoverageBaselines } from "../schemas/Baselines.js";
 import type { CacheManifest } from "../schemas/CacheManifest.js";
-import type { FileCoverageReport } from "../schemas/Coverage.js";
+import type { CoverageReport, FileCoverageReport } from "../schemas/Coverage.js";
 import type { HistoryRecord } from "../schemas/History.js";
 import type { TrendRecord } from "../schemas/Trends.js";
 
@@ -83,6 +83,36 @@ export interface SettingsRow {
 	readonly capturedAt: string;
 }
 
+export interface TestListEntry {
+	readonly id: number;
+	readonly fullName: string;
+	readonly state: string;
+	readonly duration: number | null;
+	readonly module: string;
+	readonly classification: string | null;
+}
+
+export interface ModuleListEntry {
+	readonly id: number;
+	readonly file: string;
+	readonly state: string;
+	readonly testCount: number;
+	readonly duration: number | null;
+}
+
+export interface SuiteListEntry {
+	readonly id: number;
+	readonly name: string;
+	readonly module: string;
+	readonly state: string;
+	readonly testCount: number;
+}
+
+export interface SettingsListEntry {
+	readonly hash: string;
+	readonly capturedAt: string;
+}
+
 export class DataReader extends Context.Tag("vitest-agent-reporter/DataReader")<
 	DataReader,
 	{
@@ -110,6 +140,10 @@ export class DataReader extends Context.Tag("vitest-agent-reporter/DataReader")<
 			subProject: string | null,
 		) => Effect.Effect<ReadonlyArray<PersistentFailure>, DataStoreError>;
 		readonly getFileCoverage: (runId: number) => Effect.Effect<ReadonlyArray<FileCoverageReport>, DataStoreError>;
+		readonly getCoverage: (
+			project: string,
+			subProject: string | null,
+		) => Effect.Effect<Option.Option<CoverageReport>, DataStoreError>;
 		readonly getTestsForFile: (filePath: string) => Effect.Effect<ReadonlyArray<string>, DataStoreError>;
 		readonly getErrors: (
 			project: string,
@@ -125,5 +159,21 @@ export class DataReader extends Context.Tag("vitest-agent-reporter/DataReader")<
 		readonly searchNotes: (query: string) => Effect.Effect<ReadonlyArray<NoteRow>, DataStoreError>;
 		readonly getManifest: () => Effect.Effect<Option.Option<CacheManifest>, DataStoreError>;
 		readonly getSettings: (hash: string) => Effect.Effect<Option.Option<SettingsRow>, DataStoreError>;
+		readonly getLatestSettings: () => Effect.Effect<Option.Option<SettingsRow>, DataStoreError>;
+		readonly listTests: (
+			project: string,
+			subProject: string | null,
+			options?: { state?: string; module?: string; limit?: number },
+		) => Effect.Effect<ReadonlyArray<TestListEntry>, DataStoreError>;
+		readonly listModules: (
+			project: string,
+			subProject: string | null,
+		) => Effect.Effect<ReadonlyArray<ModuleListEntry>, DataStoreError>;
+		readonly listSuites: (
+			project: string,
+			subProject: string | null,
+			options?: { module?: string },
+		) => Effect.Effect<ReadonlyArray<SuiteListEntry>, DataStoreError>;
+		readonly listSettings: () => Effect.Effect<ReadonlyArray<SettingsListEntry>, DataStoreError>;
 	}
 >() {}

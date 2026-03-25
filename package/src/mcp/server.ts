@@ -162,6 +162,86 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 		async () => textResult(await caller.cache_health()),
 	);
 
+	// ── Discovery tools (queries returning markdown tables) ─────────────
+
+	server.registerTool(
+		"project_list",
+		{
+			description: "List all projects with their latest run summary",
+		},
+		async () => textResult(await caller.project_list({})),
+	);
+
+	server.registerTool(
+		"test_list",
+		{
+			description: "List test cases with optional filters for state, module, and limit",
+			inputSchema: {
+				project: z.optional(z.string()).describe("Project name"),
+				subProject: z.optional(z.string()).describe("Sub-project name"),
+				state: z.optional(z.string()).describe("Filter by test state (passed, failed, skipped)"),
+				module: z.optional(z.string()).describe("Filter by module file path"),
+				limit: z.optional(z.number()).describe("Max number of results"),
+			},
+		},
+		async (args) =>
+			textResult(
+				await caller.test_list({
+					project: args.project,
+					subProject: args.subProject,
+					state: args.state,
+					module: args.module,
+					limit: args.limit,
+				}),
+			),
+	);
+
+	server.registerTool(
+		"module_list",
+		{
+			description: "List test modules with state and test counts",
+			inputSchema: {
+				project: z.optional(z.string()).describe("Project name"),
+				subProject: z.optional(z.string()).describe("Sub-project name"),
+			},
+		},
+		async (args) =>
+			textResult(
+				await caller.module_list({
+					project: args.project,
+					subProject: args.subProject,
+				}),
+			),
+	);
+
+	server.registerTool(
+		"suite_list",
+		{
+			description: "List test suites with optional module filter",
+			inputSchema: {
+				project: z.optional(z.string()).describe("Project name"),
+				subProject: z.optional(z.string()).describe("Sub-project name"),
+				module: z.optional(z.string()).describe("Filter by module file path"),
+			},
+		},
+		async (args) =>
+			textResult(
+				await caller.suite_list({
+					project: args.project,
+					subProject: args.subProject,
+					module: args.module,
+				}),
+			),
+	);
+
+	server.registerTool(
+		"settings_list",
+		{
+			description: "List all captured settings snapshots with their hashes",
+		},
+		async () => textResult(await caller.settings_list({})),
+	);
+
 	// ── Mutation tools (return JSON) ────────────────────────────────────
 
 	server.registerTool(
@@ -175,7 +255,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 			},
 		},
 		async (args) =>
-			jsonResult(
+			textResult(
 				await caller.run_tests({
 					files: args.files,
 					project: args.project,
@@ -217,7 +297,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 				testFullName: z.optional(z.string()).describe("Filter by test full name"),
 			},
 		},
-		async (args) => jsonResult(await caller.note_list(args)),
+		async (args) => textResult(await caller.note_list(args)),
 	);
 
 	server.registerTool(
@@ -265,7 +345,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 				query: z.string().describe("Search query"),
 			},
 		},
-		async (args) => jsonResult(await caller.note_search({ query: args.query })),
+		async (args) => textResult(await caller.note_search({ query: args.query })),
 	);
 
 	const transport = new StdioServerTransport();

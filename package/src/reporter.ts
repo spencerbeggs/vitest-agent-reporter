@@ -405,6 +405,12 @@ export class AgentReporter {
 					]);
 					const moduleId = moduleIds[0];
 
+					// Write convention-based source-to-test mapping
+					const sourceFile = mod.relativeModuleId.replace(/\.test\.([^.]+)$/, ".$1").replace(/\.spec\.([^.]+)$/, ".$1");
+					if (sourceFile !== mod.relativeModuleId) {
+						yield* store.writeSourceMap(sourceFile, moduleId, "convention");
+					}
+
 					// Collect test cases for this module
 					const testCases: Array<{
 						name: string;

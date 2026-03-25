@@ -46,9 +46,18 @@ export const runTests = publicProcedure
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 
-		return {
-			exitCode: result.status ?? 1,
-			stdout: result.stdout ?? "",
-			stderr: result.stderr ?? "",
-		};
+		const stdout = result.stdout ?? "";
+		const stderr = result.stderr ?? "";
+		const exitCode = result.status ?? 1;
+
+		if (!stdout && !stderr) {
+			return "Tests completed with no output.";
+		}
+
+		let output = stdout;
+		if (exitCode !== 0 && stderr.trim().length > 0) {
+			output += `\n\n### Errors\n\n\`\`\`\n${stderr}\n\`\`\``;
+		}
+
+		return output || "Tests completed with no output.";
 	});
