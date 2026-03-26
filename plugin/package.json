@@ -1,6 +1,6 @@
 {
 	"name": "vitest-agent-reporter-plugin",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"private": true,
 	"description": "A Claude Code plugin for the Vitest Agent Reporter, providing test reporting and agent capabilities to LLM coding agents.",
 	"homepage": "https://github.com/spencerbeggs/vitest-agent-reporter#readme",
