@@ -3,13 +3,15 @@
 	"changelog": [
 		"@savvy-web/changesets/changelog",
 		{
-			"repo": "spencerbeggs/vitest-agent-reporter"
+			"repo": "spencerbeggs/vitest-agent-reporter",
+			"versionFiles": [{ "glob": ".claude-plugin/plugin.json", "paths": ["$.version"] }]
 		}
 	],
 	"commit": false,
 	"access": "restricted",
 	"baseBranch": "main",
 	"updateInternalDependencies": "patch",
+	"fixed": [["vitest-agent-reporter", "vitest-agent-reporter-plugin"]],
 	"ignore": ["example-basic"],
 	"privatePackages": {
 		"tag": true,

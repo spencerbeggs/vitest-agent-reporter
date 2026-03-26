@@ -122,6 +122,8 @@ importers:
         version: 4.1.1(@types/node@25.5.0)(vite@8.0.2(@types/node@25.5.0)(jiti@2.6.1)(yaml@2.8.3))
     publishDirectory: dist/dev
 
+  plugin: {}
+
 packages:
 
   '@ast-grep/napi-darwin-arm64@0.37.0':
