@@ -637,6 +637,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 					uncoveredLines: r.uncovered_lines ?? "",
 				}));
 
+				// TODO: populate targets, belowTarget, belowTargetFiles when
+				// target queries are wired up (currently omitted — previous
+				// implementation was broken, acceptable as stepping stone)
 				const report: CoverageReport = {
 					totals,
 					thresholds: {
