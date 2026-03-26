@@ -7,6 +7,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentReporter } from "./reporter.js";
 import type { VitestTestCase, VitestTestModule } from "./utils/build-report.js";
@@ -377,6 +378,89 @@ describe("AgentReporter", () => {
 			await reporter.onTestRunEnd([makeTestModule({ tests: [makeTestCase()] })], [], "passed");
 
 			expect(fs.existsSync(path.join(cacheDir, "data.db"))).toBe(true);
+		});
+
+		it("writes convention-based source-to-test mapping for .test. files", async () => {
+			const reporter = new AgentReporter({
+				cacheDir: tmpDir,
+				consoleOutput: "silent",
+			});
+
+			const testModule = makeTestModule({
+				relativeModuleId: "src/utils.test.ts",
+				tests: [makeTestCase({ name: "my test" })],
+			});
+
+			await reporter.onTestRunEnd([testModule], [], "passed");
+
+			// Query the source_test_map table directly to verify the mapping
+			const dbPath = path.join(tmpDir, "data.db");
+			const db = new DatabaseSync(dbPath, { readOnly: true });
+			const rows = db
+				.prepare(
+					`SELECT f_src.path AS source_path, f_test.path AS test_path, stm.mapping_type
+					 FROM source_test_map stm
+					 JOIN files f_src ON f_src.id = stm.source_file_id
+					 JOIN test_modules tm ON tm.id = stm.test_module_id
+					 JOIN files f_test ON f_test.id = tm.file_id`,
+				)
+				.all() as Array<{ source_path: string; test_path: string; mapping_type: string }>;
+			db.close();
+
+			expect(rows.length).toBe(1);
+			expect(rows[0].source_path).toBe("src/utils.ts");
+			expect(rows[0].test_path).toBe("src/utils.test.ts");
+			expect(rows[0].mapping_type).toBe("convention");
+		});
+
+		it("writes convention-based source-to-test mapping for .spec. files", async () => {
+			const reporter = new AgentReporter({
+				cacheDir: tmpDir,
+				consoleOutput: "silent",
+			});
+
+			const testModule = makeTestModule({
+				relativeModuleId: "src/helpers.spec.ts",
+				tests: [makeTestCase({ name: "spec test" })],
+			});
+
+			await reporter.onTestRunEnd([testModule], [], "passed");
+
+			const dbPath = path.join(tmpDir, "data.db");
+			const db = new DatabaseSync(dbPath, { readOnly: true });
+			const rows = db
+				.prepare(
+					`SELECT f_src.path AS source_path, stm.mapping_type
+					 FROM source_test_map stm
+					 JOIN files f_src ON f_src.id = stm.source_file_id`,
+				)
+				.all() as Array<{ source_path: string; mapping_type: string }>;
+			db.close();
+
+			expect(rows.length).toBe(1);
+			expect(rows[0].source_path).toBe("src/helpers.ts");
+			expect(rows[0].mapping_type).toBe("convention");
+		});
+
+		it("skips source mapping for files without .test. or .spec. suffix", async () => {
+			const reporter = new AgentReporter({
+				cacheDir: tmpDir,
+				consoleOutput: "silent",
+			});
+
+			const testModule = makeTestModule({
+				relativeModuleId: "src/integration/run-all.ts",
+				tests: [makeTestCase({ name: "integration" })],
+			});
+
+			await reporter.onTestRunEnd([testModule], [], "passed");
+
+			const dbPath = path.join(tmpDir, "data.db");
+			const db = new DatabaseSync(dbPath, { readOnly: true });
+			const rows = db.prepare("SELECT COUNT(*) AS cnt FROM source_test_map").all() as Array<{ cnt: number }>;
+			db.close();
+
+			expect(rows[0].cnt).toBe(0);
 		});
 
 		it("writes unhandled errors for all projects", async () => {

@@ -19,38 +19,30 @@ export const testCoverage = publicProcedure
 				const project = input.project ?? "default";
 				const subProject = input.subProject ?? null;
 
-				const reportOpt = yield* reader.getLatestRun(project, subProject);
+				const coverageOpt = yield* reader.getCoverage(project, subProject);
 
-				if (Option.isNone(reportOpt)) {
-					return "No test data available. Run tests first.";
-				}
-
-				const report = reportOpt.value;
-				const coverage = report.coverage;
-
-				if (coverage === undefined) {
+				if (Option.isNone(coverageOpt)) {
 					return "No coverage data available. Run tests with coverage enabled.";
 				}
 
+				const coverage = coverageOpt.value;
+
 				const lines: string[] = ["# Coverage Report", ""];
 
-				const { totals, thresholds, targets } = coverage;
+				const { totals, thresholds } = coverage;
 
 				lines.push("## Totals");
 				lines.push("");
-				lines.push("| Metric | Value | Threshold | Target |");
-				lines.push("| --- | --- | --- | --- |");
+				lines.push("| Metric | Value | Threshold |");
+				lines.push("| --- | --- | --- |");
 
 				const metrics = ["statements", "branches", "functions", "lines"] as const;
 				for (const metric of metrics) {
 					const value = totals[metric];
 					const threshold = thresholds.global[metric];
-					const target = targets?.global[metric];
-					const thresholdStr = threshold !== undefined ? `${threshold}%` : "—";
-					const targetStr = target !== undefined ? `${target}%` : "—";
-					const icon =
-						threshold !== undefined && value < threshold ? "❌" : target !== undefined && value < target ? "⚠️" : "✅";
-					lines.push(`| ${metric} | ${icon} ${value.toFixed(2)}% | ${thresholdStr} | ${targetStr} |`);
+					const thresholdStr = threshold !== undefined ? `${threshold}%` : "\u2014";
+					const icon = threshold !== undefined && value < threshold ? "\u274C" : "\u2705";
+					lines.push(`| ${metric} | ${icon} ${value.toFixed(2)}% | ${thresholdStr} |`);
 				}
 
 				lines.push("");
@@ -75,23 +67,9 @@ export const testCoverage = publicProcedure
 						lines.push("");
 					}
 				} else {
-					lines.push("✅ All files meet coverage thresholds.");
+					lines.push("\u2705 All files meet coverage thresholds.");
 					lines.push("");
 				}
-
-				if (coverage.belowTarget && coverage.belowTarget.length > 0) {
-					lines.push("## Below Target");
-					lines.push("");
-					lines.push("Files below coverage targets (informational):");
-					lines.push("");
-
-					for (const fileCoverage of coverage.belowTarget) {
-						lines.push(`- \`${fileCoverage.file}\``);
-					}
-					lines.push("");
-				}
-
-				lines.push(`_Run as of: ${report.timestamp}_`);
 
 				return lines.join("\n");
 			}),

@@ -26,7 +26,7 @@ export const runTests = publicProcedure
 		),
 	)
 	.mutation(async ({ ctx, input }) => {
-		const args = ["vitest", "run"];
+		const args = ["vitest", "run", "--coverage.enabled=false"];
 		if (input.files) {
 			args.push(...sanitizeTestArgs(input.files));
 		}
@@ -36,6 +36,12 @@ export const runTests = publicProcedure
 
 		const timeoutMs = (input.timeout ?? 120) * 1000;
 
+		// Strip coverage env vars so the spawned vitest process doesn't
+		// interfere with the parent's v8 coverage collection (avoids
+		// ENOENT on coverage/.tmp files in CI).
+		const env = { ...process.env };
+		delete env.NODE_V8_COVERAGE;
+
 		// Use spawnSync with array args to avoid shell interpretation.
 		// This handles file paths with spaces correctly and eliminates
 		// shell injection risk entirely (no shell involved).
@@ -44,11 +50,21 @@ export const runTests = publicProcedure
 			timeout: timeoutMs,
 			encoding: "utf-8",
 			stdio: ["ignore", "pipe", "pipe"],
+			env,
 		});
 
-		return {
-			exitCode: result.status ?? 1,
-			stdout: result.stdout ?? "",
-			stderr: result.stderr ?? "",
-		};
+		const stdout = result.stdout ?? "";
+		const stderr = result.stderr ?? "";
+		const exitCode = result.status ?? 1;
+
+		if (!stdout && !stderr) {
+			return "Tests completed with no output.";
+		}
+
+		let output = stdout;
+		if (exitCode !== 0 && stderr.trim().length > 0) {
+			output += `\n\n### Errors\n\n\`\`\`\n${stderr}\n\`\`\``;
+		}
+
+		return output || "Tests completed with no output.";
 	});

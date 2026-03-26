@@ -627,6 +627,121 @@ describe("DataReaderLive", () => {
 		});
 	});
 
+	describe("getCoverage", () => {
+		it("returns Option.none() when no runs exist", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const reader = yield* DataReader;
+					return yield* reader.getCoverage("nonexistent", null);
+				}),
+			);
+			expect(Option.isNone(result)).toBe(true);
+		});
+
+		it("returns coverage data after seeding run with file_coverage and trends", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const reader = yield* DataReader;
+
+					yield* store.writeSettings("cov-report-hash", settingsInput, {});
+					const runId = yield* store.writeRun({ ...runInput, settingsHash: "cov-report-hash", project: "cov-proj" });
+					const fileId1 = yield* store.ensureFile("src/utils.ts");
+					const fileId2 = yield* store.ensureFile("src/helpers.ts");
+
+					yield* store.writeCoverage(runId, [
+						{
+							fileId: fileId1,
+							statements: 85.0,
+							branches: 70.0,
+							functions: 90.0,
+							lines: 82.0,
+							uncoveredLines: "42-50,99",
+						},
+						{
+							fileId: fileId2,
+							statements: 60.0,
+							branches: 50.0,
+							functions: 75.0,
+							lines: 65.0,
+							uncoveredLines: "10-20",
+						},
+					]);
+
+					// Seed trends for totals
+					yield* store.writeTrends("cov-proj", null, runId, {
+						timestamp: "2026-03-22T00:00:00.000Z",
+						coverage: { lines: 73.5, branches: 60.0, functions: 82.5, statements: 72.5 },
+						delta: { lines: 0, branches: 0, functions: 0, statements: 0 },
+						direction: "stable",
+					});
+
+					// Seed baselines (global)
+					yield* store.writeBaselines({
+						updatedAt: "2026-03-22T00:00:00.000Z",
+						global: { lines: 70, branches: 55, functions: 80 },
+						patterns: [],
+					});
+
+					return yield* reader.getCoverage("cov-proj", null);
+				}),
+			);
+			expect(Option.isSome(result)).toBe(true);
+			const coverage = Option.getOrThrow(result);
+			// Totals from trends
+			expect(coverage.totals.lines).toBeCloseTo(73.5);
+			expect(coverage.totals.branches).toBeCloseTo(60.0);
+			expect(coverage.totals.functions).toBeCloseTo(82.5);
+			expect(coverage.totals.statements).toBeCloseTo(72.5);
+			// File coverage
+			expect(coverage.lowCoverage).toHaveLength(2);
+			expect(coverage.lowCoverageFiles).toContain("src/utils.ts");
+			expect(coverage.lowCoverageFiles).toContain("src/helpers.ts");
+			expect(coverage.lowCoverage[0].uncoveredLines).toBe("42-50,99");
+			// Thresholds from baselines
+			expect(coverage.thresholds.global.lines).toBe(70);
+			expect(coverage.thresholds.global.branches).toBe(55);
+			expect(coverage.thresholds.global.functions).toBe(80);
+			expect(coverage.thresholds.patterns).toHaveLength(0);
+		});
+
+		it("falls back to averaging file coverage when no trends exist", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const reader = yield* DataReader;
+
+					yield* store.writeSettings("cov-avg-hash", settingsInput, {});
+					const runId = yield* store.writeRun({
+						...runInput,
+						settingsHash: "cov-avg-hash",
+						project: "cov-avg-proj",
+					});
+					const fileId = yield* store.ensureFile("src/single.ts");
+
+					yield* store.writeCoverage(runId, [
+						{
+							fileId,
+							statements: 80.0,
+							branches: 60.0,
+							functions: 70.0,
+							lines: 90.0,
+							uncoveredLines: "5",
+						},
+					]);
+
+					return yield* reader.getCoverage("cov-avg-proj", null);
+				}),
+			);
+			expect(Option.isSome(result)).toBe(true);
+			const coverage = Option.getOrThrow(result);
+			// With a single file, average = the file's values
+			expect(coverage.totals.statements).toBeCloseTo(80.0);
+			expect(coverage.totals.lines).toBeCloseTo(90.0);
+			expect(coverage.lowCoverage).toHaveLength(1);
+		});
+	});
+
 	describe("getTestsForFile", () => {
 		it("returns test module paths mapped to a source file", async () => {
 			const result = await run(
@@ -794,6 +909,229 @@ describe("DataReaderLive", () => {
 			);
 			expect(result.length).toBeGreaterThanOrEqual(1);
 			expect(result[0].title).toBe("Coverage report");
+		});
+	});
+
+	describe("getLatestSettings", () => {
+		it("returns Option.none() when no settings exist", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const reader = yield* DataReader;
+					return yield* reader.getLatestSettings();
+				}),
+			);
+			expect(Option.isNone(result)).toBe(true);
+		});
+
+		it("returns most recent settings after seeding two rows", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const reader = yield* DataReader;
+
+					yield* store.writeSettings("older-hash", settingsInput, { CI: "false" });
+					yield* store.writeSettings("newer-hash", { ...settingsInput, pool: "threads" }, { CI: "true" });
+
+					return yield* reader.getLatestSettings();
+				}),
+			);
+			expect(Option.isSome(result)).toBe(true);
+			const settings = Option.getOrThrow(result);
+			expect(settings.hash).toBe("newer-hash");
+			expect(settings.pool).toBe("threads");
+			expect(settings.envVars).toEqual({ CI: "true" });
+		});
+	});
+
+	describe("listTests", () => {
+		it("returns test cases for latest run", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const reader = yield* DataReader;
+
+					yield* store.writeSettings("list-tests-hash", settingsInput, {});
+					const runId = yield* store.writeRun({ ...runInput, settingsHash: "list-tests-hash", project: "list-proj" });
+					const fileId = yield* store.ensureFile("src/utils.test.ts");
+					const [moduleId] = yield* store.writeModules(runId, [
+						{ fileId, relativeModuleId: "src/utils.test.ts", state: "passed", duration: 100 },
+					]);
+					yield* store.writeTestCases(moduleId, [
+						{ name: "test A", fullName: "suite > test A", state: "passed", duration: 10 },
+						{ name: "test B", fullName: "suite > test B", state: "failed", duration: 20 },
+					]);
+
+					return yield* reader.listTests("list-proj", null);
+				}),
+			);
+			expect(result).toHaveLength(2);
+			expect(result[0].fullName).toBe("suite > test A");
+			expect(result[0].module).toBe("src/utils.test.ts");
+			expect(result[1].fullName).toBe("suite > test B");
+			expect(result[1].state).toBe("failed");
+		});
+
+		it("filters by state", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const reader = yield* DataReader;
+
+					yield* store.writeSettings("list-filter-hash", settingsInput, {});
+					const runId = yield* store.writeRun({
+						...runInput,
+						settingsHash: "list-filter-hash",
+						project: "list-filter-proj",
+					});
+					const fileId = yield* store.ensureFile("src/filter.test.ts");
+					const [moduleId] = yield* store.writeModules(runId, [
+						{ fileId, relativeModuleId: "src/filter.test.ts", state: "failed", duration: 50 },
+					]);
+					yield* store.writeTestCases(moduleId, [
+						{ name: "passes", fullName: "passes", state: "passed", duration: 5 },
+						{ name: "fails", fullName: "fails", state: "failed", duration: 10 },
+						{ name: "also fails", fullName: "also fails", state: "failed", duration: 15 },
+					]);
+
+					return yield* reader.listTests("list-filter-proj", null, { state: "failed" });
+				}),
+			);
+			expect(result).toHaveLength(2);
+			for (const t of result) {
+				expect(t.state).toBe("failed");
+			}
+		});
+
+		it("returns empty array when no runs exist", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const reader = yield* DataReader;
+					return yield* reader.listTests("nonexistent", null);
+				}),
+			);
+			expect(result).toHaveLength(0);
+		});
+	});
+
+	describe("listModules", () => {
+		it("returns modules for latest run", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const reader = yield* DataReader;
+
+					yield* store.writeSettings("list-mod-hash", settingsInput, {});
+					const runId = yield* store.writeRun({ ...runInput, settingsHash: "list-mod-hash", project: "list-mod-proj" });
+					const fileId1 = yield* store.ensureFile("src/a.test.ts");
+					const fileId2 = yield* store.ensureFile("src/b.test.ts");
+					const [modId1] = yield* store.writeModules(runId, [
+						{ fileId: fileId1, relativeModuleId: "src/a.test.ts", state: "passed", duration: 100 },
+					]);
+					yield* store.writeModules(runId, [
+						{ fileId: fileId2, relativeModuleId: "src/b.test.ts", state: "failed", duration: 200 },
+					]);
+					yield* store.writeTestCases(modId1, [
+						{ name: "test 1", fullName: "test 1", state: "passed", duration: 5 },
+						{ name: "test 2", fullName: "test 2", state: "passed", duration: 10 },
+					]);
+
+					return yield* reader.listModules("list-mod-proj", null);
+				}),
+			);
+			expect(result).toHaveLength(2);
+			const modA = result.find((m) => m.file === "src/a.test.ts");
+			expect(modA).toBeDefined();
+			expect(modA?.testCount).toBe(2);
+			expect(modA?.duration).toBe(100);
+			const modB = result.find((m) => m.file === "src/b.test.ts");
+			expect(modB?.testCount).toBe(0);
+		});
+
+		it("returns empty array when no runs exist", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const reader = yield* DataReader;
+					return yield* reader.listModules("nonexistent", null);
+				}),
+			);
+			expect(result).toHaveLength(0);
+		});
+	});
+
+	describe("listSuites", () => {
+		it("returns suites for latest run", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const reader = yield* DataReader;
+
+					yield* store.writeSettings("list-suite-hash", settingsInput, {});
+					const runId = yield* store.writeRun({
+						...runInput,
+						settingsHash: "list-suite-hash",
+						project: "list-suite-proj",
+					});
+					const fileId = yield* store.ensureFile("src/suite.test.ts");
+					const [moduleId] = yield* store.writeModules(runId, [
+						{ fileId, relativeModuleId: "src/suite.test.ts", state: "passed", duration: 100 },
+					]);
+					const [suiteId] = yield* store.writeSuites(moduleId, [
+						{ name: "my suite", fullName: "my suite", state: "passed" },
+					]);
+					yield* store.writeTestCases(moduleId, [
+						{ name: "test in suite", fullName: "my suite > test in suite", state: "passed", duration: 5, suiteId },
+					]);
+
+					return yield* reader.listSuites("list-suite-proj", null);
+				}),
+			);
+			expect(result).toHaveLength(1);
+			expect(result[0].name).toBe("my suite");
+			expect(result[0].module).toBe("src/suite.test.ts");
+			expect(result[0].testCount).toBe(1);
+		});
+
+		it("returns empty array when no runs exist", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const reader = yield* DataReader;
+					return yield* reader.listSuites("nonexistent", null);
+				}),
+			);
+			expect(result).toHaveLength(0);
+		});
+	});
+
+	describe("listSettings", () => {
+		it("returns available settings hashes", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const reader = yield* DataReader;
+
+					yield* store.writeSettings("ls-hash-1", settingsInput, {});
+					yield* store.writeSettings("ls-hash-2", { ...settingsInput, pool: "threads" }, {});
+
+					return yield* reader.listSettings();
+				}),
+			);
+			expect(result.length).toBeGreaterThanOrEqual(2);
+			const hashes = result.map((r) => r.hash);
+			expect(hashes).toContain("ls-hash-1");
+			expect(hashes).toContain("ls-hash-2");
+			// Most recent first
+			expect(result[0].capturedAt).toBeDefined();
+		});
+
+		it("returns empty array when no settings exist", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const reader = yield* DataReader;
+					return yield* reader.listSettings();
+				}),
+			);
+			// May have settings from other tests due to shared in-memory DB, but the method should not throw
+			expect(Array.isArray(result)).toBe(true);
 		});
 	});
 

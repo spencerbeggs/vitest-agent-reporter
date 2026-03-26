@@ -4,16 +4,20 @@ import { DataStoreError } from "../errors/DataStoreError.js";
 import type { AgentReport } from "../schemas/AgentReport.js";
 import type { CoverageBaselines } from "../schemas/Baselines.js";
 import type { CacheManifest } from "../schemas/CacheManifest.js";
-import type { FileCoverageReport } from "../schemas/Coverage.js";
+import type { CoverageReport, FileCoverageReport } from "../schemas/Coverage.js";
 import type { HistoryRecord } from "../schemas/History.js";
 import type { TrendRecord } from "../schemas/Trends.js";
 import type {
 	FlakyTest,
+	ModuleListEntry,
 	NoteRow,
 	PersistentFailure,
 	ProjectRunSummary,
+	SettingsListEntry,
 	SettingsRow,
+	SuiteListEntry,
 	TestError,
+	TestListEntry,
 } from "../services/DataReader.js";
 import { DataReader } from "../services/DataReader.js";
 
@@ -546,6 +550,113 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "file_coverage", reason: String(e) })),
 			);
 
+		const getCoverage = (
+			project: string,
+			subProject: string | null,
+		): Effect.Effect<Option.Option<CoverageReport>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("getCoverage").pipe(Effect.annotateLogs({ project, subProject }));
+
+				// 1. Find latest run_id for the project/subProject
+				const runs = yield* sql<{
+					id: number;
+					timestamp: string;
+				}>`SELECT id, timestamp FROM test_runs
+					WHERE project = ${project} AND sub_project IS ${subProject}
+					ORDER BY timestamp DESC LIMIT 1`;
+
+				if (runs.length === 0) return Option.none();
+				const runId = runs[0].id;
+
+				// 2. Query file_coverage joined with files for that run_id
+				const fileCoverageRows = yield* sql<{
+					file_path: string;
+					statements: number;
+					branches: number;
+					functions: number;
+					lines: number;
+					uncovered_lines: string | null;
+				}>`SELECT f.path as file_path, fc.statements, fc.branches, fc.functions, fc.lines, fc.uncovered_lines
+					FROM file_coverage fc JOIN files f ON f.id = fc.file_id
+					WHERE fc.run_id = ${runId}`;
+
+				if (fileCoverageRows.length === 0) return Option.none();
+
+				// 3. Get totals from coverage_trends (most recent for this project)
+				const trendRows = yield* sql<{
+					statements: number;
+					branches: number;
+					functions: number;
+					lines: number;
+				}>`SELECT statements, branches, functions, lines
+					FROM coverage_trends
+					WHERE project = ${project} AND sub_project IS ${subProject}
+					ORDER BY timestamp DESC LIMIT 1`;
+
+				// Compute totals: use trends if available, otherwise approximate
+				// from file coverage averages (imprecise without per-file
+				// statement counts, but acceptable when trend data is unavailable)
+				let totals: { statements: number; branches: number; functions: number; lines: number };
+				if (trendRows.length > 0) {
+					totals = {
+						statements: trendRows[0].statements,
+						branches: trendRows[0].branches,
+						functions: trendRows[0].functions,
+						lines: trendRows[0].lines,
+					};
+				} else {
+					const count = fileCoverageRows.length;
+					totals = {
+						statements: fileCoverageRows.reduce((sum, r) => sum + r.statements, 0) / count,
+						branches: fileCoverageRows.reduce((sum, r) => sum + r.branches, 0) / count,
+						functions: fileCoverageRows.reduce((sum, r) => sum + r.functions, 0) / count,
+						lines: fileCoverageRows.reduce((sum, r) => sum + r.lines, 0) / count,
+					};
+				}
+
+				// 4. Get baselines via existing getBaselines(). Baselines are stored
+				// with project='__global__' per DataStoreLive.writeBaselines()
+				const baselinesOpt = yield* getBaselines("__global__", null);
+				const baselines = Option.getOrElse(baselinesOpt, () => ({
+					updatedAt: "",
+					global: {} as Record<string, number>,
+					patterns: [] as Array<[string, Record<string, number>]>,
+				}));
+
+				// 5. Build lowCoverage from file_coverage rows. The reporter only
+				// writes files below threshold to file_coverage, so all rows here
+				// are already lowCoverage entries.
+				const lowCoverage: FileCoverageReport[] = fileCoverageRows.map((r) => ({
+					file: r.file_path,
+					summary: {
+						statements: r.statements,
+						branches: r.branches,
+						functions: r.functions,
+						lines: r.lines,
+					},
+					uncoveredLines: r.uncovered_lines ?? "",
+				}));
+
+				// TODO: populate targets, belowTarget, belowTargetFiles when
+				// target queries are wired up (currently omitted — previous
+				// implementation was broken, acceptable as stepping stone)
+				const report: CoverageReport = {
+					totals,
+					thresholds: {
+						global: baselines.global,
+						patterns: baselines.patterns,
+					},
+					scoped: false,
+					lowCoverage,
+					lowCoverageFiles: lowCoverage.map((f) => f.file),
+				};
+
+				return Option.some(report);
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "file_coverage", reason: String(e) })),
+			);
+
 		const getTestsForFile = (filePath: string): Effect.Effect<ReadonlyArray<string>, DataStoreError> =>
 			Effect.gen(function* () {
 				yield* Effect.logDebug("getTestsForFile").pipe(Effect.annotateLogs({ filePath }));
@@ -807,6 +918,267 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "settings", reason: String(e) })),
 			);
 
+		const getLatestSettings = (): Effect.Effect<Option.Option<SettingsRow>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("getLatestSettings");
+				const rows = yield* sql<{
+					hash: string;
+					pool: string | null;
+					environment: string | null;
+					coverage_provider: string | null;
+					created_at: string;
+				}>`SELECT hash, pool, environment, coverage_provider, created_at
+					FROM settings ORDER BY rowid DESC LIMIT 1`;
+
+				if (rows.length === 0) return Option.none();
+				const row = rows[0];
+
+				const envRows = yield* sql<{
+					key: string;
+					value: string;
+				}>`SELECT key, value FROM settings_env_vars WHERE settings_hash = ${row.hash}`;
+
+				const envVars: Record<string, string> = {};
+				for (const ev of envRows) {
+					envVars[ev.key] = ev.value;
+				}
+
+				const settings: SettingsRow = {
+					hash: row.hash,
+					reporters: null,
+					coverageEnabled: row.coverage_provider != null,
+					coverageProvider: row.coverage_provider,
+					coverageThresholds: null,
+					coverageTargets: null,
+					pool: row.pool,
+					shard: null,
+					project: null,
+					environment: row.environment,
+					envVars,
+					capturedAt: row.created_at,
+				};
+
+				return Option.some(settings);
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "settings", reason: String(e) })),
+			);
+
+		const listTests = (
+			project: string,
+			subProject: string | null,
+			options?: { state?: string; module?: string; limit?: number },
+		): Effect.Effect<ReadonlyArray<TestListEntry>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("listTests").pipe(Effect.annotateLogs({ project, subProject }));
+
+				// Find latest run_id
+				const runs = yield* sql<{ id: number }>`SELECT id FROM test_runs
+					WHERE project = ${project} AND sub_project IS ${subProject}
+					ORDER BY timestamp DESC LIMIT 1`;
+
+				if (runs.length === 0) return [];
+				const runId = runs[0].id;
+
+				const effectiveLimit = Math.min(options?.limit ?? 100, 500);
+				const state = options?.state;
+				const mod = options?.module;
+
+				// Use separate SQL branches for filter combinations
+				if (state && mod) {
+					const rows = yield* sql<{
+						id: number;
+						full_name: string;
+						state: string;
+						duration: number | null;
+						file_path: string;
+						classification: string | null;
+					}>`SELECT tc.id, tc.full_name as "full_name", tc.state, tc.duration, f.path as file_path, tc.classification
+						FROM test_cases tc
+						JOIN test_modules tm ON tm.id = tc.module_id
+						JOIN files f ON f.id = tm.file_id
+						WHERE tm.run_id = ${runId} AND tc.state = ${state} AND f.path = ${mod}
+						ORDER BY tc.full_name
+						LIMIT ${effectiveLimit}`;
+					return rows.map(mapTestListRow);
+				}
+				if (state) {
+					const rows = yield* sql<{
+						id: number;
+						full_name: string;
+						state: string;
+						duration: number | null;
+						file_path: string;
+						classification: string | null;
+					}>`SELECT tc.id, tc.full_name as "full_name", tc.state, tc.duration, f.path as file_path, tc.classification
+						FROM test_cases tc
+						JOIN test_modules tm ON tm.id = tc.module_id
+						JOIN files f ON f.id = tm.file_id
+						WHERE tm.run_id = ${runId} AND tc.state = ${state}
+						ORDER BY tc.full_name
+						LIMIT ${effectiveLimit}`;
+					return rows.map(mapTestListRow);
+				}
+				if (mod) {
+					const rows = yield* sql<{
+						id: number;
+						full_name: string;
+						state: string;
+						duration: number | null;
+						file_path: string;
+						classification: string | null;
+					}>`SELECT tc.id, tc.full_name as "full_name", tc.state, tc.duration, f.path as file_path, tc.classification
+						FROM test_cases tc
+						JOIN test_modules tm ON tm.id = tc.module_id
+						JOIN files f ON f.id = tm.file_id
+						WHERE tm.run_id = ${runId} AND f.path = ${mod}
+						ORDER BY tc.full_name
+						LIMIT ${effectiveLimit}`;
+					return rows.map(mapTestListRow);
+				}
+
+				const rows = yield* sql<{
+					id: number;
+					full_name: string;
+					state: string;
+					duration: number | null;
+					file_path: string;
+					classification: string | null;
+				}>`SELECT tc.id, tc.full_name as "full_name", tc.state, tc.duration, f.path as file_path, tc.classification
+					FROM test_cases tc
+					JOIN test_modules tm ON tm.id = tc.module_id
+					JOIN files f ON f.id = tm.file_id
+					WHERE tm.run_id = ${runId}
+					ORDER BY tc.full_name
+					LIMIT ${effectiveLimit}`;
+				return rows.map(mapTestListRow);
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "test_cases", reason: String(e) })),
+			);
+
+		const listModules = (
+			project: string,
+			subProject: string | null,
+		): Effect.Effect<ReadonlyArray<ModuleListEntry>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("listModules").pipe(Effect.annotateLogs({ project, subProject }));
+
+				const runs = yield* sql<{ id: number }>`SELECT id FROM test_runs
+					WHERE project = ${project} AND sub_project IS ${subProject}
+					ORDER BY timestamp DESC LIMIT 1`;
+
+				if (runs.length === 0) return [];
+				const runId = runs[0].id;
+
+				const rows = yield* sql<{
+					id: number;
+					file_path: string;
+					state: string;
+					test_count: number;
+					duration: number | null;
+				}>`SELECT tm.id, f.path as file_path, tm.state,
+						(SELECT COUNT(*) FROM test_cases tc WHERE tc.module_id = tm.id) as test_count,
+						tm.duration
+					FROM test_modules tm
+					JOIN files f ON f.id = tm.file_id
+					WHERE tm.run_id = ${runId}
+					ORDER BY f.path`;
+
+				return rows.map((r) => ({
+					id: r.id,
+					file: r.file_path,
+					state: r.state,
+					testCount: r.test_count,
+					duration: r.duration,
+				}));
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "test_modules", reason: String(e) })),
+			);
+
+		const listSuites = (
+			project: string,
+			subProject: string | null,
+			options?: { module?: string },
+		): Effect.Effect<ReadonlyArray<SuiteListEntry>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("listSuites").pipe(Effect.annotateLogs({ project, subProject }));
+
+				const runs = yield* sql<{ id: number }>`SELECT id FROM test_runs
+					WHERE project = ${project} AND sub_project IS ${subProject}
+					ORDER BY timestamp DESC LIMIT 1`;
+
+				if (runs.length === 0) return [];
+				const runId = runs[0].id;
+
+				const mod = options?.module;
+
+				if (mod) {
+					const rows = yield* sql<{
+						id: number;
+						name: string;
+						file_path: string;
+						state: string;
+						test_count: number;
+					}>`SELECT ts.id, ts.name, f.path as file_path, ts.state,
+							(SELECT COUNT(*) FROM test_cases tc WHERE tc.suite_id = ts.id) as test_count
+						FROM test_suites ts
+						JOIN test_modules tm ON tm.id = ts.module_id
+						JOIN files f ON f.id = tm.file_id
+						WHERE tm.run_id = ${runId} AND f.path = ${mod}
+						ORDER BY ts.name`;
+					return rows.map((r) => ({
+						id: r.id,
+						name: r.name,
+						module: r.file_path,
+						state: r.state,
+						testCount: r.test_count,
+					}));
+				}
+
+				const rows = yield* sql<{
+					id: number;
+					name: string;
+					file_path: string;
+					state: string;
+					test_count: number;
+				}>`SELECT ts.id, ts.name, f.path as file_path, ts.state,
+						(SELECT COUNT(*) FROM test_cases tc WHERE tc.suite_id = ts.id) as test_count
+					FROM test_suites ts
+					JOIN test_modules tm ON tm.id = ts.module_id
+					JOIN files f ON f.id = tm.file_id
+					WHERE tm.run_id = ${runId}
+					ORDER BY ts.name`;
+				return rows.map((r) => ({
+					id: r.id,
+					name: r.name,
+					module: r.file_path,
+					state: r.state,
+					testCount: r.test_count,
+				}));
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "test_suites", reason: String(e) })),
+			);
+
+		const listSettings = (): Effect.Effect<ReadonlyArray<SettingsListEntry>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("listSettings");
+				const rows = yield* sql<{
+					hash: string;
+					created_at: string;
+				}>`SELECT hash, created_at FROM settings ORDER BY rowid DESC`;
+
+				return rows.map((r) => ({
+					hash: r.hash,
+					capturedAt: r.created_at,
+				}));
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "settings", reason: String(e) })),
+			);
+
 		return {
 			getLatestRun,
 			getRunsByProject,
@@ -816,6 +1188,7 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 			getFlaky,
 			getPersistentFailures,
 			getFileCoverage,
+			getCoverage,
 			getTestsForFile,
 			getErrors,
 			getNotes,
@@ -823,6 +1196,11 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 			searchNotes,
 			getManifest,
 			getSettings,
+			getLatestSettings,
+			listTests,
+			listModules,
+			listSuites,
+			listSettings,
 		};
 	}),
 );
@@ -843,6 +1221,24 @@ interface NoteDbRow {
 	readonly pinned: number;
 	readonly created_at: string;
 	readonly updated_at: string;
+}
+
+function mapTestListRow(row: {
+	id: number;
+	full_name: string;
+	state: string;
+	duration: number | null;
+	file_path: string;
+	classification: string | null;
+}): TestListEntry {
+	return {
+		id: row.id,
+		fullName: row.full_name,
+		state: row.state,
+		duration: row.duration,
+		module: row.file_path,
+		classification: row.classification,
+	};
 }
 
 function mapNoteRow(row: NoteDbRow): NoteRow {
