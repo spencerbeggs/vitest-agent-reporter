@@ -114,6 +114,16 @@ afterAll(async () => {
 });
 
 describe("MCP Router", () => {
+	it("help returns complete tool catalog", async () => {
+		const caller = createTestCaller();
+		const result = await caller.help();
+		expect(result).toContain("vitest-agent-reporter MCP Tools");
+		expect(result).toContain("test_status");
+		expect(result).toContain("run_tests");
+		expect(result).toContain("note_create");
+		expect(result).toContain("Parameter Key");
+	});
+
 	it("test_status returns no data message on empty DB", async () => {
 		const caller = createTestCaller();
 		const result = await caller.test_status({});

@@ -11,8 +11,8 @@ tools.
 
 - **SQLite persistence** -- normalized database replaces JSON files for
   richer queries and cross-run analysis
-- **MCP server** -- 16 tools over stdio for deep integration with LLM
-  agents (test data, notes, coverage, run tests)
+- **MCP server** -- 22 tools over stdio for deep integration with LLM
+  agents (test data, notes, coverage, discovery, run tests)
 - **Claude Code plugin** -- auto-registers MCP tools, injects test
   context at session start, and provides teaching skills
 - **Zero-config agent detection** -- uses
@@ -74,7 +74,7 @@ Install the Claude Code plugin for the full agent experience:
 ```
 
 That's it. The plugin detects whether an agent, CI, or human is running
-tests and adjusts output automatically. Agents get 16 MCP tools for
+tests and adjusts output automatically. Agents get 22 MCP tools for
 querying test data, tracking coverage, and persisting notes -- with no
 manual MCP configuration.
 
@@ -151,7 +151,7 @@ plugin provides the full agent-native experience:
 
 The plugin provides:
 
-- **MCP auto-registration** -- all 16 tools available immediately with
+- **MCP auto-registration** -- all 22 tools available immediately with
   no manual `.mcp.json` configuration
 - **SessionStart hook** -- injects project status and available tools
   into Claude's context at the start of each session
@@ -174,10 +174,11 @@ npx vitest-agent-reporter-mcp
 ```
 
 <details>
-<summary>Full tool reference (16 tools)</summary>
+<summary>Full tool reference (22 tools)</summary>
 
 | Tool | Description |
 | --- | --- |
+| `help` | List all tools with parameters and descriptions |
 | `test_status` | Per-project pass/fail state from the most recent run |
 | `test_overview` | Test landscape summary with per-project run metrics |
 | `test_coverage` | Coverage gap analysis with per-metric thresholds and targets |
@@ -185,9 +186,14 @@ npx vitest-agent-reporter-mcp
 | `test_trends` | Per-project coverage trajectory with direction and sparkline |
 | `test_errors` | Detailed test errors with diffs and stack traces |
 | `test_for_file` | Find test modules that cover a given source file |
-| `run_tests` | Execute vitest for specific files or patterns |
+| `run_tests` | Execute vitest for specific files or projects |
 | `cache_health` | Database health diagnostic |
 | `configure` | View captured Vitest settings for a test run |
+| `project_list` | List all projects with latest run summary |
+| `test_list` | List test cases with state and duration |
+| `module_list` | List test modules (files) with test counts |
+| `suite_list` | List test suites (describe blocks) |
+| `settings_list` | List Vitest config snapshots |
 | `note_create` | Create a scoped note (global, project, module, suite, test, or free-form) |
 | `note_list` | List notes with optional scope, project, and test filters |
 | `note_get` | Read a note by ID |

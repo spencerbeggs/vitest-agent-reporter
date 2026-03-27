@@ -35,6 +35,7 @@ import { buildAgentReport } from "./utils/build-report.js";
 import { captureEnvVars } from "./utils/capture-env.js";
 import { captureSettings, hashSettings } from "./utils/capture-settings.js";
 import { computeTrend } from "./utils/compute-trend.js";
+import { formatFatalError } from "./utils/format-fatal-error.js";
 import { formatGfm } from "./utils/format-gfm.js";
 import { resolveThresholds } from "./utils/resolve-thresholds.js";
 import { splitProject } from "./utils/split-project.js";
@@ -716,28 +717,7 @@ export class AgentReporter {
 		await Effect.runPromise(
 			program.pipe(Effect.annotateLogs("service", "reporter"), Effect.provide(ReporterLive(dbPath, logLevel, logFile))),
 		).catch((err) => {
-			// Extract meaningful error details from Effect FiberFailure
-			const fiberFailureCauseKey = Symbol.for("effect/Runtime/FiberFailure/Cause");
-			const cause = (err as Record<symbol, unknown>)[fiberFailureCauseKey];
-			let detail = String(err);
-			if (cause && typeof cause === "object") {
-				const failure = cause as {
-					_tag?: string;
-					error?: { _tag?: string; operation?: string; table?: string; reason?: string };
-				};
-				if (failure.error) {
-					const e = failure.error;
-					detail = `${e._tag ?? "Error"}: ${e.operation ?? "?"} on ${e.table ?? "?"} -- ${e.reason ?? "unknown"}`;
-				} else {
-					// Try to stringify the full cause for other error types
-					try {
-						detail = JSON.stringify(cause, null, 2);
-					} catch {
-						// keep default String(err)
-					}
-				}
-			}
-			process.stderr.write(`vitest-agent-reporter: ${detail}\n`);
+			process.stderr.write(`vitest-agent-reporter: ${formatFatalError(err)}\n`);
 		});
 	}
 }

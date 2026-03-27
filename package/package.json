@@ -39,23 +39,32 @@
 		"@effect/cli": "catalog:silk",
 		"@effect/platform": "catalog:silk",
 		"@effect/platform-node": "catalog:silk",
-		"@effect/sql": "^0.51.0",
-		"@effect/sql-sqlite-node": "^0.52.0",
+		"@effect/sql": "catalog:silk",
+		"@effect/sql-sqlite-node": "catalog:silk",
 		"@modelcontextprotocol/sdk": "^1.27.1",
-		"@trpc/server": "^11.14.1",
+		"@trpc/server": "^11.15.1",
 		"effect": "catalog:silk",
 		"std-env": "^4.0.0",
 		"zod": "^4.3.6"
 	},
 	"devDependencies": {
-		"@savvy-web/rslib-builder": "^0.19.0",
-		"vite": "^8.0.2",
-		"vitest": "^4.1.0"
+		"@savvy-web/rslib-builder": "^0.19.1",
+		"@vitest/coverage-v8": "^4.1.2",
+		"vite": "^8.0.3",
+		"vitest": "^4.1.2"
 	},
 	"peerDependencies": {
+		"@vitest/coverage-istanbul": ">=4.1.0",
+		"@vitest/coverage-v8": ">=4.1.0",
 		"vitest": ">=4.1.0"
 	},
 	"peerDependenciesMeta": {
+		"@vitest/coverage-istanbul": {
+			"optional": true
+		},
+		"@vitest/coverage-v8": {
+			"optional": true
+		},
 		"vitest": {
 			"optional": false
 		}

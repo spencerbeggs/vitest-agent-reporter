@@ -4,6 +4,7 @@ import { Effect, ManagedRuntime } from "effect";
 import { resolveDbPath } from "../cli/lib/resolve-cache-dir.js";
 import { resolveLogFile, resolveLogLevel } from "../layers/LoggerLive.js";
 import { McpLive } from "../layers/McpLive.js";
+import { formatFatalError } from "../utils/format-fatal-error.js";
 import type { McpContext } from "./context.js";
 import { startMcpServer } from "./server.js";
 
@@ -29,6 +30,6 @@ async function main() {
 }
 
 main().catch((err) => {
-	console.error("[vitest-agent-reporter-mcp] Fatal:", err);
+	process.stderr.write(`vitest-agent-reporter-mcp: ${formatFatalError(err)}\n`);
 	process.exit(1);
 });

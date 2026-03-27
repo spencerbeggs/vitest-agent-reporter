@@ -34,14 +34,14 @@
 		"typecheck": "turbo run types:check --log-prefix=none --log-order=grouped"
 	},
 	"devDependencies": {
-		"@savvy-web/changesets": "^0.6.0",
-		"@savvy-web/commitlint": "^0.4.3",
-		"@savvy-web/lint-staged": "^0.6.3",
+		"@savvy-web/changesets": "^0.7.1",
+		"@savvy-web/commitlint": "^0.4.4",
+		"@savvy-web/lint-staged": "^0.6.5",
 		"@types/node": "catalog:silk",
 		"@typescript/native-preview": "catalog:silk",
-		"@vitest/coverage-v8": "^4.1.1",
+		"@vitest/coverage-v8": "^4.1.2",
 		"typescript": "catalog:silk",
-		"vitest": "^4.1.1",
+		"vitest": "^4.1.2",
 		"vitest-agent-reporter": "workspace:*"
 	},
 	"packageManager": "pnpm@10.33.0+sha512.10568bb4a6afb58c9eb3630da90cc9516417abebd3fabbe6739f0ae795728da1491e9db5a544c76ad8eb7570f5c4bb3d6c637b2cb41bfdcdb47fa823c8649319",
