@@ -10,6 +10,7 @@ import { NodeContext, NodeRuntime } from "@effect/platform-node";
 import { Cause, Console, Effect } from "effect";
 import { CliLive } from "../layers/CliLive.js";
 import { resolveLogFile, resolveLogLevel } from "../layers/LoggerLive.js";
+import { formatFatalError } from "../utils/format-fatal-error.js";
 import { cacheCommand } from "./commands/cache.js";
 import { coverageCommand } from "./commands/coverage.js";
 import { doctorCommand } from "./commands/doctor.js";
@@ -47,7 +48,9 @@ const main = resolveDbPath.pipe(
 	Effect.catchAllCause((cause) => {
 		const defects = Cause.defects(cause);
 		if (defects.length > 0) {
-			return Console.error(Cause.pretty(cause)).pipe(Effect.andThen(Effect.failCause(cause)));
+			return Console.error(`vitest-agent-reporter: ${formatFatalError(cause)}`).pipe(
+				Effect.andThen(Effect.failCause(cause)),
+			);
 		}
 		return Effect.failCause(cause);
 	}),

@@ -17,6 +17,7 @@ import { AgentReporter } from "./reporter.js";
 import type { Environment, OutputFormat } from "./schemas/Common.js";
 import type { AgentPluginOptions } from "./schemas/Options.js";
 import { EnvironmentDetector } from "./services/EnvironmentDetector.js";
+import { formatFatalError } from "./utils/format-fatal-error.js";
 import { resolveThresholds } from "./utils/resolve-thresholds.js";
 import { stripConsoleReporters } from "./utils/strip-console-reporters.js";
 
@@ -73,120 +74,125 @@ export function AgentPlugin(options: AgentPluginOptions = {}, _layer?: Layer.Lay
 	return {
 		name: "vitest-agent-reporter",
 		async configureVitest(ctx: VitestPluginContext) {
-			const { vitest, project } = ctx;
-			log("configureVitest called | project:", project?.name ?? "(root)");
+			try {
+				const { vitest, project } = ctx;
+				log("configureVitest called | project:", project?.name ?? "(root)");
 
-			log("mode:", mode, "| strategy:", strategy);
+				log("mode:", mode, "| strategy:", strategy);
 
-			// Determine environment from EnvironmentDetector service or forced mode
-			let env: Environment;
-			if (mode === "auto") {
-				env = await Effect.runPromise(
-					Effect.provide(
-						Effect.flatMap(EnvironmentDetector, (d) => d.detect()),
-						layer,
-					),
-				);
-			} else {
-				env = mode === "agent" ? "agent-shell" : "terminal";
-			}
-			log("env:", env);
-
-			// Map strategy + environment to format
-			const format = resolveFormat(strategy, env, options.format);
-			log("format:", format);
-
-			// Determine if this is an agent environment (for reporter stripping)
-			const isAgentEnv = env === "agent-shell";
-
-			// Only strip reporters when actively taking over console
-			if (format === "markdown" && isAgentEnv) {
-				log("stripping console reporters");
-				const stripped = stripConsoleReporters(vitest.config.reporters as unknown[]);
-				// Write back via mutation (Vitest config is mutable at this point)
-				(vitest.config as { reporters: unknown[] }).reporters = stripped;
-
-				// Also suppress Vitest's native coverage text reporter (the big table)
-				// since our reporter handles coverage output
-				const coverageCfg = vitest.config.coverage as { reporter?: unknown[] } | undefined;
-				if (coverageCfg) {
-					log("suppressing native coverage text reporter");
-					coverageCfg.reporter = [];
-				}
-			}
-
-			// Complement mode warning: agent detected but no built-in agent reporter
-			if (isAgentEnv && strategy === "complement" && format === "vitest-bypass") {
-				const reporters = vitest.config.reporters as unknown[];
-				const hasAgentReporter = reporters.some((r) => r === "agent" || (Array.isArray(r) && r[0] === "agent"));
-				if (!hasAgentReporter) {
-					process.stderr.write(
-						'[vitest-agent-reporter] Warning: strategy is "complement" but ' +
-							'Vitest\'s built-in "agent" reporter is not in the reporter chain. ' +
-							"Console output may be verbose. Add 'agent' to your reporters or set " +
-							'strategy: "own".\n',
+				// Determine environment from EnvironmentDetector service or forced mode
+				let env: Environment;
+				if (mode === "auto") {
+					env = await Effect.runPromise(
+						Effect.provide(
+							Effect.flatMap(EnvironmentDetector, (d) => d.detect()),
+							layer,
+						),
 					);
+				} else {
+					env = mode === "agent" ? "agent-shell" : "terminal";
 				}
-			}
+				log("env:", env);
 
-			// Resolve GFM based on env + format
-			const githubActions = resolveGithubActions(env, format);
-			log("githubActions:", githubActions);
+				// Map strategy + environment to format
+				const format = resolveFormat(strategy, env, options.format);
+				log("format:", format);
 
-			// Resolve cache directory with priority:
-			// 1. Explicit reporter.cacheDir option
-			// 2. outputFile['vitest-agent-reporter'] from vitest config (Vitest-native)
-			// 3. Vite's cacheDir + /vitest-agent-reporter (default)
-			const outputFile = (vitest.config as { outputFile?: string | Record<string, string> }).outputFile;
-			const cacheDir =
-				options.reporter?.cacheDir ??
-				resolveOutputDir(outputFile) ??
-				join(vitest.vite.config.cacheDir, "vitest-agent-reporter");
+				// Determine if this is an agent environment (for reporter stripping)
+				const isAgentEnv = env === "agent-shell";
 
-			// Resolve coverage thresholds from plugin options or vitest config
-			const coverageConfig = vitest.config.coverage as { thresholds?: Record<string, unknown> } | undefined;
-			const coverageThresholds = resolveThresholds(
-				(options.reporter?.coverageThresholds as Record<string, unknown> | undefined) ??
-					(coverageConfig?.thresholds as Record<string, unknown> | undefined),
-			);
-			const coverageTargets = options.reporter?.coverageTargets
-				? resolveThresholds(options.reporter.coverageTargets as Record<string, unknown>)
-				: undefined;
-			const autoUpdate = options.reporter?.autoUpdate ?? true;
+				// Only strip reporters when actively taking over console
+				if (format === "markdown" && isAgentEnv) {
+					log("stripping console reporters");
+					const stripped = stripConsoleReporters(vitest.config.reporters as unknown[]);
+					// Write back via mutation (Vitest config is mutable at this point)
+					(vitest.config as { reporters: unknown[] }).reporters = stripped;
 
-			// Disable Vitest's native autoUpdate when our targets are set
-			if (coverageTargets && autoUpdate) {
-				const thresholds = coverageConfig?.thresholds;
-				if (thresholds && typeof thresholds === "object") {
-					(thresholds as Record<string, unknown>).autoUpdate = false;
+					// Also suppress Vitest's native coverage text reporter (the big table)
+					// since our reporter handles coverage output
+					const coverageCfg = vitest.config.coverage as { reporter?: unknown[] } | undefined;
+					if (coverageCfg) {
+						log("suppressing native coverage text reporter");
+						coverageCfg.reporter = [];
+					}
 				}
+
+				// Complement mode warning: agent detected but no built-in agent reporter
+				if (isAgentEnv && strategy === "complement" && format === "vitest-bypass") {
+					const reporters = vitest.config.reporters as unknown[];
+					const hasAgentReporter = reporters.some((r) => r === "agent" || (Array.isArray(r) && r[0] === "agent"));
+					if (!hasAgentReporter) {
+						process.stderr.write(
+							'[vitest-agent-reporter] Warning: strategy is "complement" but ' +
+								'Vitest\'s built-in "agent" reporter is not in the reporter chain. ' +
+								"Console output may be verbose. Add 'agent' to your reporters or set " +
+								'strategy: "own".\n',
+						);
+					}
+				}
+
+				// Resolve GFM based on env + format
+				const githubActions = resolveGithubActions(env, format);
+				log("githubActions:", githubActions);
+
+				// Resolve cache directory with priority:
+				// 1. Explicit reporter.cacheDir option
+				// 2. outputFile['vitest-agent-reporter'] from vitest config (Vitest-native)
+				// 3. Vite's cacheDir + /vitest-agent-reporter (default)
+				const outputFile = (vitest.config as { outputFile?: string | Record<string, string> }).outputFile;
+				const cacheDir =
+					options.reporter?.cacheDir ??
+					resolveOutputDir(outputFile) ??
+					join(vitest.vite.config.cacheDir, "vitest-agent-reporter");
+
+				// Resolve coverage thresholds from plugin options or vitest config
+				const coverageConfig = vitest.config.coverage as { thresholds?: Record<string, unknown> } | undefined;
+				const coverageThresholds = resolveThresholds(
+					(options.reporter?.coverageThresholds as Record<string, unknown> | undefined) ??
+						(coverageConfig?.thresholds as Record<string, unknown> | undefined),
+				);
+				const coverageTargets = options.reporter?.coverageTargets
+					? resolveThresholds(options.reporter.coverageTargets as Record<string, unknown>)
+					: undefined;
+				const autoUpdate = options.reporter?.autoUpdate ?? true;
+
+				// Disable Vitest's native autoUpdate when our targets are set
+				if (coverageTargets && autoUpdate) {
+					const thresholds = coverageConfig?.thresholds;
+					if (thresholds && typeof thresholds === "object") {
+						(thresholds as Record<string, unknown>).autoUpdate = false;
+					}
+				}
+
+				log("cacheDir:", cacheDir);
+
+				// In multi-project mode, scope this reporter to its project
+				const projectFilter = project?.name;
+				log("projectFilter:", projectFilter ?? "(none)");
+
+				const reporter = new AgentReporter({
+					...options.reporter,
+					cacheDir,
+					coverageThresholds,
+					coverageTargets,
+					autoUpdate,
+					format,
+					mode,
+					logLevel: options.logLevel,
+					logFile: options.logFile,
+					mcp,
+					githubActions,
+					...(projectFilter ? { projectFilter } : {}),
+				});
+
+				// Push reporter into the config (mutating the reporters array)
+				(vitest.config.reporters as unknown[]).push(reporter);
+
+				log("reporters after push:", vitest.config.reporters.length);
+			} catch (err) {
+				process.stderr.write(`vitest-agent-reporter: ${formatFatalError(err)}\n`);
+				throw err;
 			}
-
-			log("cacheDir:", cacheDir);
-
-			// In multi-project mode, scope this reporter to its project
-			const projectFilter = project?.name;
-			log("projectFilter:", projectFilter ?? "(none)");
-
-			const reporter = new AgentReporter({
-				...options.reporter,
-				cacheDir,
-				coverageThresholds,
-				coverageTargets,
-				autoUpdate,
-				format,
-				mode,
-				logLevel: options.logLevel,
-				logFile: options.logFile,
-				mcp,
-				githubActions,
-				...(projectFilter ? { projectFilter } : {}),
-			});
-
-			// Push reporter into the config (mutating the reporters array)
-			(vitest.config.reporters as unknown[]).push(reporter);
-
-			log("reporters after push:", vitest.config.reporters.length);
 		},
 	};
 }

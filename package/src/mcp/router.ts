@@ -3,6 +3,7 @@ import { cacheHealth } from "./tools/cache-health.js";
 import { configure } from "./tools/configure.js";
 import { testCoverage } from "./tools/coverage.js";
 import { testErrors } from "./tools/errors.js";
+import { help } from "./tools/help.js";
 import { testHistory } from "./tools/history.js";
 import { moduleList } from "./tools/module-list.js";
 import { noteCreate, noteDelete, noteGet, noteList, noteSearch, noteUpdate } from "./tools/notes.js";
@@ -17,6 +18,7 @@ import { testList } from "./tools/test-list.js";
 import { testTrends } from "./tools/trends.js";
 
 export const appRouter = router({
+	help: help,
 	test_status: testStatus,
 	test_overview: testOverview,
 	test_coverage: testCoverage,

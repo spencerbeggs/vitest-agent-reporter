@@ -2,9 +2,9 @@
 
 The `vitest-agent-reporter-mcp` binary provides an
 [MCP](https://modelcontextprotocol.io/) server over stdio transport,
-exposing 16 tools for querying test data, managing notes, and running
-tests. LLM agent hosts like Claude Code can call these tools directly
-during a session.
+exposing 22 tools for querying test data, managing notes, running
+tests, and discovering project structure. LLM agent hosts like Claude
+Code can call these tools directly during a session.
 
 ## How It Works
 
@@ -63,6 +63,14 @@ Or add it to your `.mcp.json` manually:
 ```
 
 ## Tool Reference
+
+### Help
+
+#### `help`
+
+List all available MCP tools with their parameters and descriptions.
+
+No parameters. Returns a complete tool catalog organized by category.
 
 ### Read-Only Tools
 
@@ -160,6 +168,53 @@ Execute vitest for specific files or patterns.
 | `timeout` | `number` | No | Timeout in seconds (default: 120) |
 
 Returns JSON with the test run result.
+
+### Discovery Tools
+
+These tools help agents explore the test landscape and project structure.
+
+#### `project_list`
+
+List all projects with their latest run summary.
+
+No parameters.
+
+#### `test_list`
+
+List test cases with state and duration.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project name |
+| `subProject` | `string` | No | Sub-project name |
+| `state` | `string` | No | Filter by state (`passed`, `failed`, `skipped`, `pending`) |
+| `module` | `string` | No | Filter by module file path |
+| `limit` | `number` | No | Max number of results |
+
+#### `module_list`
+
+List test modules (files) with test counts.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project name |
+| `subProject` | `string` | No | Sub-project name |
+
+#### `suite_list`
+
+List test suites (describe blocks).
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Project name |
+| `subProject` | `string` | No | Sub-project name |
+| `module` | `string` | No | Filter by module file path |
+
+#### `settings_list`
+
+List all captured Vitest config snapshots with their hashes.
+
+No parameters.
 
 ### Note Tools
 

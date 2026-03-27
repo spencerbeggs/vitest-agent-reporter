@@ -22,6 +22,16 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 	const factory = createCallerFactory(appRouter);
 	const caller = factory(ctx);
 
+	// ── Help tool ──────────────────────────────────────────────────────
+
+	server.registerTool(
+		"help",
+		{
+			description: "List all available MCP tools with their parameters and descriptions",
+		},
+		async () => textResult(await caller.help()),
+	);
+
 	// ── Read-only tools (queries returning markdown) ────────────────────
 
 	server.registerTool(
