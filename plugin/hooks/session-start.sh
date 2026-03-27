@@ -36,27 +36,28 @@ and more precise for targeted queries.
 
 | Tool | Description |
 | ---- | ----------- |
-| \`test_status\` | Per-project test pass/fail state |
-| \`test_overview\` | Test landscape: files, suites, counts |
-| \`test_coverage\` | Coverage gaps with uncovered lines |
-| \`test_history\` | Flaky/persistent/recovered tests |
-| \`test_trends\` | Coverage trajectory per project |
-| \`test_errors\` | Search errors by type/message |
-| \`test_for_file\` | Tests covering a source file |
+| \`help\` | List all available MCP tools with parameters |
 | \`run_tests\` | Execute vitest for specific files or projects |
-| \`cache_health\` | Database health and staleness check |
-| \`configure\` | View captured Vitest settings |
 | \`project_list\` | List all known projects |
 | \`test_list\` | List test cases with state and duration |
 | \`module_list\` | List test modules (files) |
 | \`suite_list\` | List test suites (describe blocks) |
-| \`settings_list\` | List Vitest config snapshots |
+| \`test_status\` | Per-project test pass/fail state |
+| \`test_overview\` | Test landscape: files, suites, counts |
+| \`test_for_file\` | Tests covering a source file |
+| \`test_coverage\` | Coverage gaps with uncovered lines |
+| \`test_history\` | Flaky/persistent/recovered tests |
+| \`test_trends\` | Coverage trajectory per project |
+| \`test_errors\` | Search errors by type/message |
 | \`note_create\` | Create a note |
 | \`note_list\` | List notes by scope |
 | \`note_get\` | Get a note by ID |
 | \`note_update\` | Update an existing note |
 | \`note_delete\` | Delete a note |
 | \`note_search\` | Full-text search notes |
+| \`cache_health\` | Database health and staleness check |
+| \`configure\` | View captured Vitest settings |
+| \`settings_list\` | List Vitest config snapshots |
 
 ## Running Tests via MCP
 
