@@ -1,5 +1,27 @@
 # vitest-agent-reporter
 
+## 1.2.0
+
+### Features
+
+* [`d3be9f3`](https://github.com/spencerbeggs/vitest-agent-reporter/commit/d3be9f327c6d776cf656eaf764e0f579d1528e3a) ### MCP Help Tool
+
+New `help` MCP tool that returns a complete catalog of all 22 tools organized by category with parameter names and descriptions. Agents can call `help()` to explore available capabilities.
+
+### Bug Fixes
+
+* [`d3be9f3`](https://github.com/spencerbeggs/vitest-agent-reporter/commit/d3be9f327c6d776cf656eaf764e0f579d1528e3a) ### Fatal Error Stack Traces
+
+Fixed fatal errors swallowing stack traces and producing unhelpful `defect: {}` output. All four entry points (reporter, plugin, CLI, MCP server) now use `Cause.pretty()` to extract full error details from Effect FiberFailure instances. Fatal error output includes a link to the issue tracker.
+
+### Plugin Error Handling
+
+The `configureVitest` hook now wraps its body in a try/catch, logging formatted errors to stderr before re-throwing so Vitest knows configuration failed.
+
+### Improved Session Context
+
+The SessionStart hook now explains what vitest-agent-reporter does, encourages MCP tool usage over raw `vitest run` commands, lists all 22 tools (previously 11), and includes `run_tests` usage examples at different scopes.
+
 ## 1.1.0
 
 ### Features
