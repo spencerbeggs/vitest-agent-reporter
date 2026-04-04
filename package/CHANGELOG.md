@@ -1,5 +1,11 @@
 # vitest-agent-reporter
 
+## 1.2.1
+
+### Bug Fixes
+
+* [`3db06ac`](https://github.com/spencerbeggs/vitest-agent-reporter/commit/3db06ac3f75bb46f0f986a716f35fcc49e066d98) Fix hook JSON output validation errors by outputting proper hookSpecificOutput JSON instead of plain markdown, using XML tags for additionalContext, and consuming stdin in SessionStart hook
+
 ## 1.2.0
 
 ### Features
