@@ -2,7 +2,7 @@
 # PostToolUse hook: detect vitest runs and suggest MCP tools
 #
 # Reads stdin JSON for the Bash command that was executed.
-# If it looks like a test run, output a reminder about MCP tools.
+# If it looks like a failed test run, output a reminder about MCP tools.
 
 set -euo pipefail
 
@@ -17,10 +17,18 @@ if echo "$COMMAND" | grep -qE '(vitest|jest|pnpm test|npm test|bun test|yarn tes
 
   if [ "$EXIT_CODE" != "0" ]; then
     # Tests failed -- suggest debugging tools
-    jq -n '{
+    CONTEXT="<test_failure_guidance>
+Use MCP tools for analysis:
+- test_errors to search errors by type
+- test_history to check if failures are flaky
+- test_for_file to find related tests
+- note_create to record debugging findings
+</test_failure_guidance>"
+
+    jq -n --arg ctx "$CONTEXT" '{
       hookSpecificOutput: {
         hookEventName: "PostToolUse",
-        additionalContext: "Tests failed. Use MCP tools for analysis:\n- `test_errors` to search errors by type\n- `test_history` to check if failures are flaky\n- `test_for_file` to find related tests\n- `note_create` to record debugging findings"
+        additionalContext: $ctx
       }
     }'
   fi
