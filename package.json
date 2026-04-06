@@ -34,9 +34,9 @@
 		"typecheck": "turbo run types:check --log-prefix=none --log-order=grouped"
 	},
 	"devDependencies": {
-		"@savvy-web/changesets": "^0.7.3",
-		"@savvy-web/commitlint": "^0.5.1",
-		"@savvy-web/lint-staged": "^0.7.2",
+		"@savvy-web/changesets": "^0.7.4",
+		"@savvy-web/commitlint": "^0.5.2",
+		"@savvy-web/lint-staged": "^0.7.3",
 		"@types/node": "catalog:silk",
 		"@typescript/native-preview": "catalog:silk",
 		"@vitest/coverage-v8": "^4.1.2",
