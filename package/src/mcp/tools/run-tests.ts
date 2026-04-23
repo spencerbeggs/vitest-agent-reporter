@@ -168,31 +168,19 @@ export const runTests = publicProcedure
 
 			const report = buildAgentReport(testModules, unhandledErrors, reason, { omitPassingTests: true });
 
-			// Read classifications from DB (written by the reporter during vitest.start)
+			// Read stored classifications from DB (written by the reporter via
+			// classifyTest() during vitest.start). This avoids reimplementing
+			// classification logic and stays consistent with AgentReporter.
 			let classifications: ReadonlyMap<string, string> | undefined;
 			try {
 				const project = input.project ?? "default";
-				const subProject: string | null = null;
 				classifications = await ctx.runtime.runPromise(
 					Effect.gen(function* () {
 						const reader = yield* DataReader;
-						const history = yield* reader.getHistory(project, subProject);
-						const map = new Map<string, string>();
-						for (const entry of history.tests) {
-							if (entry.runs.length > 0) {
-								const lastState = entry.runs[entry.runs.length - 1].state;
-								const prevStates = entry.runs.slice(0, -1).map((r: { state: string }) => r.state);
-								if (lastState === "failed") {
-									const hadPriorRuns = prevStates.length > 0;
-									const prevFailed = prevStates.some((s: string) => s === "failed");
-									const prevPassed = prevStates.some((s: string) => s === "passed");
-									if (!hadPriorRuns || !prevFailed) map.set(entry.fullName, "new-failure");
-									else if (prevPassed && prevFailed) map.set(entry.fullName, "flaky");
-									else map.set(entry.fullName, "persistent");
-								}
-							}
-						}
-						return map;
+						const tests = yield* reader.listTests(project, null, {});
+						return new Map(
+							tests.filter((t) => t.classification != null).map((t) => [t.fullName, t.classification as string]),
+						);
 					}),
 				);
 			} catch {

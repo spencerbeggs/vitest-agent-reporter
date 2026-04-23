@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Effect, Option, Schema } from "effect";
 import { DataReader } from "../../services/DataReader.js";
 import { publicProcedure } from "../context.js";
 
@@ -19,13 +19,13 @@ export const testGet = publicProcedure
 				const project = input.project ?? "default";
 				const subProject = input.subProject ?? null;
 
-				// Find the test by fullName (no limit — must search all tests)
-				const tests = yield* reader.listTests(project, subProject, {});
-				const test = tests.find((t) => t.fullName === input.fullName);
+				// Direct indexed lookup by fullName
+				const testOpt = yield* reader.getTestByFullName(project, subProject, input.fullName);
 
-				if (!test) {
-					return `Test not found: \`${input.fullName}\`\n\nUse test_list to discover available tests.`;
+				if (Option.isNone(testOpt)) {
+					return `Test not found: \`${input.fullName}\`\n\nUse test_list to discover available tests (format: "Suite > test name").`;
 				}
+				const test = testOpt.value;
 
 				const lines: string[] = [`# Test: ${test.fullName}`, ""];
 
