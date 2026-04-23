@@ -3,9 +3,9 @@ status: current
 module: vitest-agent-reporter
 category: testing
 created: 2026-03-20
-updated: 2026-03-25
-last-synced: 2026-03-25
-post-phase5-sync: 2026-03-25
+updated: 2026-04-23
+last-synced: 2026-04-23
+post-phase5-sync: 2026-04-23
 completeness: 95
 related:
   - vitest-agent-reporter/architecture.md
@@ -44,6 +44,7 @@ MCP tools are tested via tRPC caller factory.
   objects, tallying, error extraction, omitPassingTests behavior
 - `utils/format-console.test.ts` -- legacy `formatConsoleMarkdown()` tests
 - `utils/format-gfm.test.ts` -- legacy `formatGfm()` tests
+- `utils/format-fatal-error.test.ts` -- fatal error formatting
 - `utils/resolve-thresholds.test.ts` -- `resolveThresholds()` Vitest-native
   format parsing, `100` shorthand, per-glob patterns, `getMinThreshold()`
 - `utils/compute-trend.test.ts` -- `computeTrend()` trend entry computation,
@@ -85,6 +86,7 @@ MCP tools are tested via tRPC caller factory.
 - `layers/FormatSelectorLive.test.ts` -- format selection logic
 - `layers/DetailResolverLive.test.ts` -- detail level resolution
 - `layers/OutputRendererLive.test.ts` -- formatter dispatch
+- `layers/LoggerLive.test.ts` -- structured logging layer
 - `formatters/markdown.test.ts` -- tiered console markdown formatting,
   coverage gaps, trend summaries, CLI hints
 - `formatters/gfm.test.ts` -- GFM formatting, single and multi-project
@@ -96,8 +98,6 @@ MCP tools are tested via tRPC caller factory.
   domain types from row data
 - `mcp/router.test.ts` -- tRPC router integration tests via caller factory
 - `mcp/tools/run-tests.test.ts` -- run_tests tool spawnSync behavior
-- `mcp/tools/discovery.test.ts` -- discovery tools (project_list, test_list,
-  module_list, suite_list, settings_list)
 - `cli/lib/format-status.test.ts` -- status formatting
 - `cli/lib/format-overview.test.ts` -- overview formatting
 - `cli/lib/format-coverage.test.ts` -- coverage formatting with thresholds
@@ -234,8 +234,6 @@ bugs.
 - `package/src/schemas/*.ts`, `package/src/utils/*.ts`
 - `package/src/cli/index.ts`, `package/src/cli/commands/*.ts`,
   `package/src/cli/lib/*.ts`
-- `package/bin/vitest-agent-reporter.js`
-
 **Depends on:** Phase 1 (architecture, data structures, test patterns)
 
 ### Phase 3: Suggested Actions and Failure History -- COMPLETE
@@ -535,11 +533,11 @@ Four sub-phases executed on the `feat/db-mcp` branch:
 
 **Deliverables (all implemented):**
 
-- **tRPC router** (`package/src/mcp/router.ts`) with 21 procedures
+- **tRPC router** (`package/src/mcp/router.ts`) with 24 procedures
   aggregating all MCP tools
 - **MCP server** (`package/src/mcp/server.ts`) using
   `@modelcontextprotocol/sdk` with StdioServerTransport, registers all
-  21 tools with Zod input schemas
+  24 tools with Zod input schemas
 - **tRPC context** (`package/src/mcp/context.ts`) carrying `ManagedRuntime`
   for Effect service access
 - **Entry point** (`package/src/mcp/index.ts`) resolves DB path, creates
@@ -548,17 +546,18 @@ Four sub-phases executed on the `feat/db-mcp` branch:
   DataReaderLive + DataStoreLive + ProjectDiscoveryLive +
   OutputPipelineLive + SqliteClient + Migrator + NodeContext +
   NodeFileSystem
-- **21 MCP tools:**
+- **24 MCP tools:**
+  - Meta (markdown): `help`
   - Read-only (markdown): `test_status`, `test_overview`, `test_coverage`,
     `test_history`, `test_trends`, `test_errors`, `test_for_file`,
-    `cache_health`, `configure`
+    `test_get`, `file_coverage`, `cache_health`, `configure`
   - Discovery (markdown): `project_list`, `test_list`, `module_list`,
     `suite_list`, `settings_list`
   - Mutation (text): `run_tests`
   - Note CRUD (markdown for list/search, JSON for create/get/update/
     delete): `note_create`, `note_list`, `note_get`, `note_update`,
     `note_delete`, `note_search`
-- **12 tool implementation files** in `package/src/mcp/tools/`
+- **19 tool implementation files** in `package/src/mcp/tools/`
 
 **Dependencies added:** `@modelcontextprotocol/sdk`, `@trpc/server`, `zod`
 
@@ -566,14 +565,19 @@ Four sub-phases executed on the `feat/db-mcp` branch:
 
 - `package/src/mcp/context.ts`, `package/src/mcp/router.ts`,
   `package/src/mcp/server.ts`, `package/src/mcp/index.ts`
-- `package/src/mcp/tools/status.ts`, `package/src/mcp/tools/overview.ts`,
-  `package/src/mcp/tools/coverage.ts`, `package/src/mcp/tools/history.ts`,
-  `package/src/mcp/tools/trends.ts`, `package/src/mcp/tools/errors.ts`,
-  `package/src/mcp/tools/test-for-file.ts`,
+- `package/src/mcp/tools/help.ts`, `package/src/mcp/tools/status.ts`,
+  `package/src/mcp/tools/overview.ts`, `package/src/mcp/tools/coverage.ts`,
+  `package/src/mcp/tools/history.ts`, `package/src/mcp/tools/trends.ts`,
+  `package/src/mcp/tools/errors.ts`, `package/src/mcp/tools/test-for-file.ts`,
+  `package/src/mcp/tools/test-get.ts`, `package/src/mcp/tools/test-list.ts`,
+  `package/src/mcp/tools/file-coverage.ts`,
   `package/src/mcp/tools/run-tests.ts`,
   `package/src/mcp/tools/cache-health.ts`,
   `package/src/mcp/tools/configure.ts`, `package/src/mcp/tools/notes.ts`,
-  `package/src/mcp/tools/discovery.ts`
+  `package/src/mcp/tools/project-list.ts`,
+  `package/src/mcp/tools/module-list.ts`,
+  `package/src/mcp/tools/suite-list.ts`,
+  `package/src/mcp/tools/settings-list.ts`
 - `package/src/layers/McpLive.ts`
 
 **New test files:**
@@ -594,10 +598,11 @@ Four sub-phases executed on the `feat/db-mcp` branch:
     context into the Claude Code session via bash
   - `PostToolUse` on `Bash` -> `plugin/hooks/post-test-run.sh` -- detects
     vitest test runs and triggers post-run actions
-- **3 Skills:**
+- **4 Skills:**
   - `plugin/skills/tdd/SKILL.md` -- TDD workflow guidance
   - `plugin/skills/debugging/SKILL.md` -- test debugging workflow
   - `plugin/skills/configuration/SKILL.md` -- Vitest configuration guidance
+  - `plugin/skills/coverage-improvement/SKILL.md` -- coverage improvement
 - **2 Commands:**
   - `plugin/commands/setup.md` -- initial setup instructions
   - `plugin/commands/configure.md` -- configuration management
@@ -616,6 +621,7 @@ build step, or tests.
 - `plugin/skills/tdd/SKILL.md`
 - `plugin/skills/debugging/SKILL.md`
 - `plugin/skills/configuration/SKILL.md`
+- `plugin/skills/coverage-improvement/SKILL.md`
 - `plugin/commands/setup.md`
 - `plugin/commands/configure.md`
 
@@ -714,5 +720,5 @@ complete. These are not a new phase but a set of fixes and enhancements.
 ---
 
 **Document Status:** Current -- reflects Phase 1 through Phase 5
-implementation plus post-Phase-5 refinements. 547 tests across 51 files,
+implementation plus post-Phase-5 refinements. 569 tests across 52 files,
 all coverage metrics above 80%. All phases complete.

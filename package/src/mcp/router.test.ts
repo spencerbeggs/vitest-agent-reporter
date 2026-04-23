@@ -165,17 +165,19 @@ describe("MCP Router", () => {
 
 		// Read
 		const note = await caller.note_get({ id });
-		expect(note?.title).toBe("Test Note");
+		expect(note.found).toBe(true);
+		if (note.found) expect(note.note.title).toBe("Test Note");
 
 		// Update
 		await caller.note_update({ id, title: "Updated" });
 		const updated = await caller.note_get({ id });
-		expect(updated?.title).toBe("Updated");
+		expect(updated.found).toBe(true);
+		if (updated.found) expect(updated.note.title).toBe("Updated");
 
 		// Delete
 		await caller.note_delete({ id });
 		const deleted = await caller.note_get({ id });
-		expect(deleted).toBeNull();
+		expect(deleted.found).toBe(false);
 	});
 
 	it("note_list returns no notes message for empty state", async () => {

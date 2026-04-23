@@ -149,6 +149,48 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 	);
 
 	server.registerTool(
+		"test_get",
+		{
+			description:
+				"Get detailed information about a single test: state, duration, errors, run history, and classification",
+			inputSchema: {
+				fullName: z.string().describe("Full test name (e.g. 'Suite > nested > test name')"),
+				project: z.optional(z.string()).describe("Project name"),
+				subProject: z.optional(z.string()).describe("Sub-project name"),
+			},
+		},
+		async (args) =>
+			textResult(
+				await caller.test_get({
+					fullName: args.fullName,
+					project: args.project,
+					subProject: args.subProject,
+				}),
+			),
+	);
+
+	server.registerTool(
+		"file_coverage",
+		{
+			description:
+				"Get coverage data for a specific source file: per-metric values, uncovered lines, and related tests",
+			inputSchema: {
+				filePath: z.string().describe("Source file path to check coverage for"),
+				project: z.optional(z.string()).describe("Project name"),
+				subProject: z.optional(z.string()).describe("Sub-project name"),
+			},
+		},
+		async (args) =>
+			textResult(
+				await caller.file_coverage({
+					filePath: args.filePath,
+					project: args.project,
+					subProject: args.subProject,
+				}),
+			),
+	);
+
+	server.registerTool(
 		"configure",
 		{
 			description: "View captured Vitest settings for a test run",
@@ -189,7 +231,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 			inputSchema: {
 				project: z.optional(z.string()).describe("Project name"),
 				subProject: z.optional(z.string()).describe("Sub-project name"),
-				state: z.optional(z.string()).describe("Filter by test state (passed, failed, skipped)"),
+				state: z.optional(z.enum(["passed", "failed", "skipped", "pending"])).describe("Filter by test state"),
 				module: z.optional(z.string()).describe("Filter by module file path"),
 				limit: z.optional(z.number()).describe("Max number of results"),
 			},

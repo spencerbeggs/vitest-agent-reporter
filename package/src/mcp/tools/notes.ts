@@ -63,7 +63,7 @@ export const noteList = publicProcedure
 				const notes = yield* reader.getNotes(input.scope, input.project, input.testFullName);
 
 				if (notes.length === 0) {
-					return "No notes found.";
+					return "No notes found. Use note_create to add notes.";
 				}
 
 				const lines: string[] = ["## Notes", ""];
@@ -92,7 +92,10 @@ export const noteGet = publicProcedure
 			Effect.gen(function* () {
 				const reader = yield* DataReader;
 				const noteOpt = yield* reader.getNoteById(input.id);
-				return Option.getOrNull(noteOpt);
+				if (Option.isNone(noteOpt)) {
+					return { found: false as const, id: input.id };
+				}
+				return { found: true as const, note: noteOpt.value };
 			}),
 		);
 	});
@@ -159,7 +162,7 @@ export const noteSearch = publicProcedure
 				const notes = yield* reader.searchNotes(input.query);
 
 				if (notes.length === 0) {
-					return "No notes found.";
+					return "No notes found. Use note_create to add notes.";
 				}
 
 				const lines: string[] = [`## Notes matching "${input.query}"`, ""];

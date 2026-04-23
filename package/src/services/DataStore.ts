@@ -69,6 +69,7 @@ export interface TestCaseInput {
 	readonly skipNote?: string;
 	readonly locationLine?: number;
 	readonly locationColumn?: number;
+	readonly tags?: readonly string[];
 }
 
 export interface TestErrorInput {

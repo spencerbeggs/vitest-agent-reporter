@@ -29,7 +29,7 @@ export const testList = publicProcedure
 				const tests = yield* reader.listTests(project, subProject, opts);
 
 				if (tests.length === 0) {
-					return "No tests found.";
+					return "No tests found. Run run_tests({}) to execute tests and populate the database.";
 				}
 
 				const lines: string[] = ["## Tests", ""];

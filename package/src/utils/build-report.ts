@@ -27,6 +27,9 @@ export interface VitestTestError {
 /**
  * Duck-typed Vitest test result returned by `TestCase.result()`.
  *
+ * Vitest returns `undefined` for tests that have not finished running
+ * (pending/collected state).
+ *
  * @internal
  */
 export interface VitestTestResult {
@@ -59,8 +62,9 @@ export interface VitestTestCase {
 	type: "test";
 	name: string;
 	fullName: string;
-	result(): VitestTestResult;
-	diagnostic(): VitestTestDiagnostic;
+	tags: readonly string[];
+	result(): VitestTestResult | undefined;
+	diagnostic(): VitestTestDiagnostic | undefined;
 }
 
 /**
@@ -92,14 +96,39 @@ export interface VitestModuleError {
  *
  * @internal
  */
+/**
+ * Duck-typed Vitest TestSuite from the Reporter v2 API.
+ *
+ * @internal
+ */
+export interface VitestTestSuite {
+	type: "suite";
+	name: string;
+	fullName: string;
+	state(): string;
+	parent: VitestTestSuite | VitestTestModule;
+	options: {
+		concurrent?: boolean;
+		shuffle?: boolean;
+		retry?: number;
+		repeats?: number;
+		mode?: string;
+		tags?: string[];
+	};
+	location?: { line: number; column: number };
+}
+
 export interface VitestTestModule {
 	type: "module";
 	moduleId: string;
 	relativeModuleId: string;
 	project: { name: string };
 	state(): string;
-	children: { allTests(filter?: string): Generator<VitestTestCase> };
-	diagnostic(): VitestModuleDiagnostic;
+	children: {
+		allTests(filter?: string): Generator<VitestTestCase>;
+		allSuites(): Generator<VitestTestSuite>;
+	};
+	diagnostic(): VitestModuleDiagnostic | undefined;
 	errors(): Array<VitestModuleError>;
 }
 
@@ -174,7 +203,7 @@ export function buildAgentReport(
 	const failedFiles: string[] = [];
 
 	for (const testModule of testModules) {
-		const moduleDuration = testModule.diagnostic().duration;
+		const moduleDuration = testModule.diagnostic()?.duration ?? 0;
 		totalDuration += moduleDuration;
 
 		const moduleState = normalizeState(testModule.state());
@@ -190,7 +219,7 @@ export function buildAgentReport(
 			totalCount++;
 			const result = testCase.result();
 			const diag = testCase.diagnostic();
-			const state = normalizeState(result.state);
+			const state = normalizeState(result?.state ?? "pending");
 
 			if (state === "passed") passedCount++;
 			else if (state === "failed") {
@@ -202,14 +231,14 @@ export function buildAgentReport(
 			// Include test in report based on omitPassingTests
 			const shouldInclude = !omitPassing || state !== "passed";
 			if (shouldInclude) {
-				const errors = mapErrors(result.errors);
+				const errors = mapErrors(result?.errors);
 				const testReport: TestReport = {
 					name: testCase.name,
 					fullName: testCase.fullName,
 					state,
-					duration: diag.duration,
-					...(diag.flaky ? { flaky: true } : {}),
-					...(diag.slow ? { slow: true } : {}),
+					...(diag?.duration !== undefined ? { duration: diag.duration } : {}),
+					...(diag?.flaky ? { flaky: true } : {}),
+					...(diag?.slow ? { slow: true } : {}),
 					...(errors ? { errors } : {}),
 				};
 				testReports.push(testReport);

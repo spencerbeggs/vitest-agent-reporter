@@ -25,7 +25,7 @@ export const suiteList = publicProcedure
 				const suites = yield* reader.listSuites(project, subProject, opts);
 
 				if (suites.length === 0) {
-					return "No suites found.";
+					return "No suites found. Run run_tests({}) to execute tests and populate the database.";
 				}
 
 				const lines: string[] = ["## Suites", ""];
