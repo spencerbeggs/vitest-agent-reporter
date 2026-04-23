@@ -11,7 +11,7 @@ INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null || echo "")
 
 # Check if the command looks like a test run
-if echo "$COMMAND" | grep -qE '(^|/|npx\s+|pnpm\s+exec\s+)(vitest|jest)(\s|$)|(\s|^)(pnpm|npm|bun|yarn)\s+(run\s+)?test(\s|$)'; then
+if echo "$COMMAND" | grep -qE '(^|/|npx[[:space:]]+|pnpm[[:space:]]+exec[[:space:]]+)(vitest|jest)([[:space:]]|$)|([[:space:]]|^)(pnpm|npm|bun|yarn)[[:space:]]+(run[[:space:]]+)?test([[:space:]]|$)'; then
   # Check exit code from tool result
   EXIT_CODE=$(echo "$INPUT" | jq -r '.tool_result.exit_code // "0"' 2>/dev/null || echo "0")
 

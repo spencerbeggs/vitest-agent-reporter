@@ -70,7 +70,11 @@ export function formatReportMarkdown(report: AgentReport, classifications?: Read
 				for (const err of test.errors) {
 					lines.push(`  ${err.message}`);
 					if (err.diff) {
-						lines.push(`\n  \`\`\`diff\n  ${err.diff}\n  \`\`\``);
+						const diff =
+							err.diff.length > 1000
+								? `${err.diff.slice(0, 1000)}\n... (truncated, ${err.diff.length} chars total)`
+								: err.diff;
+						lines.push(`\n  \`\`\`diff\n  ${diff}\n  \`\`\``);
 					}
 				}
 			}
@@ -119,9 +123,7 @@ export const runTests = publicProcedure
 	)
 	.mutation(async ({ ctx, input }) => {
 		const files = input.files ? sanitizeTestArgs(input.files) : [];
-		if (input.project) {
-			sanitizeTestArgs([input.project]);
-		}
+		const project = input.project ? sanitizeTestArgs([input.project])[0] : undefined;
 
 		const timeoutMs = (input.timeout ?? 120) * 1000;
 
@@ -146,7 +148,7 @@ export const runTests = publicProcedure
 					root: ctx.cwd,
 					run: true,
 					coverage: { enabled: false },
-					...(input.project ? { project: input.project } : {}),
+					...(project ? { project } : {}),
 				},
 				{}, // viteOverrides
 				{
@@ -155,10 +157,15 @@ export const runTests = publicProcedure
 				},
 			);
 
+			let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 			const result = await Promise.race([
 				vitest.start(files.length > 0 ? files : undefined),
-				new Promise<never>((_, reject) => setTimeout(() => reject(new Error("VITEST_TIMEOUT")), timeoutMs)),
-			]);
+				new Promise<never>((_, reject) => {
+					timeoutHandle = setTimeout(() => reject(new Error("VITEST_TIMEOUT")), timeoutMs);
+				}),
+			]).finally(() => {
+				if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+			});
 
 			const testModules = result.testModules as unknown as Parameters<typeof buildAgentReport>[0];
 			const unhandledErrors = coerceErrors(result.unhandledErrors);
@@ -173,11 +180,11 @@ export const runTests = publicProcedure
 			// classification logic and stays consistent with AgentReporter.
 			let classifications: ReadonlyMap<string, string> | undefined;
 			try {
-				const project = input.project ?? "default";
+				const classProject = project ?? "default";
 				classifications = await ctx.runtime.runPromise(
 					Effect.gen(function* () {
 						const reader = yield* DataReader;
-						const tests = yield* reader.listTests(project, null, {});
+						const tests = yield* reader.listTests(classProject, null, {});
 						return new Map(
 							tests.filter((t) => t.classification != null).map((t) => [t.fullName, t.classification as string]),
 						);
