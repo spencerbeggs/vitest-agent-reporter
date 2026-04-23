@@ -3,6 +3,7 @@ import { cacheHealth } from "./tools/cache-health.js";
 import { configure } from "./tools/configure.js";
 import { testCoverage } from "./tools/coverage.js";
 import { testErrors } from "./tools/errors.js";
+import { fileCoverage } from "./tools/file-coverage.js";
 import { help } from "./tools/help.js";
 import { testHistory } from "./tools/history.js";
 import { moduleList } from "./tools/module-list.js";
@@ -14,6 +15,7 @@ import { settingsList } from "./tools/settings-list.js";
 import { testStatus } from "./tools/status.js";
 import { suiteList } from "./tools/suite-list.js";
 import { testForFile } from "./tools/test-for-file.js";
+import { testGet } from "./tools/test-get.js";
 import { testList } from "./tools/test-list.js";
 import { testTrends } from "./tools/trends.js";
 
@@ -26,6 +28,8 @@ export const appRouter = router({
 	test_trends: testTrends,
 	test_errors: testErrors,
 	test_for_file: testForFile,
+	test_get: testGet,
+	file_coverage: fileCoverage,
 	run_tests: runTests,
 	cache_health: cacheHealth,
 	configure: configure,

@@ -160,6 +160,11 @@ export class DataReader extends Context.Tag("vitest-agent-reporter/DataReader")<
 		readonly getManifest: () => Effect.Effect<Option.Option<CacheManifest>, DataStoreError>;
 		readonly getSettings: (hash: string) => Effect.Effect<Option.Option<SettingsRow>, DataStoreError>;
 		readonly getLatestSettings: () => Effect.Effect<Option.Option<SettingsRow>, DataStoreError>;
+		readonly getTestByFullName: (
+			project: string,
+			subProject: string | null,
+			fullName: string,
+		) => Effect.Effect<Option.Option<TestListEntry>, DataStoreError>;
 		readonly listTests: (
 			project: string,
 			subProject: string | null,

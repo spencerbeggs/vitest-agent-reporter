@@ -371,7 +371,7 @@ export class AgentReporter {
 				// Compute total duration for the run
 				let totalDuration = 0;
 				for (const mod of projectModules) {
-					totalDuration += mod.diagnostic().duration;
+					totalDuration += mod.diagnostic()?.duration ?? 0;
 				}
 
 				// Write test run to DB
@@ -401,7 +401,7 @@ export class AgentReporter {
 							fileId,
 							relativeModuleId: mod.relativeModuleId,
 							state: mod.state(),
-							duration: mod.diagnostic().duration,
+							duration: mod.diagnostic()?.duration ?? 0,
 						},
 					]);
 					const moduleId = moduleIds[0];
@@ -412,6 +412,29 @@ export class AgentReporter {
 						yield* store.writeSourceMap(sourceFile, moduleId, "convention");
 					}
 
+					// Write suites for this module, tracking IDs for parent relationships
+					const suiteIdMap = new Map<string, number>();
+					for (const suite of mod.children.allSuites()) {
+						const parentSuiteId =
+							suite.parent && suite.parent.type === "suite" ? suiteIdMap.get(suite.parent.fullName) : undefined;
+						const suiteIds = yield* store.writeSuites(moduleId, [
+							{
+								name: suite.name,
+								fullName: suite.fullName,
+								state: suite.state(),
+								...(parentSuiteId !== undefined && { parentSuiteId }),
+								...(suite.options?.mode !== undefined && { mode: suite.options.mode }),
+								...(suite.options?.concurrent !== undefined && { concurrent: suite.options.concurrent }),
+								...(suite.options?.shuffle !== undefined && { shuffle: suite.options.shuffle }),
+								...(suite.options?.retry !== undefined && { retry: suite.options.retry }),
+								...(suite.options?.repeats !== undefined && { repeats: suite.options.repeats }),
+								...(suite.location?.line !== undefined && { locationLine: suite.location.line }),
+								...(suite.location?.column !== undefined && { locationColumn: suite.location.column }),
+							} as Parameters<typeof store.writeSuites>[1][number],
+						]);
+						suiteIdMap.set(suite.fullName, suiteIds[0]);
+					}
+
 					// Collect test cases for this module
 					const testCases: Array<{
 						name: string;
@@ -420,6 +443,7 @@ export class AgentReporter {
 						duration?: number;
 						flaky?: boolean;
 						slow?: boolean;
+						tags?: readonly string[];
 					}> = [];
 					for (const testCase of mod.children.allTests()) {
 						const result = testCase.result();
@@ -427,10 +451,11 @@ export class AgentReporter {
 						testCases.push({
 							name: testCase.name,
 							fullName: testCase.fullName,
-							state: result.state,
-							duration: diag.duration,
-							flaky: diag.flaky,
-							slow: diag.slow,
+							state: result?.state ?? "pending",
+							...(diag?.duration !== undefined && { duration: diag.duration }),
+							...(diag?.flaky !== undefined && { flaky: diag.flaky }),
+							...(diag?.slow !== undefined && { slow: diag.slow }),
+							...(testCase.tags.length > 0 && { tags: testCase.tags }),
 						});
 					}
 
@@ -443,6 +468,7 @@ export class AgentReporter {
 							...(tc.duration !== undefined && { duration: tc.duration }),
 							...(tc.flaky !== undefined && { flaky: tc.flaky }),
 							...(tc.slow !== undefined && { slow: tc.slow }),
+							...(tc.tags !== undefined && { tags: tc.tags }),
 						})),
 					);
 
@@ -451,7 +477,7 @@ export class AgentReporter {
 					let testIdx = 0;
 					for (const testCase of mod.children.allTests()) {
 						const result = testCase.result();
-						if (result.errors && result.errors.length > 0) {
+						if (result?.errors && result.errors.length > 0) {
 							const testCaseId = testCaseIds[testIdx];
 							yield* store.writeErrors(
 								runId,
@@ -507,7 +533,7 @@ export class AgentReporter {
 				const testOutcomes: TestOutcome[] = [];
 				for (const mod of projectModules) {
 					for (const testCase of mod.children.allTests()) {
-						const state = testCase.result().state;
+						const state = testCase.result()?.state;
 						if (state === "passed" || state === "failed") {
 							testOutcomes.push({ fullName: testCase.fullName, state });
 						}
@@ -522,9 +548,10 @@ export class AgentReporter {
 				const errorMap = new Map<string, string | null>();
 				for (const mod of projectModules) {
 					for (const tc of mod.children.allTests()) {
-						diagMap.set(tc.fullName, tc.diagnostic());
-						if (tc.result().state === "failed") {
-							const errors = tc.result().errors;
+						diagMap.set(tc.fullName, tc.diagnostic() ?? {});
+						const tcResult = tc.result();
+						if (tcResult?.state === "failed") {
+							const errors = tcResult.errors;
 							errorMap.set(tc.fullName, errors?.[0]?.message ?? null);
 						}
 					}

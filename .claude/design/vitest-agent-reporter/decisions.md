@@ -3,9 +3,9 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-03-23
-last-synced: 2026-03-23
-post-phase5-sync: 2026-03-23
+updated: 2026-04-23
+last-synced: 2026-04-23
+post-phase5-sync: 2026-04-23
 completeness: 95
 related:
   - vitest-agent-reporter/architecture.md
@@ -353,7 +353,7 @@ layer inline.
 
 ### Decision 19: tRPC for MCP Routing (Phase 5c)
 
-**Context:** The MCP server needs to expose 16 tools. Each tool needs
+**Context:** The MCP server needs to expose 24 tools. Each tool needs
 input validation, type-safe context access, and testable procedure logic.
 
 **Options considered:**

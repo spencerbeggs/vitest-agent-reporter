@@ -3,9 +3,9 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-03-25
-last-synced: 2026-03-25
-post-phase5-sync: 2026-03-25
+updated: 2026-04-23
+last-synced: 2026-04-23
+post-phase5-sync: 2026-04-23
 completeness: 95
 related:
   - vitest-agent-reporter/architecture.md
@@ -60,9 +60,10 @@ package/
     mcp/
       index.ts            -- MCP server entry point (resolves DB, starts stdio)
       context.ts          -- tRPC context with ManagedRuntime
-      router.ts           -- tRPC router aggregating 21 tool procedures
+      router.ts           -- tRPC router aggregating 24 tool procedures
       server.ts           -- startMcpServer() registering tools with MCP SDK
       tools/
+        help.ts           -- help tool (list all available tools)
         status.ts         -- test_status tool
         overview.ts       -- test_overview tool
         coverage.ts       -- test_coverage tool
@@ -70,12 +71,17 @@ package/
         trends.ts         -- test_trends tool
         errors.ts         -- test_errors tool
         test-for-file.ts  -- test_for_file tool
+        test-get.ts       -- test_get tool (single test detail)
+        test-list.ts      -- test_list tool
+        file-coverage.ts  -- file_coverage tool (per-file coverage)
         run-tests.ts      -- run_tests tool (vitest run via spawnSync)
         cache-health.ts   -- cache_health tool
         configure.ts      -- configure tool (view captured settings)
         notes.ts          -- note CRUD (create/list/get/update/delete/search)
-        discovery.ts      -- project_list, test_list, module_list,
-                             suite_list, settings_list tools
+        project-list.ts   -- project_list tool
+        module-list.ts    -- module_list tool
+        suite-list.ts     -- suite_list tool
+        settings-list.ts  -- settings_list tool
 
     services/
       DataStore.ts        -- Context.Tag: write to SQLite
@@ -141,16 +147,11 @@ package/
       capture-env.ts      -- captures CI/GitHub/Runner env vars
       capture-settings.ts -- captures Vitest config + computes hash
       classify-test.ts    -- pure test classification function
-      resolve-log-level.ts -- normalizes case-insensitive log level names
-      resolve-log-file.ts -- resolves log file path with env var fallback
       format-console.ts   -- legacy console formatter (delegates to markdown)
       format-gfm.ts       -- legacy GFM formatter (delegates to gfm)
+      format-fatal-error.ts -- formats fatal error output for reporter errors
       build-report.ts     -- pure function: AgentReport builder + duck-typed
                              Vitest interfaces
-
-  bin/
-    vitest-agent-reporter.js      -- shebang wrapper for CLI
-    vitest-agent-reporter-mcp.js  -- shebang wrapper for MCP server
 
 plugin/
   .claude-plugin/
@@ -164,6 +165,7 @@ plugin/
     tdd/SKILL.md          -- TDD workflow skill
     debugging/SKILL.md    -- test debugging skill
     configuration/SKILL.md -- Vitest configuration skill
+    coverage-improvement/SKILL.md -- coverage improvement skill
   commands/
     setup.md              -- setup command
     configure.md          -- configure command
@@ -204,11 +206,11 @@ package/src/
     FormatSelectorLive.test.ts  -- format selection
     DetailResolverLive.test.ts  -- detail level resolution
     OutputRendererLive.test.ts  -- formatter dispatch
+    LoggerLive.test.ts          -- structured logging layer
   mcp/
     router.test.ts          -- tRPC router integration tests
     tools/
       run-tests.test.ts     -- run_tests tool (spawnSync)
-      discovery.test.ts     -- discovery tools (project/test/module/suite/settings)
   migrations/
     0001_initial.test.ts    -- migration schema verification
   schemas/
@@ -238,9 +240,10 @@ package/src/
     split-project.test.ts   -- project name splitting
     capture-env.test.ts     -- env var capture
     capture-settings.test.ts -- settings capture + hash computation
+    format-fatal-error.test.ts -- fatal error formatting
 ```
 
-**51 test files, 547 tests total.** All coverage metrics (statements,
+**52 test files, 569 tests total.** All coverage metrics (statements,
 branches, functions, lines) are above 80%.
 
 ---
@@ -560,39 +563,35 @@ interface PersistentFailure {
   lastErrorMessage: string | null;
 }
 
-// DataReader discovery types (feat/upgrade)
+// DataReader discovery types
 interface TestListEntry {
+  id: number;
   fullName: string;
-  state: "passed" | "failed" | "skipped" | "pending";
-  modulePath: string;
+  state: string;
   duration: number | null;
-  project: string;
-  subProject: string | null;
+  module: string;
+  classification: string | null;
 }
 
 interface ModuleListEntry {
-  filePath: string;
-  state: "passed" | "failed" | "skipped" | "pending";
-  duration: number | null;
+  id: number;
+  file: string;
+  state: string;
   testCount: number;
-  project: string;
-  subProject: string | null;
+  duration: number | null;
 }
 
 interface SuiteListEntry {
+  id: number;
   name: string;
-  fullName: string;
-  state: "passed" | "failed" | "skipped" | "pending";
-  modulePath: string;
-  project: string;
-  subProject: string | null;
+  module: string;
+  state: string;
+  testCount: number;
 }
 
 interface SettingsListEntry {
   hash: string;
-  createdAt: string;
-  pool: string | null;
-  coverageProvider: string | null;
+  capturedAt: string;
 }
 
 // Common schema literals (Phase 5)
@@ -918,7 +917,7 @@ GFM content is appended (not overwritten) to support multiple steps.
 ### Integration 4: Consumer LLM Agents
 
 **MCP pattern (preferred):** Agents connect via MCP stdio transport and
-use the 21 tools for structured data access.
+use the 24 tools for structured data access.
 
 **CLI pattern:** Run `vitest-agent-reporter status` for quick overview,
 `vitest-agent-reporter overview` for test landscape, or
@@ -973,7 +972,7 @@ configuration pointing to `npx vitest-agent-reporter-mcp`
 - `SessionStart` -> `hooks/session-start.sh` (context injection)
 - `PostToolUse` on `Bash` -> `hooks/post-test-run.sh` (test detection)
 
-**Skills:** TDD, debugging, configuration (markdown files)
+**Skills:** TDD, debugging, configuration, coverage-improvement (markdown files)
 
 **Commands:** setup, configure (markdown files)
 

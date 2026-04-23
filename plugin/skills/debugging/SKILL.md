@@ -58,6 +58,11 @@ sessions.
 
 ## Step 6: Verify the Fix
 
-1. Run the specific failing test with `run_tests`
-2. Run the full suite to check for regressions
+1. Run the specific failing test:
+   `run_tests({ files: ["path/to/failing.test.ts"] })`
+2. Run the full suite to check for regressions: `run_tests({})`
 3. Check `test_trends` to confirm coverage direction
+
+Always use the `run_tests` MCP tool instead of running vitest via
+Bash. It uses Vitest's programmatic API, so results persist to the
+database and all query tools reflect the latest run immediately.

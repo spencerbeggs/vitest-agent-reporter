@@ -19,35 +19,47 @@ commands to the main package, use `--filter='./package'`.
 ## Project Status
 
 `vitest-agent-reporter` is a Vitest reporter and plugin for LLM coding agents.
-Phases 1-3 are complete. Four primary capabilities:
+All phases (1-5) are complete. Six primary capabilities:
 
-1. **`AgentReporter`** -- Vitest Reporter producing structured markdown
-   (console), persistent JSON (disk), and optional GFM (GitHub Actions)
+1. **`AgentReporter`** -- Vitest Reporter (>= 3.2.0) producing formatted
+   output via pluggable formatters, persistent data to SQLite (`data.db`),
+   and optional GFM (GitHub Actions)
 2. **`AgentPlugin`** -- Vitest plugin that injects `AgentReporter` with
-   three-environment detection (agent/CI/human), reporter chain management,
-   cache directory resolution, and coverage threshold extraction
+   four-environment detection (`agent-shell`/`terminal`/`ci-github`/
+   `ci-generic`), reporter chain management, cache directory resolution,
+   and coverage threshold/target extraction
 3. **`vitest-agent-reporter` CLI** -- `@effect/cli`-based bin with `status`,
-   `overview`, `coverage`, and `history` subcommands for on-demand test
-   landscape queries
+   `overview`, `coverage`, `history`, `trends`, `cache`, and `doctor`
+   subcommands. All commands support `--format` flag
 4. **Suggested actions & failure history** -- actionable suggestions in
    console output, per-test failure persistence across runs, and test
    classification (`stable`, `new-failure`, `persistent`, `flaky`,
    `recovered`) for regression vs flake detection
+5. **Coverage thresholds, baselines, and trends** -- Vitest-native
+   `coverageThresholds` format, aspirational `coverageTargets`, and
+   auto-ratcheting baselines with per-project trend tracking
+6. **MCP server & Claude Code plugin** -- 21 MCP tools via tRPC router
+   for structured agent access to test data, plus file-based Claude Code
+   plugin at `plugin/`
 
-Effect service architecture: all I/O encapsulated in six Effect services
-(AgentDetection, CacheWriter, CacheReader, CoverageAnalyzer, ProjectDiscovery,
-HistoryTracker) with live and test layer implementations. All data structures
-use Effect Schema
-definitions (`package/src/schemas/`) with `typeof Schema.Type` for TypeScript
-types and `Schema.decodeUnknown`/`Schema.encodeUnknown` for JSON encode/decode.
-Schemas are part of the public API.
+Effect service architecture: all I/O encapsulated in ten Effect services
+(DataStore, DataReader, EnvironmentDetector, ExecutorResolver,
+FormatSelector, DetailResolver, OutputRenderer, CoverageAnalyzer,
+ProjectDiscovery, HistoryTracker) with live and test layer implementations.
+All data structures use Effect Schema definitions (`package/src/schemas/`)
+with `typeof Schema.Type` for TypeScript types. Schemas are part of the
+public API.
 
 Source layout: `package/src/services/` (Effect tags),
 `package/src/layers/` (live + test),
 `package/src/schemas/` (Effect Schema definitions),
 `package/src/utils/` (pure functions),
 `package/src/cli/` (commands + lib),
-`package/src/errors/` (tagged errors).
+`package/src/errors/` (tagged errors),
+`package/src/formatters/` (markdown, gfm, json, silent),
+`package/src/mcp/` (MCP server + tRPC router + 21 tools),
+`package/src/migrations/` (SQLite schema),
+`package/src/sql/` (row types + assemblers).
 
 **Spec:** [GitHub Issue #1](https://github.com/spencerbeggs/vitest-agent-reporter/issues/1)
 
@@ -207,6 +219,6 @@ workflow. The GitHub Action is at
 
 - **Framework**: [Vitest](https://vitest.dev/) with v8 coverage provider
 - **Pool**: Uses `forks` (not threads) for broader compatibility
-- **Config**: `vitest.config.ts` uses the `VitestConfig.create()` factory from
-  `@savvy-web/vitest`, which supports project-based filtering via `--project`
+- **Config**: `vitest.config.ts` uses plain `defineConfig` from `vitest/config`
+  with project-based filtering via `--project`
 - **CI**: `pnpm run ci:test` sets `CI=true` and enables coverage

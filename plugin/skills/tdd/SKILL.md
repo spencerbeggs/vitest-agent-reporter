@@ -20,21 +20,27 @@ intelligence.
 ## Red Phase (Write Failing Test)
 
 1. Write a test that describes the desired behavior
-2. Run tests with `run_tests` to confirm the test fails
+2. Run with `run_tests({ files: ["path/to/test.ts"] })` to confirm
+   the test fails. Always use the MCP tool, not vitest via Bash
 3. Verify the failure message is clear and specific
 
 ## Green Phase (Make It Pass)
 
 1. Write the minimal code to make the test pass
-2. Run tests with `run_tests` targeting your specific test file
+2. Run with `run_tests({ files: ["path/to/test.ts"] })` targeting
+   your specific test file
 3. Confirm the test passes
 
 ## Refactor Phase
 
 1. Clean up the implementation
-2. Run the full test suite with `run_tests`
+2. Run the full test suite with `run_tests({})`
 3. Check `test_coverage` to verify coverage didn't drop
 4. Use `test_trends` to confirm coverage direction
+
+All `run_tests` calls use Vitest's programmatic API in-process,
+so results automatically persist to the database and all query
+tools reflect the latest run immediately.
 
 ## Recording Decisions
 

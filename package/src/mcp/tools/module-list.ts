@@ -21,7 +21,7 @@ export const moduleList = publicProcedure
 				const modules = yield* reader.listModules(project, subProject);
 
 				if (modules.length === 0) {
-					return "No modules found.";
+					return "No modules found. Run run_tests({}) to execute tests and populate the database.";
 				}
 
 				const lines: string[] = ["## Modules", ""];

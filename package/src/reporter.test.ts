@@ -30,6 +30,7 @@ function makeTestCase(
 		type: "test",
 		name,
 		fullName: overrides.fullName ?? name,
+		tags: [],
 		result: () => {
 			const res: {
 				state: string;
@@ -69,6 +70,9 @@ function makeTestModule(
 		children: {
 			*allTests() {
 				for (const t of tests) yield t;
+			},
+			*allSuites() {
+				// No suites in test helpers
 			},
 		},
 		diagnostic: () => ({ duration: overrides.duration ?? 50 }),

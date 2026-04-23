@@ -19,6 +19,8 @@ function makeTestCase(
 		flaky: boolean;
 		slow: boolean;
 		errors: Array<{ message: string; diff?: string; stacks?: string[] }>;
+		/** When true, result() and diagnostic() return undefined (simulates pending/skipped tests) */
+		noDiagnostic: boolean;
 	}> = {},
 ): VitestTestCase {
 	const name = overrides.name ?? "my test";
@@ -26,18 +28,23 @@ function makeTestCase(
 		type: "test",
 		name,
 		fullName: overrides.fullName ?? name,
+		tags: [],
 		result: () => {
+			if (overrides.noDiagnostic) return undefined as never;
 			const res: { state: string; errors?: ReadonlyArray<{ message: string; diff?: string; stacks?: string[] }> } = {
 				state: overrides.state ?? "passed",
 			};
 			if (overrides.errors != null) res.errors = overrides.errors;
 			return res;
 		},
-		diagnostic: () => ({
-			duration: overrides.duration ?? 10,
-			flaky: overrides.flaky ?? false,
-			slow: overrides.slow ?? false,
-		}),
+		diagnostic: () => {
+			if (overrides.noDiagnostic) return undefined as never;
+			return {
+				duration: overrides.duration ?? 10,
+				flaky: overrides.flaky ?? false,
+				slow: overrides.slow ?? false,
+			};
+		},
 	};
 }
 
@@ -50,6 +57,8 @@ function makeTestModule(
 		duration: number;
 		tests: VitestTestCase[];
 		errors: Array<{ message: string; stacks?: string[] }>;
+		/** When true, diagnostic() returns undefined */
+		noDiagnostic: boolean;
 	}> = {},
 ): VitestTestModule {
 	const relativeId = overrides.relativeModuleId ?? "src/foo.test.ts";
@@ -65,8 +74,14 @@ function makeTestModule(
 			*allTests() {
 				for (const t of tests) yield t;
 			},
+			*allSuites() {
+				// No suites in test helpers
+			},
 		},
-		diagnostic: () => ({ duration: overrides.duration ?? 50 }),
+		diagnostic: () => {
+			if (overrides.noDiagnostic) return undefined as never;
+			return { duration: overrides.duration ?? 50 };
+		},
 		errors: () => overrides.errors ?? [],
 	};
 }
@@ -336,5 +351,68 @@ describe("buildAgentReport", () => {
 		expect(moduleReport.errors).toHaveLength(1);
 		expect(moduleReport.errors?.[0].message).toBe("module syntax error");
 		expect(moduleReport.errors?.[0].stack).toBe("at parse");
+	});
+
+	it("handles tests where diagnostic() returns undefined (skipped/todo)", () => {
+		const skippedTest = makeTestCase({ name: "skipped test", state: "skipped", noDiagnostic: true });
+		const passingTest = makeTestCase({ name: "passing test", state: "passed", duration: 20 });
+
+		const modules = [
+			makeTestModule({
+				relativeModuleId: "src/skip.test.ts",
+				state: "passed",
+				tests: [skippedTest, passingTest],
+			}),
+		];
+
+		const report = buildAgentReport(modules, [], "passed", { omitPassingTests: false });
+
+		expect(report.summary.total).toBe(2);
+		expect(report.summary.passed).toBe(1);
+		expect(report.summary.skipped).toBe(1);
+	});
+
+	it("handles tests where result() returns undefined (pending/collected)", () => {
+		const pendingTest = makeTestCase({ name: "pending test", noDiagnostic: true });
+		const passingTest = makeTestCase({ name: "passing test", state: "passed", duration: 20 });
+
+		const modules = [
+			makeTestModule({
+				relativeModuleId: "src/pending.test.ts",
+				state: "passed",
+				tests: [pendingTest, passingTest],
+			}),
+		];
+
+		const report = buildAgentReport(modules, [], "passed", { omitPassingTests: false });
+
+		expect(report.summary.total).toBe(2);
+		expect(report.summary.passed).toBe(1);
+		// pending (undefined result) normalizes to "pending" which counts as skipped
+		expect(report.summary.skipped).toBe(1);
+
+		// The pending test report should have no duration
+		expect(report.failed).toHaveLength(0);
+	});
+
+	it("handles modules where diagnostic() returns undefined", () => {
+		const modules = [
+			makeTestModule({
+				relativeModuleId: "src/a.test.ts",
+				duration: 100,
+				tests: [makeTestCase()],
+			}),
+			makeTestModule({
+				relativeModuleId: "src/b.test.ts",
+				noDiagnostic: true,
+				tests: [makeTestCase()],
+			}),
+		];
+
+		const report = buildAgentReport(modules, [], "passed", { omitPassingTests: true });
+
+		// Module with undefined diagnostic contributes 0 to total duration
+		expect(report.summary.duration).toBe(100);
+		expect(report.summary.total).toBe(2);
 	});
 });

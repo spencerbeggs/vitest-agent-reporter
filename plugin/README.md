@@ -46,28 +46,36 @@ Or configure permanently in your Claude Code settings:
 ### MCP Server (auto-registered)
 
 The plugin registers the `vitest-reporter` MCP server automatically
-via `.mcp.json`. The server exposes 16 tools for querying test data
+via `.mcp.json`. The server exposes 24 tools for querying test data
 stored in the SQLite database written by the reporter after each test
-run.
+run. Use the `help` tool for the full list with parameters.
 
 | Tool | Description |
 | --- | --- |
+| `run_tests` | Run tests via Vitest programmatic API (results persist to DB) |
 | `test_status` | Per-project test pass/fail state from the last run |
 | `test_overview` | Full test landscape: files, suites, test counts |
+| `test_get` | Single test drill-down: state, errors, history, classification |
 | `test_coverage` | Coverage gaps with uncovered line ranges |
+| `file_coverage` | Per-file coverage with uncovered lines and related tests |
 | `test_history` | Flaky, persistent, and recovered test detection |
 | `test_trends` | Per-project coverage trajectory over time |
 | `test_errors` | Search errors by type or message across projects |
 | `test_for_file` | Find all tests that cover a given source file |
-| `run_tests` | Execute vitest for specific files or patterns |
 | `cache_health` | Database health diagnostic |
 | `configure` | View captured Vitest settings |
+| `project_list` | All projects with latest run summary |
+| `test_list` | Test cases with state, duration, and classification |
+| `module_list` | Test modules (files) with test counts |
+| `suite_list` | Test suites (describe blocks) |
+| `settings_list` | Vitest config snapshots |
 | `note_create` | Create a note scoped to a file, test, or project |
 | `note_list` | List notes by scope |
 | `note_get` | Read a note by ID |
 | `note_update` | Update note content, pin state, or expiration |
 | `note_delete` | Delete a note |
 | `note_search` | Full-text search across all notes |
+| `help` | List all tools with parameters |
 
 ### Hooks
 
@@ -84,6 +92,7 @@ Skills are invoked via `/skill <name>` in Claude Code.
 | --- | --- |
 | `tdd` | Red-green-refactor workflow using MCP tools |
 | `debugging` | Systematic failure diagnosis using `test_history`, `test_errors`, `test_for_file` |
+| `coverage-improvement` | Systematic coverage improvement using `file_coverage`, `test_for_file`, `test_trends` |
 | `configuration` | Plugin setup and `AgentPlugin` option reference |
 
 ### Commands

@@ -17,7 +17,7 @@ export const testForFile = publicProcedure
 				const testFiles = yield* reader.getTestsForFile(input.filePath);
 
 				if (testFiles.length === 0) {
-					return `No test modules found covering \`${input.filePath}\`.`;
+					return `No test modules found covering \`${input.filePath}\`. Run run_tests({}) to populate the database, or check the file path.`;
 				}
 
 				const lines: string[] = [

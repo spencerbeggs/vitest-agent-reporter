@@ -165,17 +165,19 @@ describe("MCP Router", () => {
 
 		// Read
 		const note = await caller.note_get({ id });
-		expect(note?.title).toBe("Test Note");
+		expect(note.found).toBe(true);
+		if (note.found) expect(note.note.title).toBe("Test Note");
 
 		// Update
 		await caller.note_update({ id, title: "Updated" });
 		const updated = await caller.note_get({ id });
-		expect(updated?.title).toBe("Updated");
+		expect(updated.found).toBe(true);
+		if (updated.found) expect(updated.note.title).toBe("Updated");
 
 		// Delete
 		await caller.note_delete({ id });
 		const deleted = await caller.note_get({ id });
-		expect(deleted).toBeNull();
+		expect(deleted.found).toBe(false);
 	});
 
 	it("note_list returns no notes message for empty state", async () => {
@@ -273,5 +275,40 @@ describe("MCP Router", () => {
 		expect(typeof result).toBe("string");
 		expect(result).toContain("Settings");
 		expect(result).toContain("Hash");
+	});
+
+	it("test_get returns test details for known test", async () => {
+		const caller = createTestCaller();
+		const result = await caller.test_get({ fullName: "utils > adds numbers", project: "default" });
+		expect(typeof result).toBe("string");
+		expect(result).toContain("utils > adds numbers");
+		expect(result).toContain("## Details");
+		expect(result).toContain("passed");
+		expect(result).toContain("src/utils.test.ts");
+	});
+
+	it("test_get returns not found for unknown test", async () => {
+		const caller = createTestCaller();
+		const result = await caller.test_get({ fullName: "nonexistent > test", project: "default" });
+		expect(result).toContain("Test not found");
+		expect(result).toContain("test_list");
+	});
+
+	it("file_coverage returns coverage data for tracked file", async () => {
+		const caller = createTestCaller();
+		const result = await caller.file_coverage({ filePath: "src/utils.ts", project: "default" });
+		expect(typeof result).toBe("string");
+		expect(result).toContain("src/utils.ts");
+		// File is in lowCoverage (branches at 70% below typical threshold)
+		// or shows project totals if not in lowCoverage list
+		expect(result).toMatch(/Metrics|Coverage Totals/);
+	});
+
+	it("file_coverage returns fallback for unknown file", async () => {
+		const caller = createTestCaller();
+		const result = await caller.file_coverage({ filePath: "nonexistent.ts", project: "default" });
+		expect(typeof result).toBe("string");
+		expect(result).toContain("nonexistent.ts");
+		expect(result).toContain("not in the low-coverage list");
 	});
 });

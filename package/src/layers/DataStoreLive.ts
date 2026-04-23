@@ -112,7 +112,19 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				for (const tc of tests) {
 					yield* sql`INSERT INTO test_cases (module_id, suite_id, vitest_id, name, full_name, state, classification, duration, start_time, flaky, slow, retry_count, repeat_count, heap, mode, each, fails, concurrent, shuffle, timeout, skip_note, location_line, location_column) VALUES (${moduleId}, ${tc.suiteId ?? null}, ${tc.vitestId ?? null}, ${tc.name}, ${tc.fullName}, ${tc.state}, ${tc.classification ?? null}, ${tc.duration ?? null}, ${tc.startTime ?? null}, ${boolToInt(tc.flaky)}, ${boolToInt(tc.slow)}, ${tc.retryCount ?? 0}, ${tc.repeatCount ?? 0}, ${tc.heap ?? null}, ${tc.mode ?? null}, ${boolToInt(tc.each)}, ${boolToInt(tc.fails)}, ${boolToInt(tc.concurrent)}, ${boolToInt(tc.shuffle)}, ${tc.timeout ?? null}, ${tc.skipNote ?? null}, ${tc.locationLine ?? null}, ${tc.locationColumn ?? null})`;
 					const rows = yield* sql<{ id: number }>`SELECT last_insert_rowid() as id`;
-					ids.push(rows[0].id);
+					const testCaseId = rows[0].id;
+					ids.push(testCaseId);
+
+					// Write tags for this test case
+					if (tc.tags && tc.tags.length > 0) {
+						for (const tag of tc.tags) {
+							yield* sql`INSERT OR IGNORE INTO tags (name) VALUES (${tag})`;
+							const tagRows = yield* sql<{ id: number }>`SELECT id FROM tags WHERE name = ${tag}`;
+							if (tagRows.length > 0) {
+								yield* sql`INSERT OR IGNORE INTO test_case_tags (test_case_id, tag_id) VALUES (${testCaseId}, ${tagRows[0].id})`;
+							}
+						}
+					}
 				}
 				return ids;
 			}).pipe(
@@ -125,6 +137,23 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				yield* Effect.logDebug("writeErrors").pipe(Effect.annotateLogs({ runId, count: errors.length }));
 				for (const err of errors) {
 					yield* sql`INSERT INTO test_errors (run_id, test_case_id, test_suite_id, module_id, scope, name, message, diff, actual, expected, stack, cause_error_id, ordinal) VALUES (${runId}, ${err.testCaseId ?? null}, ${err.testSuiteId ?? null}, ${err.moduleId ?? null}, ${err.scope}, ${err.name ?? null}, ${err.message}, ${err.diff ?? null}, ${err.actual ?? null}, ${err.expected ?? null}, ${err.stack ?? null}, ${err.causeErrorId ?? null}, ${err.ordinal ?? 0})`;
+
+					// Parse stack trace into structured frames
+					if (err.stack) {
+						const errorIdRows = yield* sql<{ id: number }>`SELECT last_insert_rowid() as id`;
+						const errorId = errorIdRows[0].id;
+						const framePattern = /at\s+(?:(.+?)\s+)?\(?(.+?):(\d+):(\d+)\)?/g;
+						const frames = [...err.stack.matchAll(framePattern)];
+						for (let frameOrdinal = 0; frameOrdinal < frames.length; frameOrdinal++) {
+							const m = frames[frameOrdinal];
+							const method = m[1] ?? null;
+							const filePath = m[2];
+							const line = Number.parseInt(m[3], 10);
+							const col = Number.parseInt(m[4], 10);
+							const fileId = yield* ensureFile(filePath);
+							yield* sql`INSERT INTO stack_frames (error_id, ordinal, method, file_id, line, col) VALUES (${errorId}, ${frameOrdinal}, ${method}, ${fileId}, ${line}, ${col})`;
+						}
+					}
 				}
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),

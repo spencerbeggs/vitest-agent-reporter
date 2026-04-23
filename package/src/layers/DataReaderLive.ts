@@ -964,6 +964,50 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "settings", reason: String(e) })),
 			);
 
+		const getTestByFullName = (
+			project: string,
+			subProject: string | null,
+			fullName: string,
+		): Effect.Effect<Option.Option<TestListEntry>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("getTestByFullName").pipe(Effect.annotateLogs({ project, subProject, fullName }));
+
+				const runs = yield* sql<{ id: number }>`SELECT id FROM test_runs
+					WHERE project = ${project} AND sub_project IS ${subProject}
+					ORDER BY timestamp DESC LIMIT 1`;
+
+				if (runs.length === 0) return Option.none();
+				const runId = runs[0].id;
+
+				const rows = yield* sql<{
+					id: number;
+					full_name: string;
+					state: string;
+					duration: number | null;
+					relative_module_id: string;
+					classification: string | null;
+				}>`SELECT tc.id, tc.full_name, tc.state, tc.duration, f.path as relative_module_id, tc.classification
+					FROM test_cases tc
+					JOIN test_modules tm ON tm.id = tc.module_id
+					JOIN files f ON f.id = tm.file_id
+					WHERE tm.run_id = ${runId} AND tc.full_name = ${fullName}
+					LIMIT 1`;
+
+				if (rows.length === 0) return Option.none();
+				const r = rows[0];
+				return Option.some({
+					id: r.id,
+					fullName: r.full_name,
+					state: r.state,
+					duration: r.duration,
+					module: r.relative_module_id,
+					classification: r.classification,
+				});
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "test_cases", reason: String(e) })),
+			);
+
 		const listTests = (
 			project: string,
 			subProject: string | null,
@@ -1197,6 +1241,7 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 			getManifest,
 			getSettings,
 			getLatestSettings,
+			getTestByFullName,
 			listTests,
 			listModules,
 			listSuites,

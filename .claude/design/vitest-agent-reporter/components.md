@@ -3,9 +3,9 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-03-25
-last-synced: 2026-03-25
-post-phase5-sync: 2026-03-25
+updated: 2026-04-23
+last-synced: 2026-04-23
+post-phase5-sync: 2026-04-23
 completeness: 95
 related:
   - vitest-agent-reporter/architecture.md
@@ -386,8 +386,9 @@ test data from SQLite database and project structure. Does not run tests or
 call AI providers. All commands support `--format` flag for output format
 selection.
 
-**Entry point:** `package/src/cli/index.ts` exports `runCli()`. Bin wrapper
-at `package/bin/vitest-agent-reporter.js` is a thin shebang wrapper.
+**Entry point:** `package/src/cli/index.ts` exports `runCli()`. The
+`package.json` `bin` field points directly to `./src/cli/index.ts`;
+build outputs produce `bin/vitest-agent-reporter.js` in `dist/`.
 
 **Commands:**
 
@@ -421,7 +422,7 @@ at `package/bin/vitest-agent-reporter.js` is a thin shebang wrapper.
 - Depends on: `@effect/cli` for command framework, DataReader service,
   ProjectDiscovery service, HistoryTracker service, OutputRenderer service,
   `@effect/platform-node` for NodeRuntime
-- Used by: `package/bin/vitest-agent-reporter.js`
+- Used by: `vitest-agent-reporter` bin entry (package.json)
 
 ---
 
@@ -546,6 +547,8 @@ wrapping.
   compatibility, delegates to markdown formatter)
 - `format-gfm.ts` -- legacy GFM formatter (kept for backward
   compatibility, delegates to gfm formatter)
+- `format-fatal-error.ts` -- formats fatal error output for unhandled
+  reporter errors
 - `build-report.ts` -- AgentReport builder with duck-typed Vitest interfaces
 - `detect-pm.ts` -- package manager detection
 
@@ -743,13 +746,13 @@ database. Replaces CacheReader from Phase 2-4.
 - `getLatestSettings()` -- returns `Option<SettingsRow>` for the most
   recent settings snapshot (used by MCP `configure` tool when no hash
   is specified)
-- `listTests(project?, subProject?, state?, limit?)` -- returns
-  `TestListEntry[]` for test case discovery
-- `listModules(project?, subProject?, state?, limit?)` -- returns
-  `ModuleListEntry[]` for test module discovery
-- `listSuites(project?, subProject?, limit?)` -- returns
+- `listTests(project, subProject, options?: { state?, module?, limit? })`
+  -- returns `TestListEntry[]` for test case discovery
+- `listModules(project, subProject)` -- returns `ModuleListEntry[]` for
+  test module discovery
+- `listSuites(project, subProject, options?: { module? })` -- returns
   `SuiteListEntry[]` for test suite discovery
-- `listSettings(limit?)` -- returns `SettingsListEntry[]` for settings
+- `listSettings()` -- returns `SettingsListEntry[]` for settings
   snapshot discovery
 
 **Key output types:**
@@ -852,7 +855,7 @@ OutputRenderer.render(reports, format, context)
 
 **Status:** COMPLETE (Phase 5c)
 
-**Purpose:** Model Context Protocol server providing 21 tools for agent
+**Purpose:** Model Context Protocol server providing 24 tools for agent
 integration. Uses `@modelcontextprotocol/sdk` with stdio transport and
 tRPC for routing.
 
@@ -863,8 +866,9 @@ creates `ManagedRuntime` with `McpLive(dbPath)`, starts stdio transport.
 
 - `context.ts` -- tRPC context definition with `ManagedRuntime` carrying
   DataReader, DataStore, ProjectDiscovery, OutputRenderer services
-- `router.ts` -- tRPC router aggregating all 21 tool procedures
+- `router.ts` -- tRPC router aggregating all 24 tool procedures
 - `server.ts` -- `startMcpServer()` registers all tools with the MCP SDK
+- `tools/help.ts` -- `help` tool (list all available tools)
 - `tools/status.ts` -- `test_status` tool
 - `tools/overview.ts` -- `test_overview` tool
 - `tools/coverage.ts` -- `test_coverage` tool
@@ -872,20 +876,27 @@ creates `ManagedRuntime` with `McpLive(dbPath)`, starts stdio transport.
 - `tools/trends.ts` -- `test_trends` tool
 - `tools/errors.ts` -- `test_errors` tool
 - `tools/test-for-file.ts` -- `test_for_file` tool
+- `tools/test-get.ts` -- `test_get` tool (single test detail)
+- `tools/file-coverage.ts` -- `file_coverage` tool (per-file coverage)
 - `tools/run-tests.ts` -- `run_tests` tool (executes `vitest run` via
   `spawnSync`)
 - `tools/cache-health.ts` -- `cache_health` tool
 - `tools/configure.ts` -- `configure` tool (view captured settings)
 - `tools/notes.ts` -- `note_create`, `note_list`, `note_get`,
   `note_update`, `note_delete`, `note_search` tools
-- `tools/discovery.ts` -- `project_list`, `test_list`, `module_list`,
-  `suite_list`, `settings_list` tools
+- `tools/project-list.ts` -- `project_list` tool
+- `tools/test-list.ts` -- `test_list` tool
+- `tools/module-list.ts` -- `module_list` tool
+- `tools/suite-list.ts` -- `suite_list` tool
+- `tools/settings-list.ts` -- `settings_list` tool
 
 **Tool categories:**
 
+- **Meta tools** (return markdown): `help`
 - **Read-only query tools** (return markdown): `test_status`,
   `test_overview`, `test_coverage`, `test_history`, `test_trends`,
-  `test_errors`, `test_for_file`, `cache_health`, `configure`
+  `test_errors`, `test_for_file`, `test_get`, `file_coverage`,
+  `cache_health`, `configure`
 - **Discovery tools** (return markdown): `project_list`, `test_list`,
   `module_list`, `suite_list`, `settings_list`
 - **Mutation tools** (return text): `run_tests`
@@ -909,7 +920,7 @@ creates `ManagedRuntime` with `McpLive(dbPath)`, starts stdio transport.
 
 **Status:** COMPLETE (Phase 5c)
 
-**Purpose:** tRPC router aggregating all 21 MCP tool procedures. The context
+**Purpose:** tRPC router aggregating all 24 MCP tool procedures. The context
 carries a `ManagedRuntime` for Effect service access, allowing tRPC
 procedures to call Effect services via `ctx.runtime.runPromise(effect)`.
 
@@ -950,6 +961,7 @@ integration in Claude Code sessions.
 - `skills/tdd/SKILL.md` -- TDD workflow skill
 - `skills/debugging/SKILL.md` -- test debugging skill
 - `skills/configuration/SKILL.md` -- Vitest configuration skill
+- `skills/coverage-improvement/SKILL.md` -- coverage improvement skill
 - `commands/setup.md` -- setup command
 - `commands/configure.md` -- configure command
 
@@ -977,9 +989,10 @@ Replaces the previous `debug` boolean option with fine-grained
 **Configuration:**
 
 - `logLevel` option: `"Debug"`, `"Info"`, `"Warning"`, `"Error"`,
-  `"None"` (default). Case-insensitive via `resolveLogLevel` helper
-  (lowercase "debug" normalized to "Debug")
-- `logFile` option: optional file path for NDJSON log output
+  `"None"` (default). Case-insensitive via `resolveLogLevel()` helper
+  (exported from `LoggerLive.ts`; lowercase "debug" normalized to "Debug")
+- `logFile` option: optional file path for NDJSON log output, resolved
+  via `resolveLogFile()` helper (exported from `LoggerLive.ts`)
 - Environment variable fallback: `VITEST_REPORTER_LOG_LEVEL`,
   `VITEST_REPORTER_LOG_FILE`
 - Uses `Logger.structuredLogger` for NDJSON format

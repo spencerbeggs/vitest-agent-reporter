@@ -3,9 +3,9 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-03-25
-last-synced: 2026-03-25
-post-phase5-sync: 2026-03-25
+updated: 2026-04-23
+last-synced: 2026-04-23
+post-phase5-sync: 2026-04-23
 completeness: 95
 related:
   - vitest-agent-reporter/components.md
@@ -30,10 +30,10 @@ only what you need for the task at hand.
 
 | Document | Load when... | Content |
 | -------- | ------------ | ------- |
-| [components.md](./components.md) | Working on specific components, need API details | 26 component descriptions with interfaces and dependencies |
+| [components.md](./components.md) | Working on specific components, need API details | 25 component descriptions with interfaces and dependencies |
 | [decisions.md](./decisions.md) | Need to understand "why" something was built a certain way | 27 architectural decisions, 9 design patterns, constraints/trade-offs |
 | [data-structures.md](./data-structures.md) | Working with schemas, DB schema, output, or data flow | File structure, TypeScript interfaces, SQLite schema, output format, data flow diagrams, integration points |
-| [testing-and-phases.md](./testing-and-phases.md) | Writing tests, reviewing test coverage, or checking phase status | 51 test files, test patterns, Phase 1-5 history |
+| [testing-and-phases.md](./testing-and-phases.md) | Writing tests, reviewing test coverage, or checking phase status | 52 test files, test patterns, Phase 1-5 history |
 
 ---
 
@@ -94,15 +94,16 @@ systems, implemented across five phases:
      replaces three-environment model. 4 built-in formatters: `markdown`,
      `gfm`, `json`, `silent`. `--format` flag on all CLI commands.
    - **5c: MCP server** -- tRPC router with `@modelcontextprotocol/sdk`
-     stdio transport. 21 MCP tools for test status, coverage, history,
-     trends, errors, test-for-file, run_tests, cache health, configure,
-     full note CRUD, and discovery tools (project/test/module/suite/
-     settings listing). `McpLive` composition layer.
+     stdio transport. 24 MCP tools for help, test status, coverage,
+     history, trends, errors, test-for-file, test-get, file-coverage,
+     run_tests, cache health, configure, full note CRUD, and discovery
+     tools (project/test/module/suite/settings listing). `McpLive`
+     composition layer.
    - **5d: Claude Code plugin** -- file-based plugin at `plugin/`
      directory with `.claude-plugin/plugin.json` manifest, `.mcp.json`
      for MCP auto-registration, SessionStart and PostToolUse hooks,
-     3 skills (TDD, debugging, configuration), and 2 commands (setup,
-     configure).
+     4 skills (TDD, debugging, configuration, coverage-improvement),
+     and 2 commands (setup, configure).
 
 The package complements Vitest's built-in `agent` reporter. The built-in
 handles console noise suppression in-process; this package adds persistence
@@ -157,10 +158,11 @@ plugin (NOT a pnpm workspace). The root `vitest.config.ts` imports from
   for JSON encode/decode
 - **Duck-type istanbul** -- structural interface avoids hard peer dependency;
   works with both `v8` and `istanbul` coverage providers
-- **MCP-first agent integration** -- MCP server exposes 21 tools via
+- **MCP-first agent integration** -- MCP server exposes 24 tools via
   tRPC router, giving agents structured access to test data, coverage,
-  history, trends, errors, note management, and discovery queries
-  (project/test/module/suite/settings listing) without parsing CLI output
+  history, trends, errors, per-file coverage, individual test details,
+  note management, and discovery queries (project/test/module/suite/
+  settings listing) without parsing CLI output
 - **CLI-first overview** -- overview/status generated on-demand by CLI, not
   on every test run. Keeps the reporter lean
 - **Three-level coverage model** -- Vitest-native `coverageThresholds`
@@ -262,10 +264,11 @@ plugin (NOT a pnpm workspace). The root `vitest.config.ts` imports from
      |           MCP Server (stdio)                |
      |  (ManagedRuntime + McpLive + tRPC router)   |
      |                                             |
-     |  21 tools via @modelcontextprotocol/sdk:    |
-     |  test_status, test_overview, test_coverage, |
-     |  test_history, test_trends, test_errors,    |
-     |  test_for_file, run_tests, cache_health,    |
+     |  24 tools via @modelcontextprotocol/sdk:    |
+     |  help, test_status, test_overview,          |
+     |  test_coverage, test_history, test_trends,  |
+     |  test_errors, test_for_file, test_get,      |
+     |  file_coverage, run_tests, cache_health,    |
      |  configure, project_list, test_list,        |
      |  module_list, suite_list, settings_list,    |
      |  note_create/list/get/update/delete/search  |
@@ -282,7 +285,8 @@ plugin (NOT a pnpm workspace). The root `vitest.config.ts` imports from
      |  .mcp.json -> auto-registers MCP server     |
      |  hooks/session-start.sh -> context inject   |
      |  hooks/post-test-run.sh -> test detection   |
-     |  skills: TDD, debugging, configuration      |
+     |  skills: TDD, debugging, configuration,     |
+     |          coverage-improvement                |
      |  commands: setup, configure                 |
      +--------------------------------------------+
 ```
@@ -364,7 +368,7 @@ For detailed component descriptions, interfaces, and APIs:
 - Working with data schemas or output format --> [data-structures.md](./data-structures.md)
 - Writing or reviewing tests --> [testing-and-phases.md](./testing-and-phases.md)
 
-**51 test files, 547 tests total.** All coverage metrics above 80%.
+**52 test files, 569 tests total.** All coverage metrics above 80%.
 
 **Document Status:** Current -- reflects Phase 1 through Phase 5
 implementation plus post-Phase-5 refinements (multi-project support,

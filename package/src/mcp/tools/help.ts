@@ -2,7 +2,7 @@ import { publicProcedure } from "../context.js";
 
 const HELP_TEXT = `# vitest-agent-reporter MCP Tools
 
-> 22 tools total.
+> 24 tools total.
 
 ## General
 
@@ -16,7 +16,9 @@ const HELP_TEXT = `# vitest-agent-reporter MCP Tools
 | ---- | ---------- | ----------- |
 | \`test_status\` | \`project?\` | Per-project test pass/fail state |
 | \`test_overview\` | \`project?\` | Test landscape with run metrics |
+| \`test_get\` | \`fullName\`, \`project?\`, \`subProject?\` | Single test drill-down: state, errors, history, classification |
 | \`test_coverage\` | \`project?\`, \`subProject?\` | Coverage gaps with uncovered lines |
+| \`file_coverage\` | \`filePath\`, \`project?\`, \`subProject?\` | Per-file coverage with uncovered lines and related tests |
 | \`test_history\` | \`project\`, \`subProject?\` | Flaky/persistent/recovered tests |
 | \`test_trends\` | \`project\`, \`subProject?\`, \`limit?\` | Coverage trajectory over time |
 | \`test_errors\` | \`project\`, \`subProject?\`, \`errorName?\` | Errors with diffs and stacks |
