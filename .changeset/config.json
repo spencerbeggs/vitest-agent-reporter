@@ -5,7 +5,11 @@
 		{
 			"repo": "spencerbeggs/vitest-agent-reporter",
 			"versionFiles": [
-				{ "glob": "plugin/.claude-plugin/plugin.json", "paths": ["$.version"], "package": "vitest-agent-reporter" }
+				{
+					"glob": "plugin/.claude-plugin/plugin.json",
+					"paths": ["$.version"],
+					"package": "vitest-agent-reporter"
+				}
 			]
 		}
 	],
