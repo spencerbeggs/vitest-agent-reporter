@@ -1,10 +1,22 @@
 {
 	"permissions": {
-		"allow": ["Write(./**)", "Edit(./**)", "mcp__playwright", "mcp__github"]
+		"allow": [
+			"Write(./**)",
+			"Edit(./**)",
+			"Write(.claude/design/**)",
+			"Write(.claude/plans/**)",
+			"Edit(.claude/design/**)",
+			"Edit(.claude/plans/**)"
+		]
 	},
 	"enableAllProjectMcpServers": true,
 	"enabledPlugins": {
-		"changesets@savvy-web-systems": true
+		"design-docs@spencerbeggs": true,
+		"vitest-agent-reporter@spencerbeggs": true,
+		"changesets@savvy-web-systems": true,
+		"commitlint@savvy-web-systems": true,
+		"lint-staged@savvy-web-systems": true,
+		"vitest@savvy-web-systems": true
 	},
 	"plansDirectory": ".claude/plans"
 }

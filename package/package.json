@@ -50,14 +50,15 @@
 	"devDependencies": {
 		"@savvy-web/rslib-builder": "^0.20.3",
 		"@types/node": "catalog:silk",
+		"@vitest/coverage-istanbul": "^4.1.5",
 		"@vitest/coverage-v8": "^4.1.5",
 		"vite": "^8.0.10",
 		"vitest": "^4.1.5"
 	},
 	"peerDependencies": {
-		"@vitest/coverage-istanbul": ">=4.1.0",
-		"@vitest/coverage-v8": ">=4.1.0",
-		"vitest": ">=4.1.0"
+		"@vitest/coverage-istanbul": "^4.1.0",
+		"@vitest/coverage-v8": "^4.1.0",
+		"vitest": "^4.1.0"
 	},
 	"peerDependenciesMeta": {
 		"@vitest/coverage-istanbul": {

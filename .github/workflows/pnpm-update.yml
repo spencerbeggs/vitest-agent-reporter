@@ -55,6 +55,17 @@ jobs:
             @savvy-web/pnpm-plugin-silk
           dependencies: |
             @savvy-web/*
+            vitest
+            @vitest/coverage-istanbul
+            @vitest/coverage-v8
+            vite
+            std-env
+            @trpc/server
+            @modelcontextprotocol/sdk
+          peer-minor: |
+            vitest
+            @vitest/coverage-istanbul
+            @vitest/coverage-v8
           run: |
             pnpm savvy-commit init
             pnpm savvy-lint init
