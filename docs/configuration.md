@@ -91,7 +91,7 @@ detection, so those fields are not available through the plugin interface.
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `cacheDir` | `string` | Vite's cacheDir | Override the cache directory path |
+| `cacheDir` | `string` | XDG-derived (see [Cache Directory Resolution](#cache-directory-resolution)) | Override the cache directory path |
 | `coverageThresholds` | `object` | `{}` | Vitest-native threshold format (per-metric, per-glob) |
 | `coverageTargets` | `object` | -- | Aspirational coverage targets (same format as thresholds) |
 | `autoUpdate` | `boolean` | `true` when targets set | Auto-ratchet baselines when coverage improves |
@@ -131,7 +131,7 @@ export default defineConfig({
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `cacheDir` | `string` | `".vitest-agent-reporter"` | Directory for the SQLite database (`data.db`) |
+| `cacheDir` | `string` | XDG-derived (see [Cache Directory Resolution](#cache-directory-resolution)) | Directory for the SQLite database (`data.db`) |
 | `consoleOutput` | `"failures"` `"full"` `"silent"` | `"failures"` | Console output verbosity |
 | `omitPassingTests` | `boolean` | `true` | Exclude passing tests from reports |
 | `coverageThresholds` | `object` | `{}` | Vitest-native threshold format (see below) |
@@ -176,23 +176,39 @@ failures).
 
 ## Cache Directory Resolution
 
-When using `AgentPlugin`, the cache directory is resolved with this priority:
-
-1. **Explicit option** -- `reporter.cacheDir` in plugin options
-2. **Vitest outputFile** -- `outputFile['vitest-agent-reporter']` in Vitest
-   config
-3. **Vite cacheDir** -- `node_modules/.vite` (Vite default) +
-   `/vitest-agent-reporter`
-
-When using `AgentReporter` directly, the `cacheDir` option defaults to
-`".vitest-agent-reporter"` relative to the working directory.
-
-The cache directory contains the SQLite database:
+In 2.0 the SQLite database lives at an XDG-derived path keyed off the
+root workspace's `package.json` `name`. The default location is:
 
 ```text
-node_modules/.vite/
-  vitest-agent-reporter/
-    data.db                # SQLite database with all test data
+$XDG_DATA_HOME/vitest-agent-reporter/<workspaceName>/data.db
+# falling back to
+~/.local/share/vitest-agent-reporter/<workspaceName>/data.db
+```
+
+`<workspaceName>` is the `name` field from your root workspace's
+`package.json`, normalized for filesystem safety (so `@org/pkg` becomes
+`@org__pkg`). Two checkouts of the same repo therefore share history,
+and the database survives `rm -rf node_modules`.
+
+Resolution priority (highest to lowest):
+
+1. **Explicit option** -- `reporter.cacheDir` (plugin) or `cacheDir`
+   (direct reporter). Used as a literal path; the resolver short-circuits.
+2. **`vitest-agent-reporter.config.toml` at the workspace root** --
+   either `cacheDir = "./.vitest-agent-reporter"` (override the entire
+   directory) or `projectKey = "my-app-personal"` (override just the
+   `<workspaceName>` slot).
+3. **XDG default** -- `$XDG_DATA_HOME/vitest-agent-reporter/<workspaceName>/`.
+
+The workspace root is located by walking up from the project directory
+looking for a `pnpm-workspace.yaml`, a `workspaces` field in
+`package.json`, or a `.git` directory.
+
+To opt back into the 1.x project-local layout, drop a
+`vitest-agent-reporter.config.toml` next to your root `package.json`:
+
+```toml
+cacheDir = "./.vitest-agent-reporter"
 ```
 
 ## Coverage Thresholds

@@ -1,16 +1,26 @@
 # vitest-agent-reporter
 
-Monorepo for developing vitest-agent-reporter -- a Vitest reporter and
-agent platform for LLM coding agents. Produces structured test output,
-persists data in SQLite, and exposes test intelligence via CLI, MCP
-server, and Claude Code plugin.
+Monorepo for developing the `vitest-agent-reporter` package family — a
+Vitest reporter and agent platform for LLM coding agents. Produces
+structured test output, persists data in SQLite at an XDG-derived path,
+and exposes test intelligence via CLI, MCP server, and Claude Code
+plugin.
 
 ## Workspaces
 
 | Workspace | Path | Description |
 | --- | --- | --- |
-| `vitest-agent-reporter` | `package/` | Vitest reporter, CLI, MCP server, Effect services, schemas |
+| `vitest-agent-reporter` | `packages/reporter/` | Vitest reporter + plugin |
+| `vitest-agent-reporter-shared` | `packages/shared/` | Shared schemas, data layer, services, formatters, utilities |
+| `vitest-agent-reporter-cli` | `packages/cli/` | `vitest-agent-reporter` CLI bin |
+| `vitest-agent-reporter-mcp` | `packages/mcp/` | `vitest-agent-reporter-mcp` MCP server bin |
 | `example-basic` | `examples/basic/` | Minimal test project for CLI testing |
+
+`vitest-agent-reporter-shared` has no internal dependencies. The other
+three runtime packages each depend on it. The reporter package declares
+the CLI and MCP packages as required peer dependencies, so a single
+`npm install vitest-agent-reporter` pulls all three on modern pnpm and
+npm.
 
 ## Plugin
 
@@ -18,22 +28,25 @@ server, and Claude Code plugin.
 | --- | --- | --- |
 | Claude Code plugin | `plugin/` | Hooks, skills, commands, MCP auto-registration |
 
-The plugin is not a pnpm workspace -- it's a directory of markdown,
-JSON, and bash files consumed by the Claude Code plugin system. See
-[plugin/README.md](plugin/README.md).
+The plugin is not a pnpm workspace — it's a directory of markdown, JSON,
+shell, and a zero-deps Node loader (`bin/mcp-server.mjs`) consumed by
+the Claude Code plugin system. See [plugin/README.md](plugin/README.md).
 
 ## Architecture
 
-The package has three entry points:
+The package family has three entry points:
 
-| Entry | Binary | Purpose |
-| --- | --- | --- |
-| Reporter/Plugin | (library import) | Vitest reporter producing SQLite-persisted test data |
-| CLI | `vitest-agent-reporter` | Query test status, coverage, history, trends from the terminal |
-| MCP Server | `vitest-agent-reporter-mcp` | 16 tools over stdio for LLM agent integration |
+| Entry | Bin | Package | Purpose |
+| --- | --- | --- | --- |
+| Reporter/Plugin | (library import) | `vitest-agent-reporter` | Vitest reporter producing SQLite-persisted test data |
+| CLI | `vitest-agent-reporter` | `vitest-agent-reporter-cli` | Query test status, coverage, history, trends from the terminal |
+| MCP Server | `vitest-agent-reporter-mcp` | `vitest-agent-reporter-mcp` | 24 tools over stdio for LLM agent integration |
 
-All three share the same Effect service architecture (`DataReader`,
-`DataStore`, `OutputRenderer`) and SQLite database.
+All three share the Effect service architecture and the same SQLite
+database in `vitest-agent-reporter-shared` (`DataReader`, `DataStore`,
+`OutputRenderer`, output pipeline, formatters, etc.). The database
+location is derived from your root workspace's `package.json` `name`
+under `$XDG_DATA_HOME/vitest-agent-reporter/`.
 
 ## Development
 
@@ -45,34 +58,35 @@ pnpm run lint
 pnpm run typecheck
 ```
 
-## Testing the CLI Locally
+## Testing the CLI locally
 
-Run tests to generate cache:
+Run tests to populate the database:
 
 ```bash
 pnpm run test
 ```
 
-Query cached data:
+Query cached data via the CLI bin (resolved from
+`packages/cli/node_modules/.bin`):
 
 ```bash
-pnpm vitest-agent-reporter status
-pnpm vitest-agent-reporter history
-pnpm vitest-agent-reporter trends
-pnpm vitest-agent-reporter doctor
+pnpm exec vitest-agent-reporter status
+pnpm exec vitest-agent-reporter history
+pnpm exec vitest-agent-reporter trends
+pnpm exec vitest-agent-reporter doctor
 ```
 
-## Testing the Plugin Locally
+## Testing the plugin locally
 
 ```bash
 claude --plugin-dir ./plugin
 ```
 
-## Package Documentation
+## Package documentation
 
-See [package/README.md](package/README.md) for full package
-documentation including installation, configuration, MCP tools, and
-Claude Code plugin setup.
+See [packages/reporter/README.md](packages/reporter/README.md) for the
+main user-facing documentation, including installation, configuration,
+MCP tools, and Claude Code plugin setup.
 
 ## License
 

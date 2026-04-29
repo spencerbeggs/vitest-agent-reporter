@@ -38,7 +38,9 @@ explicit install instructions if it's missing.
 
 ### Manual
 
-Start the server directly:
+The MCP server lives in its own package (`vitest-agent-reporter-mcp`),
+which auto-installs as a peer dependency of `vitest-agent-reporter` on
+modern pnpm and npm. Start the server directly:
 
 ```bash
 npx vitest-agent-reporter-mcp
@@ -56,6 +58,13 @@ Or add it to your `.mcp.json` manually:
   }
 }
 ```
+
+The server reads the SQLite database from the same XDG-derived path the
+reporter writes to (default
+`$XDG_DATA_HOME/vitest-agent-reporter/<workspaceName>/data.db`,
+fallback `~/.local/share/vitest-agent-reporter/<workspaceName>/data.db`),
+so a single test run populates data for the MCP tools, the CLI, and the
+reporter's own console output.
 
 ## Tool Reference
 
@@ -135,6 +144,26 @@ Find test modules that cover a given source file.
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `filePath` | `string` | Yes | Source file path to find tests for |
+
+#### `test_get`
+
+Read a single test case in detail: state, duration, errors, history,
+and classification.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `fullName` | `string` | Yes | Full test name (`Suite > nested > test`) |
+| `project` | `string` | No | Project name |
+| `subProject` | `string` | No | Sub-project name |
+
+#### `file_coverage`
+
+Per-file coverage with uncovered line ranges and the test modules that
+cover the file.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `filePath` | `string` | Yes | Source file path to look up |
 
 #### `configure`
 

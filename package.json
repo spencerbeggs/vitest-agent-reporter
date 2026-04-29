@@ -16,8 +16,8 @@
 	},
 	"type": "module",
 	"scripts": {
-		"build": "turbo run build:dev build:prod --filter='./package' --log-order=grouped --log-prefix=none",
-		"ci:build": "CI=\"true\" turbo run build:dev build:prod --filter='./package' --log-order=grouped --output-logs=full",
+		"build": "turbo run build:dev build:prod --filter='./packages/reporter' --log-order=grouped --log-prefix=none",
+		"ci:build": "CI=\"true\" turbo run build:dev build:prod --filter='./packages/reporter' --log-order=grouped --output-logs=full",
 		"ci:test": "CI=\"true\" vitest run --coverage",
 		"ci:version": "savvy-changesets version && biome format --write .",
 		"commit:check": "savvy-commit check",
@@ -42,7 +42,9 @@
 		"@vitest/coverage-v8": "^4.1.5",
 		"typescript": "catalog:silk",
 		"vitest": "^4.1.5",
-		"vitest-agent-reporter": "workspace:*"
+		"vitest-agent-reporter": "workspace:*",
+		"vitest-agent-reporter-cli": "workspace:*",
+		"vitest-agent-reporter-mcp": "workspace:*"
 	},
 	"packageManager": "pnpm@10.33.2+sha512.a90faf6feeab71ad6c6e57f94e0fe1a12f5dcc22cd754db40ae9593eb6a3e0b6b12e3540218bb37ae083404b1f2ce6db2a4121e979829b4aff94b99f49da1cf8",
 	"devEngines": {

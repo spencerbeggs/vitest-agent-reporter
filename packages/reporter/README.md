@@ -1,0 +1,305 @@
+# vitest-agent-reporter
+
+[![npm version](https://img.shields.io/npm/v/vitest-agent-reporter)](https://www.npmjs.com/package/vitest-agent-reporter)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+A Vitest reporter that gives LLM coding agents superpowers -- persistent
+test intelligence, coverage analysis, failure history, and notes via MCP
+tools.
+
+## Features
+
+- **SQLite persistence** -- normalized database replaces JSON files for
+  richer queries and cross-run analysis
+- **MCP server** -- 24 tools over stdio for deep integration with LLM
+  agents (test data, notes, coverage, discovery, run tests)
+- **Claude Code plugin** -- auto-registers MCP tools, injects test
+  context at session start, and provides teaching skills
+- **Zero-config agent detection** -- uses
+  [std-env](https://github.com/nicolo-ribaudo/std-env) to detect Claude
+  Code, Cursor, Gemini CLI, Codex, Devin, and other agents automatically
+- **Coverage thresholds and targets** -- Vitest-native threshold format
+  plus aspirational targets with auto-ratcheting baselines
+- **Coverage trends** -- tracks coverage direction across runs with
+  tiered console output (green/yellow/red)
+- **Failure history** -- per-test pass/fail tracking with classification:
+  `stable`, `new-failure`, `persistent`, `flaky`, `recovered`
+- **Notes system** -- CRUD + full-text search for persisting debugging
+  notes across sessions
+- **GitHub Actions GFM** -- writes structured summaries to
+  `GITHUB_STEP_SUMMARY` automatically in CI
+- **CLI bin** -- query test status, coverage gaps, failure history, and
+  trends from the command line
+
+## Quick Start
+
+Install the package:
+
+```bash
+npm install vitest-agent-reporter
+```
+
+Modern pnpm and npm auto-install the required peer dependencies
+(`vitest-agent-reporter-cli` for the CLI bin and
+`vitest-agent-reporter-mcp` for the MCP server bin). If your package
+manager is configured to skip peers, install them explicitly:
+
+```bash
+pnpm add -D vitest-agent-reporter vitest-agent-reporter-cli vitest-agent-reporter-mcp
+```
+
+Add `AgentPlugin` to your Vitest config with coverage thresholds and
+aspirational targets:
+
+```typescript
+import { AgentPlugin } from "vitest-agent-reporter";
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  plugins: [
+    AgentPlugin({
+      reporter: {
+        coverageThresholds: { lines: 80, branches: 80 },
+        coverageTargets: { lines: 95, branches: 90 },
+      },
+    }),
+  ],
+  test: {
+    coverage: {
+      provider: "v8",
+    },
+  },
+});
+```
+
+Install the Claude Code plugin for the full agent experience:
+
+```bash
+# Add the plugin marketplace (one-time setup)
+/plugin marketplace add spencerbeggs/bot
+
+# Install the plugin for this project
+/plugin install vitest-agent-reporter@spencerbeggs-bot --scope project
+```
+
+That's it. The plugin detects whether an agent, CI, or human is running
+tests and adjusts output automatically. Agents get 24 MCP tools for
+querying test data, tracking coverage, and persisting notes -- with no
+manual MCP configuration.
+
+## What Agents See
+
+When tests fail, the reporter produces actionable markdown output with
+classification labels, coverage gaps, and next steps:
+
+````markdown
+## x Vitest -- 2 failed, 10 passed (520ms)
+
+Coverage regressing over 3 runs
+
+### x `src/utils.test.ts`
+
+- x **compressLines > compresses consecutive lines** [new-failure]
+  Expected "1-3,5" but received "1,2,3,5"
+
+  ```diff
+  - Expected
+  + Received
+
+  - "1-3,5"
+  + "1,2,3,5"
+  ```
+
+- x **compressLines > handles duplicates** [persistent]
+  Expected [1,2] to equal [1]
+
+### Coverage gaps
+
+- `src/coverage.ts` -- Lines: 42% (threshold: 80%) -- uncovered: 65-80,95-110
+- `src/utils.ts` -- Lines: 72% (target: 95%) -- uncovered: 42-50,99
+
+### Next steps
+
+- 1 new failure since last run
+- 1 persistent failure across 3 runs
+- Re-run: `pnpm vitest run src/utils.test.ts`
+- Run `pnpm vitest-agent-reporter coverage` for gap analysis
+- Run `pnpm vitest-agent-reporter trends` for coverage trajectory
+````
+
+When all tests pass and targets are met, output collapses to a single
+summary line.
+
+## How It Works
+
+The plugin detects three environments and adapts behavior:
+
+| Environment | Detection | Console | Database | GFM Summary |
+| --- | --- | --- | --- | --- |
+| Agent | `std-env` agent detection | Structured markdown | Yes | Auto |
+| CI | `GITHUB_ACTIONS`, `CI=true` | Silent (existing reporters kept) | Yes | Yes |
+| Human | No agent/CI vars detected | Silent (existing reporters kept) | Yes | No |
+
+After each test run, `AgentReporter` writes structured data to a SQLite
+database under your XDG data directory (default
+`$XDG_DATA_HOME/vitest-agent-reporter/<workspaceName>/data.db`,
+falling back to `~/.local/share/vitest-agent-reporter/<workspaceName>/data.db`).
+The location is derived from your root `package.json` `name`, so two
+worktrees of the same repo share history. Override the location via
+`vitest-agent-reporter.config.toml` at the workspace root:
+
+```toml
+# Override the entire data directory
+cacheDir = "./.vitest-agent-reporter"
+
+# Or override just the workspace key
+projectKey = "my-app-personal"
+```
+
+The MCP server and CLI both query this database on demand -- no
+background process required.
+
+## Claude Code Plugin
+
+A companion [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+plugin provides the full agent-native experience:
+
+```bash
+# Add the plugin marketplace (one-time setup)
+/plugin marketplace add spencerbeggs/bot
+
+# Install the plugin for this project
+/plugin install vitest-agent-reporter@spencerbeggs-bot --scope project
+```
+
+The plugin provides:
+
+- **MCP auto-registration** -- all 24 tools available immediately with
+  no manual `.mcp.json` configuration
+- **SessionStart hook** -- injects project status and available tools
+  into Claude's context at the start of each session
+- **PostToolUse hook** -- detects test runs and suggests MCP tools for
+  deeper analysis when tests fail
+- **Skills** -- `/vitest-agent-reporter:tdd`,
+  `/vitest-agent-reporter:debugging`,
+  `/vitest-agent-reporter:configuration`
+- **Commands** -- `/vitest-agent-reporter:setup` (add plugin to vitest
+  config), `/vitest-agent-reporter:configure` (view/modify settings)
+
+## MCP Tools
+
+The package includes an MCP server (`vitest-agent-reporter-mcp`) that
+exposes test data as tools over stdio transport. The Claude Code plugin
+registers this automatically, but you can also start it manually:
+
+```bash
+npx vitest-agent-reporter-mcp
+```
+
+<details>
+<summary>Full tool reference (24 tools)</summary>
+
+| Tool | Description |
+| --- | --- |
+| `help` | List all tools with parameters and descriptions |
+| `test_status` | Per-project pass/fail state from the most recent run |
+| `test_overview` | Test landscape summary with per-project run metrics |
+| `test_coverage` | Coverage gap analysis with per-metric thresholds and targets |
+| `test_history` | Flaky/persistent/recovered tests with run visualization |
+| `test_trends` | Per-project coverage trajectory with direction and sparkline |
+| `test_errors` | Detailed test errors with diffs and stack traces |
+| `test_for_file` | Find test modules that cover a given source file |
+| `run_tests` | Execute vitest for specific files or projects |
+| `cache_health` | Database health diagnostic |
+| `configure` | View captured Vitest settings for a test run |
+| `project_list` | List all projects with latest run summary |
+| `test_list` | List test cases with state and duration |
+| `module_list` | List test modules (files) with test counts |
+| `suite_list` | List test suites (describe blocks) |
+| `settings_list` | List Vitest config snapshots |
+| `note_create` | Create a scoped note (global, project, module, suite, test, or free-form) |
+| `note_list` | List notes with optional scope, project, and test filters |
+| `note_get` | Read a note by ID |
+| `note_update` | Update note content, pin state, or expiration |
+| `note_delete` | Delete a note |
+| `note_search` | Full-text search across note titles and content |
+
+</details>
+
+See [docs/mcp.md](../docs/mcp.md) for the full MCP reference.
+
+## CLI
+
+The `vitest-agent-reporter` CLI queries the SQLite database for on-demand
+test landscape queries. All commands accept `--format` to switch between
+`markdown` (default) and `json` output.
+
+```bash
+npx vitest-agent-reporter status      # Per-project pass/fail state
+npx vitest-agent-reporter coverage    # Coverage gap analysis
+npx vitest-agent-reporter history     # Flaky/persistent failure trends
+npx vitest-agent-reporter trends      # Coverage trajectory over time
+npx vitest-agent-reporter doctor      # Database health diagnostic
+npx vitest-agent-reporter cache path  # Print the database file path
+npx vitest-agent-reporter cache clean # Delete the database
+```
+
+See [docs/cli.md](../docs/cli.md) for the full CLI reference.
+
+## Documentation
+
+| Guide | Description |
+| --- | --- |
+| [Configuration](../docs/configuration.md) | Plugin and reporter options, thresholds, targets, cache resolution |
+| [Direct Reporter Usage](../docs/reporter.md) | Using `AgentReporter` without the plugin |
+| [Schemas](../docs/schemas.md) | Effect Schema definitions, programmatic access |
+| [CLI Commands](../docs/cli.md) | Status, overview, coverage, history, trends, cache, and doctor commands |
+| [MCP Server](../docs/mcp.md) | MCP tools reference, notes system, manual server usage |
+| [Failure History](../docs/history.md) | Test classification and failure tracking |
+| [Claude Code Plugin](../plugin/README.md) | Plugin installation, hooks, skills, and commands |
+
+## Migrating from 1.x
+
+Version 2.0 introduces three changes worth knowing about before you
+upgrade:
+
+### Database location moved
+
+The SQLite database moved from `node_modules/.vite/vitest/<hash>/vitest-agent-reporter/data.db`
+to `$XDG_DATA_HOME/vitest-agent-reporter/<workspaceName>/data.db`.
+**No data migration is performed** — your first 2.0 run starts with a
+fresh database. Coverage baselines, trends, and history all reset.
+Existing data in `node_modules` is harmless and ignored.
+
+If you want the old project-local layout, set this in
+`vitest-agent-reporter.config.toml` at your workspace root:
+
+```toml
+cacheDir = "./.vitest-agent-reporter"
+```
+
+### Package split (peers auto-install)
+
+`vitest-agent-reporter` is now four packages — `vitest-agent-reporter`
+itself (the Vitest plugin/reporter), `vitest-agent-reporter-shared`
+(the shared library), `vitest-agent-reporter-cli` (the CLI bin), and
+`vitest-agent-reporter-mcp` (the MCP server bin). The CLI and MCP
+packages are required peer dependencies of the reporter, auto-installed
+by pnpm and npm 7+. If your package manager skips peers, install them
+explicitly. The `vitest-agent-reporter` and `vitest-agent-reporter-mcp`
+bin names are unchanged.
+
+### `AgentReporter.onInit` is now async
+
+`onInit` now returns `Promise<void>` so it can resolve dbPath
+asynchronously. Vitest awaits the hook, so `AgentPlugin` users see no
+change. Direct callers of `onInit` must await the promise.
+
+## Requirements
+
+- Vitest >= 4.1.0
+- Node.js >= 22
+
+## License
+
+[MIT](./LICENSE)

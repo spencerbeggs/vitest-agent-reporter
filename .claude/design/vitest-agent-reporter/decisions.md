@@ -3,9 +3,10 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-04-28
-last-synced: 2026-04-28
+updated: 2026-04-29
+last-synced: 2026-04-29
 post-phase5-sync: 2026-04-23
+post-2-0-sync: 2026-04-29
 completeness: 95
 related:
   - vitest-agent-reporter/architecture.md
@@ -571,7 +572,15 @@ before the main `Effect.runPromise`; on rejection, it prints
 referenced from a new test file with a `_resetMigrationCacheForTesting`
 internal helper.
 
-### Decision 29: Plugin MCP Server Loader (bug/startup branch)
+### Decision 29: Plugin MCP Server Loader (bug/startup branch) — RETIRED in 2.0
+
+> **Retired in 2.0 (Phase 6).** Superseded by Decision 30 below. The
+> `file://` dynamic-import + `node_modules` walk described here is
+> gone. The new loader detects the user's package manager and spawns
+> `vitest-agent-reporter-mcp` (now its own package with its own bin)
+> through that PM. The decision is preserved in this document for
+> historical context — anyone reading the bug/startup branch git
+> history will encounter the old loader.
 
 **Context:** The Phase 5d plugin previously registered the MCP server
 via a separate `.mcp.json` file with `npx vitest-agent-reporter-mcp`.
@@ -618,6 +627,307 @@ declares an `import` condition for it.
 - Plugin users must install `vitest-agent-reporter` as a project
   dependency. This is consistent with how the Vitest reporter and CLI
   are already used and is documented in the failure message
+
+### Decision 30: Plugin MCP Loader as PM-Detect + Spawn (Phase 6)
+
+**Context:** Decision 29's loader (`file://` dynamic import of the
+package's `./mcp` export, after walking the user's `node_modules`)
+worked but it was fragile in three specific ways: (a) it depended on
+the published package declaring an exact `./mcp` export with `import`
+condition compatible with Node's strict-exports rules; (b) it
+duplicated Node's resolution algorithm, which meant any deviation in
+install layout (yarn berry PnP, custom store directories) broke it;
+(c) when it failed, the error surfaced as "couldn't find ./mcp
+export" rather than the actual problem ("the package isn't
+installed"). The 2.0 package split also retired the `./mcp` subpath
+export from the reporter package -- the MCP server is now its own
+package with its own bin, so the workaround is no longer needed.
+
+**Chosen approach:** rewrite `plugin/bin/mcp-server.mjs` body as a
+zero-deps PM-detect + spawn script:
+
+1. Resolve `projectDir` from `process.env.CLAUDE_PROJECT_DIR ||
+   process.cwd()`
+2. Detect the user's package manager:
+   - First, check `packageManager` field in `<projectDir>/package.json`
+     (e.g. `"pnpm@10.32.1"`)
+   - Then, check lockfile presence in `projectDir`:
+     `pnpm-lock.yaml` -> `pnpm`, `bun.lock` or `bun.lockb` -> `bun`,
+     `yarn.lock` -> `yarn`, `package-lock.json` -> `npm`
+   - Default to `npm`
+3. Spawn `<pm-exec> vitest-agent-reporter-mcp` with `stdio:
+   "inherit"`, `cwd: projectDir`, and `env: { ...process.env,
+   VITEST_AGENT_REPORTER_PROJECT_DIR: projectDir }`. The PM commands
+   are: `pnpm exec`, `npx --no-install`, `yarn run`, `bun x`
+4. On `child.error` (e.g. PM not on PATH): print PM-specific install
+   instructions and the underlying error, exit `1`
+5. On `child.exit(code, signal)`: if code is 0, exit 0. If a signal
+   was received, re-raise it via `process.kill(process.pid, signal)`
+   so the parent sees the right termination cause. Otherwise print
+   PM-specific install instructions for the missing peer dep and
+   forward the exit code
+
+The script imports only `node:child_process`, `node:fs`, and
+`node:path` -- it must run before the user has installed anything.
+
+**`VITEST_AGENT_REPORTER_PROJECT_DIR` env passthrough:** the spawned
+MCP subprocess uses this env var as the highest-precedence source
+for `projectDir` (see Component 22 / `packages/mcp/src/bin.ts`'s
+`resolveProjectDir`). Claude Code sets `CLAUDE_PROJECT_DIR` for hook
+scripts but does not reliably propagate it to MCP server
+subprocesses; this passthrough ensures the MCP server sees the same
+project root the loader resolved.
+
+**Why chosen:**
+
+- The MCP server is its own package with its own bin in 2.0. The
+  user's PM already knows how to find and execute project bins
+  (`node_modules/.bin` resolution, hoisting rules, monorepo
+  awareness, etc.). Re-implementing that resolution in the loader
+  was the wrong layer
+- A missing peer dep now surfaces as a PM-level error with PM-native
+  install instructions ("run `pnpm add -D vitest-agent-reporter`"),
+  not "couldn't find ./mcp export"
+- The loader doesn't need to understand Effect, exports maps,
+  better-sqlite3 native bindings, or the package's internal layout
+- `npx --no-install` (instead of plain `npx`) eliminates the
+  Decision-29-era hazard of npx silently downloading from the
+  registry and exceeding Claude Code's MCP startup window
+
+**Trade-offs:**
+
+- The loader still has to know about four PMs and their `exec`
+  syntaxes. Keeping that table in sync with new PM versions is a
+  small maintenance burden
+- PM-specific peer-dep enforcement varies (npm warns, pnpm errors,
+  yarn berry strict, bun varies). The README documents this so
+  install UX surprises are mitigated
+
+**Decision 29 status:** retired. See the inline note on Decision 29
+above.
+
+### Decision 31: Deterministic XDG Path Resolution (Phase 6)
+
+**Context:** The 1.x `resolveDbPath` was an artifact-probing resolver
+that walked
+`node_modules/.vite/vitest/<hash>/.../vitest-agent-reporter/data.db`
+to find an existing database. This was the root cause of
+[issue #39](https://github.com/spencerbeggs/agent-reporter/issues/39):
+on a fresh project where the DB didn't exist yet, the resolver fell back
+to a literal path that often disagreed with where Vitest later
+created it. The MCP server baked the wrong path into `McpLive` at
+startup, so every query tool errored with "Cannot open database
+because the directory does not exist" until the user reconnected MCP.
+The 1.3.1 anchor fix (Decision 28's neighbor) was incomplete; the
+real bug was treating the path as a function of the filesystem (does
+this artifact exist?) rather than a function of identity (which
+workspace is this?).
+
+**Chosen approach:** the data path is now a deterministic function
+of the workspace's identity, derived from XDG env vars and the
+workspace's `package.json` `name`:
+
+`$XDG_DATA_HOME/vitest-agent-reporter/<workspaceKey>/data.db`
+
+where `<workspaceKey>` is the root `package.json` `name` normalized
+via `normalizeWorkspaceKey` (`@org/pkg` -> `@org__pkg`). On systems
+without `XDG_DATA_HOME` it falls back to
+`~/.local/share/vitest-agent-reporter/<workspaceKey>/data.db` per
+`xdg-effect`'s `AppDirs` semantics. An optional
+`vitest-agent-reporter.config.toml` lets users override the
+`<workspaceKey>` segment (`projectKey` field) or the entire data
+directory (`cacheDir` field). The plugin's programmatic
+`reporter.cacheDir` option is highest precedence. See Component 30
+for the full precedence table.
+
+**Why XDG:**
+
+- The XDG Base Directory Specification is the closest thing to a
+  cross-platform convention for "where should an app store user
+  data". `xdg-effect` honors `XDG_DATA_HOME` on all platforms with a
+  sensible fallback
+- The DB is workspace-scoped state, not project-build-output. It
+  doesn't belong under `node_modules` (gets wiped by `rm -rf
+  node_modules`) and it doesn't belong in the project tree (clutters
+  git status, requires gitignore management). XDG's "user data"
+  category is the right semantic match
+
+**Why workspace-name keying (vs path hash):**
+
+- **Worktree consistency:** two checkouts of the same repo share
+  history. With path hashing they would diverge
+- **Disk-move resilience:** moving a project preserves the workspace
+  identity, so the DB follows the project rather than its filesystem
+  coordinates
+- **Human-readable:** `ls ~/.local/share/vitest-agent-reporter/`
+  shows package names instead of opaque hashes -- useful for manual
+  inspection, the `cache clean` command, and debugging path
+  resolution
+- **Forks:** a fork that renames its package gets its own DB
+  automatically. A fork that keeps the same `name` shares the DB --
+  users opt out via `projectKey`
+
+**Why fail-loud on missing workspace identity:**
+
+The default config (no TOML override, no workspace `name`) raises
+`WorkspaceRootNotFoundError` instead of falling back to a path hash.
+Silent fallbacks make the DB location depend on filesystem layout
+instead of identity, which is the bug class 2.0 leaves behind.
+Anyone hitting this error has a one-line fix (set `projectKey` in
+the config TOML or add `name` to their root `package.json`) and
+gains the benefits above for free.
+
+**Why a TOML config file (vs JSON or .json5):**
+
+- TOML's distinction between strings and identifiers reads more
+  naturally for path-like config than JSON's everything-is-a-string
+- `config-file-effect`'s `TomlCodec` integrates cleanly with Effect
+  Schema decoding; we get free validation
+- TOML is already familiar to the Rust/Cargo ecosystem and shows up
+  in Python tooling (pyproject.toml, ruff, etc.); developers won't
+  be surprised
+
+**Trade-offs:**
+
+- Workspace name collisions: two unrelated projects sharing the same
+  root `name` will resolve to the same `<workspaceKey>` and share a
+  DB. Symptom: mixed history. Mitigations: (a) the `projectKey`
+  config override, (b) the human-readable XDG layout makes the
+  collision discoverable on inspection, (c) the README documents the
+  behavior. Path-hashing avoids collisions but loses worktree
+  consistency, disk-move resilience, and human readability -- we
+  chose collision-with-escape-hatch over hashing
+- Three new external dependencies (`xdg-effect`,
+  `config-file-effect`, `workspaces-effect`). All three are
+  spencerbeggs-published Effect-native libraries; the alternative
+  was inlining ~500 LOC of XDG + TOML + workspace-discovery logic
+  per the issue plan, which was rejected as undermaintainable
+- Existing 1.x users lose history on first 2.0 run. Documented as a
+  breaking change in the changeset; no migration code (the new
+  location is determined a priori, the old location was probed at
+  runtime, so a one-time copy isn't even straightforward)
+
+### Decision 32: Keep `ensureMigrated` Instead of `xdg-effect`'s `SqliteState.Live` (Phase 6)
+
+**Context:** `xdg-effect` ships a `SqliteState.Live` that combines an
+XDG-resolved path, a SQLite client, and a migrator into a single
+layer. The 2.0 plan flagged it as a candidate to replace our
+`SqliteClient` + `SqliteMigrator` + `ensureMigrated` triplet -- one
+fewer dependency to maintain. The investigation went the other way.
+
+**Decision:** keep `ensureMigrated` and our existing migrator setup.
+Don't adopt `SqliteState.Live`.
+
+**Why:**
+
+- `SqliteState.Live` constructs migrations as part of layer
+  construction, with no process-level coordination across
+  independent layer instances. In multi-project Vitest configs each
+  reporter instance constructs its own runtime (Decision 25 -- per-
+  project reporter instances), so multiple migrations would race on
+  a fresh DB and reintroduce the SQLITE_BUSY issue Decision 28 was
+  written to fix
+- The migration tracking tables differ: `xdg-effect` uses
+  `_xdg_migrations`, `@effect/sql-sqlite-node`'s `SqliteMigrator`
+  uses `effect_sql_migrations`. Switching would require a one-time
+  bootstrap that reads both tables and reconciles state. For
+  existing 2.0 users this is moot (history resets anyway), but it's
+  a real code path we'd have to write and test
+- `ensureMigrated`'s `globalThis`-keyed promise cache is
+  battle-tested at this point and the surface area is small (~50
+  LOC in a single file). The maintenance cost is approximately zero
+
+**Trade-offs:**
+
+- We don't get whatever future improvements land in
+  `SqliteState.Live`. Acceptable -- our migration story is stable,
+  and we can always swap later if `SqliteState.Live` grows
+  process-level coordination
+
+This decision resolves the open question raised in the 2.0 plan
+under "Open Implementation Questions". Decision 28 remains in force
+as the canonical fix for the SQLITE_BUSY race.
+
+### Decision 33: Four-Package Split (Phase 6)
+
+**Context:** The 1.x `vitest-agent-reporter` package shipped the
+reporter, plugin, CLI bin, and MCP server in one npm package. Three
+problems compounded: (a) any change to MCP forced a reporter version
+bump (and vice versa), making coordinated releases mandatory but
+making the changelog noisy; (b) users who only wanted the CLI or
+only the MCP server still pulled the full transitive dependency
+graph (`@modelcontextprotocol/sdk`, `@trpc/server`, `zod`,
+`@effect/cli`, etc.); (c) issue #39's debugging surfaced a
+"reporter pinned at 1.3.0, plugin shell at 1.3.1, MCP code that
+actually ran was 1.3.0" version-skew where the package boundary made
+it hard to reason about which code was running.
+
+**Decision:** split the monolith into four pnpm workspaces under
+`packages/`:
+
+| Package | Role |
+| --- | --- |
+| `vitest-agent-reporter-shared` | data layer, schemas, services, formatters, utilities, XDG path stack -- no internal deps |
+| `vitest-agent-reporter` | reporter + plugin + ReporterLive + CoverageAnalyzer; declares cli + mcp as required peer deps |
+| `vitest-agent-reporter-cli` | `vitest-agent-reporter` bin |
+| `vitest-agent-reporter-mcp` | `vitest-agent-reporter-mcp` bin |
+
+All four release in lockstep via changesets `linked` config. The
+reporter declares the CLI and MCP packages as **required**
+`peerDependencies` so installing the reporter still pulls the agent
+tooling along with it -- this preserves the 1.x install ergonomics
+while giving us independent versioning at the npm layer.
+
+**Why this split (and not, e.g., reporter + everything-else):**
+
+- The shared package boundary is determined by "what does more than
+  one runtime package need". The data layer (DataStore, DataReader,
+  schemas, migrations, errors) is consumed by all three runtimes;
+  the output pipeline by reporter and (transitively, via formatted
+  output) CLI/MCP; the path-resolution stack by all three. Pulling
+  these into shared makes circular-import problems impossible by
+  construction
+- The CLI/MCP split is justified by the dependency footprint:
+  `@effect/cli` is heavy and only the CLI needs it; the MCP SDK + tRPC
+  - zod stack is heavy and only MCP needs it. Co-located in one
+  package, every install pays for both
+- The reporter stays its own package because it has the only
+  Vitest-API-aware code (`AgentReporter` class, `AgentPlugin`
+  factory) and because users importing
+  `from "vitest-agent-reporter"` should keep that import working
+
+**Why required peer deps (vs optional or full deps):**
+
+- Optional peers would let users install only the reporter without
+  the CLI/MCP, but they'd silently lose the bin invocations the
+  reporter's "Next steps" output suggests, and the MCP server the
+  Claude Code plugin needs. The 1.x install story shipped all
+  three; required peers preserve that
+- Direct deps would tie the reporter's lockfile to the CLI/MCP
+  versions and prevent users from upgrading them independently
+- Required peers split the difference: lockstep version coordination
+  without bundling the dependency graph
+
+**Why "shared" (not "schema") for the base package name:**
+
+The package was originally drafted as `vitest-agent-reporter-schema`
+to emphasize the Effect Schema role. As Phase 6 progressed it became
+clear the package owns much more than schemas -- services, layers,
+formatters, utilities, errors, migrations, the entire XDG path
+stack. The rename to `vitest-agent-reporter-shared` (commit 1f2eaa5)
+better reflects the actual role: anything depended on by more than
+one runtime package.
+
+**Trade-offs:**
+
+- Lockstep releases require all four `package.json` files to bump in
+  sync. Changesets `linked` config handles this, but it's a process
+  rule the team has to follow
+- Three new `private: true` package.jsons to maintain (rslib-builder
+  transforms each on publish)
+- Users importing the schemas directly need a different import:
+  `from "vitest-agent-reporter-shared"` instead of
+  `from "vitest-agent-reporter"`. Documented as a breaking change
 
 ---
 

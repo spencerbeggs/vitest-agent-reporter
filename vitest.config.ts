@@ -1,5 +1,5 @@
 import { defineConfig } from "vitest/config";
-import { AgentPlugin } from "./package/src/plugin.js";
+import { AgentPlugin } from "vitest-agent-reporter";
 
 export default defineConfig({
 	plugins: [
@@ -19,7 +19,31 @@ export default defineConfig({
 				extends: true,
 				test: {
 					name: "vitest-agent-reporter",
-					include: ["package/src/**/*.{test,spec}.ts"],
+					include: ["packages/reporter/src/**/*.{test,spec}.ts"],
+					exclude: ["**/*.e2e.{test,spec}.ts"],
+				},
+			},
+			{
+				extends: true,
+				test: {
+					name: "vitest-agent-reporter-shared",
+					include: ["packages/shared/src/**/*.{test,spec}.ts"],
+					exclude: ["**/*.e2e.{test,spec}.ts"],
+				},
+			},
+			{
+				extends: true,
+				test: {
+					name: "vitest-agent-reporter-mcp",
+					include: ["packages/mcp/src/**/*.{test,spec}.ts"],
+					exclude: ["**/*.e2e.{test,spec}.ts"],
+				},
+			},
+			{
+				extends: true,
+				test: {
+					name: "vitest-agent-reporter-cli",
+					include: ["packages/cli/src/**/*.{test,spec}.ts"],
 					exclude: ["**/*.e2e.{test,spec}.ts"],
 				},
 			},
@@ -35,32 +59,44 @@ export default defineConfig({
 		coverage: {
 			enabled: true,
 			provider: "v8",
-			include: ["package/src/**/*.ts", "examples/basic/src/**/*.ts"],
+			include: [
+				"packages/reporter/src/**/*.ts",
+				"packages/shared/src/**/*.ts",
+				"packages/mcp/src/**/*.ts",
+				"packages/cli/src/**/*.ts",
+				"examples/basic/src/**/*.ts",
+			],
 			exclude: [
 				"**/*.{test,spec}.ts",
-				"**/cli/commands/**",
-				"**/cli/index.ts",
-				"**/cli/lib/resolve-cache-dir.ts",
-				"**/services/*.ts",
-				"**/errors/*.ts",
-				"**/sql/rows.ts",
-				"**/sql/assemblers.ts",
-				"**/migrations/**",
-				"**/mcp/**",
-				"**/layers/CliLive.ts",
-				"**/layers/McpLive.ts",
-				"**/layers/OutputPipelineLive.ts",
-				"**/formatters/gfm.ts",
-				"**/formatters/silent.ts",
-				"**/formatters/markdown.ts",
-				"**/schemas/Thresholds.ts",
-				"**/schemas/Coverage.ts",
-				"**/layers/OutputRendererLive.ts",
-				"**/layers/EnvironmentDetectorLive.ts",
-				"**/layers/LoggerLive.ts",
-				"**/layers/DataStoreLive.ts",
-				"**/layers/DataReaderLive.ts",
-				"**/reporter.ts",
+				// Bin entries and command glue
+				"packages/cli/src/bin.ts",
+				"packages/cli/src/commands/**",
+				"packages/cli/src/index.ts",
+				"packages/cli/src/layers/**",
+				"packages/mcp/**",
+				// Reporter glue
+				"packages/reporter/src/index.ts",
+				"packages/reporter/src/reporter.ts",
+				"packages/reporter/src/layers/**",
+				// Shared composition layers and bundles with no testable logic
+				"packages/shared/src/services/*.ts",
+				"packages/shared/src/errors/*.ts",
+				"packages/shared/src/sql/rows.ts",
+				"packages/shared/src/sql/assemblers.ts",
+				"packages/shared/src/migrations/**",
+				"packages/shared/src/layers/OutputPipelineLive.ts",
+				"packages/shared/src/layers/PathResolutionLive.ts",
+				"packages/shared/src/layers/OutputRendererLive.ts",
+				"packages/shared/src/layers/EnvironmentDetectorLive.ts",
+				"packages/shared/src/layers/LoggerLive.ts",
+				"packages/shared/src/layers/DataStoreLive.ts",
+				"packages/shared/src/layers/DataStoreTest.ts",
+				"packages/shared/src/layers/DataReaderLive.ts",
+				"packages/shared/src/formatters/gfm.ts",
+				"packages/shared/src/formatters/silent.ts",
+				"packages/shared/src/formatters/markdown.ts",
+				"packages/shared/src/schemas/Thresholds.ts",
+				"packages/shared/src/schemas/Coverage.ts",
 			],
 		},
 	},

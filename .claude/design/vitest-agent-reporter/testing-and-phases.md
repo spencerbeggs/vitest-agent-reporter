@@ -3,9 +3,10 @@ status: current
 module: vitest-agent-reporter
 category: testing
 created: 2026-03-20
-updated: 2026-04-28
-last-synced: 2026-04-28
+updated: 2026-04-29
+last-synced: 2026-04-29
 post-phase5-sync: 2026-04-23
+post-2-0-sync: 2026-04-29
 completeness: 95
 related:
   - vitest-agent-reporter/architecture.md
@@ -767,6 +768,182 @@ configurations. See Decisions 28 and 29 for background.
 
 - `plugin/.mcp.json` (replaced by inline config + loader)
 
+### Phase 6: 2.0 Architectural Restructure -- COMPLETE
+
+**Branch:** `feat/db-issues`. Closes
+[issue #39](https://github.com/spencerbeggs/agent-reporter/issues/39).
+
+**Goals (from `.claude/plans/2026-04-29-2.0.0-xdg-paths-and-package-split.md`):**
+
+1. Replace the artifact-probing `resolveDbPath` with deterministic
+   XDG-based resolution.
+2. Split the monolithic `vitest-agent-reporter` package into four
+   coordinated packages.
+3. Rewrite the Claude Code plugin's MCP loader as a PM-detect +
+   spawn script.
+4. Eliminate the per-project DB location ambiguity that today
+   requires `node_modules/.vite/vitest/<hash>/...` walking.
+
+**Deliverables (all implemented):**
+
+- **Four-package split (Decision 33):** the monolith became four pnpm
+  workspaces under `packages/`:
+  - `vitest-agent-reporter-shared` (`packages/shared/`) -- the
+    no-internal-deps base. Owns schemas, migrations, errors,
+    `DataStore` / `DataReader` services + live layers, all output
+    pipeline services + live layers, History / ProjectDiscovery,
+    Logger, formatters, utilities, and the new XDG path stack
+  - `vitest-agent-reporter` (`packages/reporter/`) -- the reporter +
+    plugin + `ReporterLive` + `CoverageAnalyzer`. Declares the CLI
+    and MCP packages as **required** `peerDependencies`
+  - `vitest-agent-reporter-cli` (`packages/cli/`) --
+    `vitest-agent-reporter` bin + `CliLive`
+  - `vitest-agent-reporter-mcp` (`packages/mcp/`) --
+    `vitest-agent-reporter-mcp` bin + `McpLive`. The reporter
+    package no longer exports `./mcp` and no longer ships either bin
+- **Schema package renamed to `shared`:** initial drafts called the
+  base package `vitest-agent-reporter-schema`, but as Phase 6
+  progressed it became clear the package owns much more than schemas.
+  Renamed to `vitest-agent-reporter-shared` (commit 1f2eaa5)
+- **Deterministic XDG path resolution (Decision 31):** new
+  `resolveDataPath(projectDir, options?)` in
+  `packages/shared/src/utils/resolve-data-path.ts`. Default location:
+  `$XDG_DATA_HOME/vitest-agent-reporter/<workspaceKey>/data.db`
+  (falls back to `~/.local/share/...`). Adopts `xdg-effect ^1.0.1`,
+  `config-file-effect ^0.2.0`, and `workspaces-effect ^0.5.1` (in
+  shared only). The path is a function of identity (root
+  `package.json` `name`, normalized via `normalizeWorkspaceKey`),
+  not filesystem layout. Fail-loud with `WorkspaceRootNotFoundError`
+  when no workspace identity is available -- no silent path-hash
+  fallback
+- **Optional TOML config file:** new
+  `vitest-agent-reporter.config.toml` schema
+  (`{ cacheDir?: string, projectKey?: string }`) loaded via
+  `ConfigLive(projectDir)` with `WorkspaceRoot` -> `GitRoot` ->
+  `UpwardWalk` resolvers (`FirstMatch` strategy). Two new schemas
+  (`Config.ts`), one new service tag (`VitestAgentReporterConfigFile`),
+  one new layer (`ConfigLive`), one new error (`PathResolutionError`),
+  one new composite layer (`PathResolutionLive`)
+- **`AgentReporter.onInit` is now async** -- needed for async
+  `dbPath` resolution. New `private dbPath: string | null` field and
+  `private async ensureDbPath()` helper memoize the result.
+  `onTestRunEnd` calls `ensureDbPath()` defensively for unit tests
+  that bypass `onInit`. The plugin's `cacheDir` resolution dropped
+  its third Vite-cacheDir fallback since the reporter handles XDG
+  fallback itself
+- **Plugin loader rewritten (Decision 30, retiring Decision 29):**
+  `plugin/bin/mcp-server.mjs` is now a zero-deps PM-detect + spawn
+  script (~120 LOC). Detects `pnpm`/`npm`/`yarn`/`bun` via
+  `packageManager` field or lockfile, spawns
+  `<pm-exec> vitest-agent-reporter-mcp` with `stdio: 'inherit'` and
+  `cwd: projectDir`. Forwards `CLAUDE_PROJECT_DIR` through a new
+  `VITEST_AGENT_REPORTER_PROJECT_DIR` env var (Claude Code does not
+  reliably propagate `CLAUDE_PROJECT_DIR` to MCP subprocesses).
+  Forwards exit codes; on non-zero exit prints PM-specific install
+  instructions; re-raises termination signals on the parent. The
+  `plugin/.claude-plugin/plugin.json` `mcpServers` config is
+  unchanged
+- **`SqliteState.Live` investigation (Decision 32):** the open
+  question about replacing `SqliteClient` + `SqliteMigrator` +
+  `ensureMigrated` with `xdg-effect`'s `SqliteState.Live` is
+  resolved -- **keep our pattern**. `SqliteState.Live` re-runs
+  migrations on each Layer construction without process-level
+  coordination, which would reintroduce the SQLITE_BUSY race
+  Decision 28 fixed
+- **Reporter package internal moves:**
+  - `services/`: now contains only `CoverageAnalyzer.ts` +
+    `services.test.ts` (the rest moved to shared)
+  - `layers/`: now contains only `CoverageAnalyzerLive.ts`,
+    `CoverageAnalyzerTest.ts`, `ReporterLive.ts`
+    (`CliLive` moved to cli pkg, `McpLive` moved to mcp pkg, all
+    OutputPipeline / HistoryTracker / ProjectDiscovery / Detail /
+    Format / Executor / Environment layers moved to shared)
+  - `utils/`: now contains only `capture-env.ts`,
+    `capture-settings.ts`, `resolve-thresholds.ts`,
+    `strip-console-reporters.ts`
+  - `cli/` and `mcp/` directories no longer exist in the reporter
+- **`SettingsInput` moved to `DataStore.ts`** -- the type was
+  previously exported from `utils/capture-settings.ts`. Phase 6
+  moved it into `packages/shared/src/services/DataStore.ts` so
+  DataStore owns its full input contract without circular imports
+  between reporter and shared
+
+**Breaking changes from Phase 5:**
+
+- The 1.x `node_modules/.vite/.../vitest-agent-reporter/data.db`
+  location is gone. No migration code ships -- existing 1.x users
+  have history reset on first 2.0 run. Documented in changeset and
+  changelog
+- Direct schema imports must change from `vitest-agent-reporter` to
+  `vitest-agent-reporter-shared`
+- `AgentReporter.onInit` is now async (no breaking change for users
+  going through `AgentPlugin`; potentially breaking for anyone
+  manually instantiating `AgentReporter` and synchronously calling
+  `onInit`)
+- The reporter package's `./mcp` subpath export is gone; the MCP
+  server is now its own bin
+
+**New external dependencies (in shared only):**
+
+- `xdg-effect ^1.0.1`
+- `config-file-effect ^0.2.0`
+- `workspaces-effect ^0.5.1`
+
+**New files:**
+
+- `packages/shared/src/schemas/Config.ts`
+- `packages/shared/src/services/Config.ts`
+- `packages/shared/src/layers/ConfigLive.ts`
+- `packages/shared/src/layers/PathResolutionLive.ts`
+- `packages/shared/src/errors/PathResolutionError.ts`
+- `packages/shared/src/utils/normalize-workspace-key.ts`
+- `packages/shared/src/utils/resolve-workspace-key.ts`
+- `packages/shared/src/utils/resolve-data-path.ts`
+- (plus all of the other shared-package tests and sources, which
+  moved from the old `package/` location)
+
+**New test files (Phase 6 specific):**
+
+- `packages/shared/src/schemas/Config.test.ts`
+- `packages/shared/src/layers/ConfigLive.test.ts`
+- `packages/shared/src/utils/normalize-workspace-key.test.ts`
+- `packages/shared/src/utils/resolve-workspace-key.test.ts`
+- `packages/shared/src/utils/resolve-data-path.test.ts`
+
+**Deleted files:**
+
+- `package/` directory entirely (replaced by `packages/*/`)
+- `package/src/cli/lib/resolve-cache-dir.ts` -- the artifact-probing
+  `resolveDbPath` resolver. Replaced by `resolveDataPath`
+
+**Test count:** total tests grew from 573 to **618 across 5 named
+Vitest projects**:
+
+| Project | Tests |
+| --- | --- |
+| `vitest-agent-reporter` | 102 |
+| `vitest-agent-reporter-shared` | 429 |
+| `vitest-agent-reporter-mcp` | 40 |
+| `vitest-agent-reporter-cli` | 39 |
+| `example-basic` | 8 |
+
+The root `vitest.config.ts` declares one project per package plus
+`example-basic` (a minimal example app under `examples/basic/`
+that doubles as integration coverage). The `coverage.exclude`
+list was rewritten with explicit `packages/`-prefixed globs to
+target the new layout (bin entries, command glue, layer
+composition factories, and a couple of types-only modules are
+excluded).
+
+**Depends on:** all prior phases. Specifically: Decision 28
+(`ensureMigrated`) remains in force; Decision 18 (SQLite over JSON
+files) remains in force; Decision 23 (normalized
+project / sub-project keying) is preserved -- the DB is one-per-
+workspace, not one-per-Vitest-sub-project.
+
+**Plan reference:**
+`.claude/plans/2026-04-29-2.0.0-xdg-paths-and-package-split.md`.
+
 ---
 
 ## Related Documentation
@@ -795,7 +972,8 @@ configurations. See Decisions 28 and 29 for background.
 
 ---
 
-**Document Status:** Current -- reflects Phase 1 through Phase 5
-implementation plus post-Phase-5 refinements and bug/startup branch
-fixes. 573 tests across 53 files, all coverage metrics above 80%. All
-phases complete.
+**Document Status:** Current -- reflects Phase 1 through Phase 6 (2.0
+architectural restructure on `feat/db-issues`). 618 tests across 5
+named Vitest projects (102 reporter + 429 shared + 40 mcp + 39 cli +
+8 example-basic), all coverage metrics above 80%. All phases
+complete.

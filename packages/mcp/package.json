@@ -1,0 +1,77 @@
+{
+	"name": "vitest-agent-reporter-mcp",
+	"version": "1.3.1",
+	"private": true,
+	"description": "Model Context Protocol server for vitest-agent-reporter. Exposes 24 tools for agent access to test data.",
+	"keywords": ["vitest", "agent", "mcp", "model-context-protocol", "claude"],
+	"homepage": "https://github.com/spencerbeggs/vitest-agent-reporter#readme",
+	"bugs": {
+		"url": "https://github.com/spencerbeggs/vitest-agent-reporter/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/spencerbeggs/vitest-agent-reporter.git",
+		"directory": "packages/mcp"
+	},
+	"license": "MIT",
+	"author": {
+		"name": "C. Spencer Beggs",
+		"email": "spencer@beggs.codes",
+		"url": "https://spencerbeg.gs"
+	},
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"bin": {
+		"vitest-agent-reporter-mcp": "./src/bin.ts"
+	},
+	"scripts": {
+		"build:dev": "rslib build --config-loader native --env-mode dev",
+		"build:inspect": "rslib inspect --config-loader native --env-mode npm --verbose",
+		"build:prod": "rslib build --config-loader native --env-mode npm",
+		"prepare": "turbo run build:dev build:prod --log-order=grouped --log-prefix=none",
+		"types:check": "tsgo --noEmit"
+	},
+	"dependencies": {
+		"@effect/platform": "catalog:silk",
+		"@effect/platform-node": "catalog:silk",
+		"@effect/sql": "catalog:silk",
+		"@effect/sql-sqlite-node": "catalog:silk",
+		"@modelcontextprotocol/sdk": "^1.29.0",
+		"@trpc/server": "^11.17.0",
+		"effect": "catalog:silk",
+		"vitest-agent-reporter-shared": "workspace:*",
+		"zod": "^4.3.6"
+	},
+	"devDependencies": {
+		"@savvy-web/rslib-builder": "^0.20.3",
+		"@types/node": "catalog:silk",
+		"@vitest/coverage-v8": "^4.1.5",
+		"vitest": "^4.1.5"
+	},
+	"peerDependencies": {
+		"vitest": "^4.1.0"
+	},
+	"publishConfig": {
+		"access": "public",
+		"directory": "dist/dev",
+		"linkDirectory": true,
+		"targets": [
+			{
+				"protocol": "npm",
+				"registry": "https://npm.pkg.github.com/",
+				"directory": "dist/github",
+				"access": "public",
+				"provenance": true
+			},
+			{
+				"protocol": "npm",
+				"registry": "https://registry.npmjs.org/",
+				"directory": "dist/npm",
+				"access": "public",
+				"provenance": true
+			}
+		]
+	}
+}
