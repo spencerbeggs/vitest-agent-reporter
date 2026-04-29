@@ -52,8 +52,8 @@ importers:
         specifier: ^0.8.0
         version: 0.8.0(@changesets/cli@2.31.0(@types/node@25.6.0))(@effect/cluster@0.58.2(@effect/platform@0.96.1(effect@3.21.2))(@effect/rpc@0.75.1(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/workflow@0.18.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(@effect/rpc@0.75.1(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(effect@3.21.2))(effect@3.21.2))(@effect/printer-ansi@0.49.0(@effect/typeclass@0.40.0(effect@3.21.2))(effect@3.21.2))(@effect/printer@0.49.0(@effect/typeclass@0.40.0(effect@3.21.2))(effect@3.21.2))(@effect/rpc@0.75.1(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))
       '@savvy-web/commitlint':
-        specifier: ^0.7.0
-        version: 0.7.0(@commitlint/cli@20.5.2(@types/node@25.6.0)(conventional-commits-parser@6.4.0)(typescript@6.0.3))(@commitlint/config-conventional@20.5.0)(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/typeclass@0.40.0(effect@3.21.2))(@effect/workflow@0.18.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(@effect/rpc@0.75.1(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(effect@3.21.2))(commitizen@4.3.1(@types/node@25.6.0)(typescript@6.0.3))(husky@9.1.7)
+        specifier: ^0.7.1
+        version: 0.7.1(@commitlint/cli@20.5.2(@types/node@25.6.0)(conventional-commits-parser@6.4.0)(typescript@6.0.3))(@commitlint/config-conventional@20.5.0)(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/typeclass@0.40.0(effect@3.21.2))(@effect/workflow@0.18.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(@effect/rpc@0.75.1(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(effect@3.21.2))(commitizen@4.3.1(@types/node@25.6.0)(typescript@6.0.3))(husky@9.1.7)
       '@savvy-web/lint-staged':
         specifier: ^1.0.0
         version: 1.0.0(83444931a01da58358a5bcbbda02a7da)
@@ -85,10 +85,10 @@ importers:
   examples/basic:
     devDependencies:
       '@vitest/coverage-v8':
-        specifier: ^4.1.2
+        specifier: ^4.1.5
         version: 4.1.5(vitest@4.1.5)
       vitest:
-        specifier: ^4.1.2
+        specifier: ^4.1.5
         version: 4.1.5(@types/node@25.6.0)(@vitest/coverage-istanbul@4.1.5)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@25.6.0)(jiti@2.6.1)(yaml@2.8.3))
       vitest-agent-reporter:
         specifier: workspace:*
@@ -1295,8 +1295,8 @@ packages:
     peerDependencies:
       '@changesets/cli': ^2.30.0
 
-  '@savvy-web/commitlint@0.7.0':
-    resolution: {integrity: sha512-LZwkFFTk1sPWdQcgLJ8gti1ZSCjz6kXF13Gew0AcoNpyGvIGpyZ4Ndgk8biXFJRuoM32KsUP7drU8PSmJzOWEQ==}
+  '@savvy-web/commitlint@0.7.1':
+    resolution: {integrity: sha512-riLOyo01K1ayb1CmgVQtfiF7fXZzfw8nXDazCLjNYiRtFqyPBQAoI2ED8YTPEUuZDO5KxQwy1zSIRRbLrsVlYQ==}
     hasBin: true
     peerDependencies:
       '@commitlint/cli': ^20.5.0
@@ -1455,7 +1455,6 @@ packages:
 
   '@types/parse-path@7.1.0':
     resolution: {integrity: sha512-EULJ8LApcVEPbrfND0cRQqutIOdiIgJ1Mgrhpy755r14xMohPTEpkV/k28SJvuOs9bHRFW8x+KeDAEPiGQPB9Q==}
-    deprecated: This is a stub types definition. parse-path provides its own type definitions, so you do not need this installed.
 
   '@types/ssri@7.1.5':
     resolution: {integrity: sha512-odD/56S3B51liILSk5aXJlnYt99S6Rt9EFDDqGtJM26rKHApHcwyU/UoYHrzKkdkHMAIquGWCuHtQTbes+FRQw==}
@@ -3516,7 +3515,6 @@ packages:
   prebuild-install@7.1.3:
     resolution: {integrity: sha512-8Mf2cbV7x1cXPUILADGI3wuhfqWvtiLA1iclTDbFRZkgRQS0NqsPZphna9V+HyTEadheuPmjaJMsbzKQFOzLug==}
     engines: {node: '>=10'}
-    deprecated: No longer maintained. Please contact the author of the relevant native addon; alternatives are available.
     hasBin: true
 
   prelude-ls@1.2.1:
@@ -5532,7 +5530,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@savvy-web/commitlint@0.7.0(@commitlint/cli@20.5.2(@types/node@25.6.0)(conventional-commits-parser@6.4.0)(typescript@6.0.3))(@commitlint/config-conventional@20.5.0)(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/typeclass@0.40.0(effect@3.21.2))(@effect/workflow@0.18.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(@effect/rpc@0.75.1(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(effect@3.21.2))(commitizen@4.3.1(@types/node@25.6.0)(typescript@6.0.3))(husky@9.1.7)':
+  '@savvy-web/commitlint@0.7.1(@commitlint/cli@20.5.2(@types/node@25.6.0)(conventional-commits-parser@6.4.0)(typescript@6.0.3))(@commitlint/config-conventional@20.5.0)(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/typeclass@0.40.0(effect@3.21.2))(@effect/workflow@0.18.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(@effect/rpc@0.75.1(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(effect@3.21.2))(commitizen@4.3.1(@types/node@25.6.0)(typescript@6.0.3))(husky@9.1.7)':
     dependencies:
       '@commitlint/cli': 20.5.2(@types/node@25.6.0)(conventional-commits-parser@6.4.0)(typescript@6.0.3)
       '@commitlint/config-conventional': 20.5.0
