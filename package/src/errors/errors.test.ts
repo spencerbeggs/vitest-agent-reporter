@@ -98,8 +98,14 @@ describe("extractSqlReason", () => {
 		expect(extractSqlReason(null)).toBe("null");
 	});
 
-	it("ignores empty messages", () => {
-		const err = { message: "" };
+	it("falls back to JSON.stringify when message is empty and no cause", () => {
+		const err = { message: "", code: 42 };
+		expect(extractSqlReason(err)).toBe('{"message":"","code":42}');
+	});
+
+	it("falls back to String(e) when JSON.stringify throws on circular refs", () => {
+		const err: { message: string; self?: unknown } = { message: "" };
+		err.self = err;
 		expect(extractSqlReason(err)).toBe("[object Object]");
 	});
 });

@@ -43,6 +43,13 @@ export const extractSqlReason = (e: unknown): string => {
 		if (typeof err.message === "string" && err.message.length > 0) {
 			return err.message;
 		}
+		// Object with no useful message/cause — JSON.stringify gives more
+		// information than `String(e)` would (which produces "[object Object]").
+		try {
+			return JSON.stringify(e);
+		} catch {
+			// Circular reference or non-serializable value; fall through.
+		}
 	}
 	return String(e);
 };

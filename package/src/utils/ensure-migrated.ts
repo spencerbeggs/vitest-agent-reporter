@@ -64,8 +64,14 @@ export function ensureMigrated(dbPath: string, logLevel?: LogLevel.LogLevel, log
 		loader: SqliteMigrator.fromRecord({ "0001_initial": migration0001 }),
 	}).pipe(Layer.provide(Layer.merge(SqliteLayer, PlatformLayer)));
 
-	// Force SqlClient acquisition so that SqliteLayer (which sets WAL) and
-	// MigratorLayer (which applies migrations) actually build.
+	// MigratorLayer is `Layer.effectDiscard(...)` — it provides nothing but
+	// runs migrations as a side effect of layer acquisition. Effect's runtime
+	// instantiates every provided layer when the scope opens, so the migrator
+	// fires even though no `yield*` consumes a service from it.
+	//
+	// `yield* SqlClient` exists to force the outer `SqliteLayer` to build for
+	// this scope; that's where WAL mode is set on the connection that this
+	// program holds open while it waits for migrations to complete.
 	const program = Effect.gen(function* () {
 		yield* SqlClient;
 	}).pipe(
