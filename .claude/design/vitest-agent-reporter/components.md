@@ -427,9 +427,14 @@ build outputs produce `bin/vitest-agent-reporter.js` in `dist/`.
 - `format-history.ts` -- formats history data as markdown
 - `format-trends.ts` -- formats trends data as markdown
 - `format-doctor.ts` -- formats doctor diagnostic data as markdown
-- `resolve-cache-dir.ts` -- resolves cache directory from common locations;
-  searches `node_modules/.vite/vitest/*/vitest-agent-reporter` for
-  Vite's hash-based cache subdirectory
+- `resolve-cache-dir.ts` -- exports `resolveDbPath` which resolves the
+  SQLite database path from common locations (including
+  `node_modules/.vite/vitest/*/vitest-agent-reporter` for Vite's
+  hash-based cache subdirectory). The previous `resolveCacheDir` export
+  was removed in the bug/startup branch -- it scanned for `manifest.json`
+  to identify the cache directory, which the Phase 5 SQLite migration
+  stopped writing, so it could never find anything; it had no production
+  callers
 
 **Dependencies:**
 

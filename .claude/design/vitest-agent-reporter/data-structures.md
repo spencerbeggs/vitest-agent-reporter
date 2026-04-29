@@ -860,14 +860,14 @@ vitest-agent-reporter <command> [--format <format>] [options]
   |     +-- OutputRenderer.render() -> stdout
   |
   +-- cache path:
-  |     +-- resolveCacheDir -> stdout
+  |     +-- resolveDbPath -> stdout
   |
   +-- cache clean:
-  |     +-- resolveCacheDir
+  |     +-- resolveDbPath
   |     +-- FileSystem.remove(cacheDir, { recursive: true })
   |
   +-- doctor:
-        +-- resolveCacheDir
+        +-- resolveDbPath
         +-- DataReader.getManifest()
         +-- DataReader.getLatestRun() per project (integrity)
         +-- staleness check
