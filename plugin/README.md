@@ -46,9 +46,21 @@ Or configure permanently in your Claude Code settings:
 ### MCP Server (auto-registered)
 
 The plugin registers the `vitest-reporter` MCP server automatically
-via `.mcp.json`. The server exposes 24 tools for querying test data
-stored in the SQLite database written by the reporter after each test
-run. Use the `help` tool for the full list with parameters.
+via the `mcpServers` field in `.claude-plugin/plugin.json`. A small
+loader (`bin/mcp-server.mjs`) shipped with the plugin resolves and
+launches the MCP server from `vitest-agent-reporter` installed in
+your project's `node_modules` (walking up from your CWD, so it works
+with hoisted monorepo installs).
+
+This means **`vitest-agent-reporter` must be installed as a
+dependency of your project** for the plugin's MCP server to start.
+If it's missing, the loader fails fast with explicit install
+instructions for npm, pnpm, yarn, and bun. See
+[Prerequisites](#prerequisites) below.
+
+The server exposes 24 tools for querying test data stored in the
+SQLite database written by the reporter after each test run. Use
+the `help` tool for the full list with parameters.
 
 | Tool | Description |
 | --- | --- |
@@ -106,7 +118,19 @@ Commands are invoked via `/<name>` in Claude Code.
 
 ## Prerequisites
 
-- `vitest-agent-reporter` installed in the project (`pnpm add -D vitest-agent-reporter`)
+The plugin's MCP server loader resolves `vitest-agent-reporter` from
+your project's `node_modules`, so the package **must be installed as
+a project dependency**:
+
+```bash
+npm install --save-dev vitest-agent-reporter
+pnpm add -D vitest-agent-reporter
+yarn add -D vitest-agent-reporter
+bun add -d vitest-agent-reporter
+```
+
+Additional setup:
+
 - `AgentPlugin` added to `vitest.config.ts` (use `/setup` to automate this)
 - Tests run at least once to populate the database
 

@@ -40,7 +40,7 @@ const cli = Command.run(rootCommand, {
 const logLevel = resolveLogLevel();
 const logFile = resolveLogFile();
 
-const main = resolveDbPath.pipe(
+const main = resolveDbPath().pipe(
 	Effect.flatMap((dbPath) =>
 		Effect.suspend(() => cli(process.argv)).pipe(Effect.provide(CliLive(dbPath, logLevel, logFile))),
 	),

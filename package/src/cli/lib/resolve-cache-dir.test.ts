@@ -33,14 +33,14 @@ describe("resolveCacheDir", () => {
 	it("finds .vitest-agent-reporter when manifest exists", async () => {
 		const layer = mockFileSystemLayer([".vitest-agent-reporter/manifest.json"]);
 
-		const result = await Effect.runPromise(resolveCacheDir.pipe(Effect.provide(layer)));
+		const result = await Effect.runPromise(resolveCacheDir().pipe(Effect.provide(layer)));
 		expect(result).toBe(".vitest-agent-reporter");
 	});
 
 	it("finds node_modules/.vite/vitest-agent-reporter when manifest exists", async () => {
 		const layer = mockFileSystemLayer(["node_modules/.vite/vitest-agent-reporter/manifest.json"]);
 
-		const result = await Effect.runPromise(resolveCacheDir.pipe(Effect.provide(layer)));
+		const result = await Effect.runPromise(resolveCacheDir().pipe(Effect.provide(layer)));
 		expect(result).toBe("node_modules/.vite/vitest-agent-reporter");
 	});
 
@@ -50,7 +50,7 @@ describe("resolveCacheDir", () => {
 			"node_modules/.vite/vitest-agent-reporter/manifest.json",
 		]);
 
-		const result = await Effect.runPromise(resolveCacheDir.pipe(Effect.provide(layer)));
+		const result = await Effect.runPromise(resolveCacheDir().pipe(Effect.provide(layer)));
 		expect(result).toBe(".vitest-agent-reporter");
 	});
 
@@ -60,7 +60,7 @@ describe("resolveCacheDir", () => {
 			{ "node_modules/.vite/vitest": ["abc123"] },
 		);
 
-		const result = await Effect.runPromise(resolveCacheDir.pipe(Effect.provide(layer)));
+		const result = await Effect.runPromise(resolveCacheDir().pipe(Effect.provide(layer)));
 		expect(result).toBe("node_modules/.vite/vitest/abc123/vitest-agent-reporter");
 	});
 
@@ -74,7 +74,7 @@ describe("resolveCacheDir", () => {
 			{ "node_modules/.vite/vitest": ["abc123"] },
 		);
 
-		const result = await Effect.runPromise(resolveCacheDir.pipe(Effect.provide(layer)));
+		const result = await Effect.runPromise(resolveCacheDir().pipe(Effect.provide(layer)));
 		expect(result).toBe(".vitest-agent-reporter");
 	});
 
@@ -82,7 +82,7 @@ describe("resolveCacheDir", () => {
 		const layer = mockFileSystemLayer([]);
 
 		const result = await Effect.runPromise(
-			resolveCacheDir.pipe(
+			resolveCacheDir().pipe(
 				Effect.matchEffect({
 					onFailure: (e) => Effect.succeed(e),
 					onSuccess: () => Effect.fail(new Error("Expected failure")),
@@ -101,14 +101,14 @@ describe("resolveDbPath", () => {
 	it("finds data.db in .vitest-agent-reporter", async () => {
 		const layer = mockFileSystemLayer([".vitest-agent-reporter/data.db"]);
 
-		const result = await Effect.runPromise(resolveDbPath.pipe(Effect.provide(layer)));
+		const result = await Effect.runPromise(resolveDbPath().pipe(Effect.provide(layer)));
 		expect(result).toBe(".vitest-agent-reporter/data.db");
 	});
 
 	it("finds data.db in node_modules/.vite/vitest-agent-reporter", async () => {
 		const layer = mockFileSystemLayer(["node_modules/.vite/vitest-agent-reporter/data.db"]);
 
-		const result = await Effect.runPromise(resolveDbPath.pipe(Effect.provide(layer)));
+		const result = await Effect.runPromise(resolveDbPath().pipe(Effect.provide(layer)));
 		expect(result).toBe("node_modules/.vite/vitest-agent-reporter/data.db");
 	});
 
@@ -118,7 +118,7 @@ describe("resolveDbPath", () => {
 			{ "node_modules/.vite/vitest": ["abc123"] },
 		);
 
-		const result = await Effect.runPromise(resolveDbPath.pipe(Effect.provide(layer)));
+		const result = await Effect.runPromise(resolveDbPath().pipe(Effect.provide(layer)));
 		expect(result).toBe("node_modules/.vite/vitest/abc123/vitest-agent-reporter/data.db");
 	});
 
@@ -126,7 +126,7 @@ describe("resolveDbPath", () => {
 		const layer = mockFileSystemLayer([]);
 
 		const result = await Effect.runPromise(
-			resolveDbPath.pipe(
+			resolveDbPath().pipe(
 				Effect.matchEffect({
 					onFailure: (e) => Effect.succeed(e),
 					onSuccess: () => Effect.fail(new Error("Expected failure")),

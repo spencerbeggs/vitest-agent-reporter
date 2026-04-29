@@ -1,5 +1,6 @@
 import { Cause } from "effect";
 import { describe, expect, it } from "vitest";
+import { DataStoreError } from "../errors/DataStoreError.js";
 import { formatFatalError } from "./format-fatal-error.js";
 
 const ISSUE_URL = "https://github.com/spencerbeggs/vitest-agent-reporter/issues";
@@ -35,6 +36,19 @@ describe("formatFatalError", () => {
 		const result = formatFatalError(fiberFailure);
 		expect(result).toContain("DataStoreError");
 		expect(result).toContain(ISSUE_URL);
+	});
+
+	it("surfaces DataStoreError fields when wrapped in a Cause.fail", () => {
+		const err = new DataStoreError({
+			operation: "write",
+			table: "test_history",
+			reason: "UNIQUE constraint failed: test_history.full_name",
+		});
+		const cause = Cause.fail(err);
+		const result = formatFatalError(cause);
+		expect(result).toContain("DataStoreError");
+		expect(result).toContain("[write test_history]");
+		expect(result).toContain("UNIQUE constraint failed: test_history.full_name");
 	});
 
 	it("formats a direct Cause object", () => {

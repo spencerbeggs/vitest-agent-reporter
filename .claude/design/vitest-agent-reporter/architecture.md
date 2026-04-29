@@ -3,8 +3,8 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-04-23
-last-synced: 2026-04-23
+updated: 2026-04-28
+last-synced: 2026-04-28
 post-phase5-sync: 2026-04-23
 completeness: 95
 related:
@@ -33,7 +33,7 @@ only what you need for the task at hand.
 | [components.md](./components.md) | Working on specific components, need API details | 25 component descriptions with interfaces and dependencies |
 | [decisions.md](./decisions.md) | Need to understand "why" something was built a certain way | 27 architectural decisions, 9 design patterns, constraints/trade-offs |
 | [data-structures.md](./data-structures.md) | Working with schemas, DB schema, output, or data flow | File structure, TypeScript interfaces, SQLite schema, output format, data flow diagrams, integration points |
-| [testing-and-phases.md](./testing-and-phases.md) | Writing tests, reviewing test coverage, or checking phase status | 52 test files, test patterns, Phase 1-5 history |
+| [testing-and-phases.md](./testing-and-phases.md) | Writing tests, reviewing test coverage, or checking phase status | 53 test files, test patterns, Phase 1-5 history |
 
 ---
 
@@ -131,6 +131,15 @@ plugin (NOT a pnpm workspace). The root `vitest.config.ts` imports from
 - **SQLite-first persistence** -- all test data stored in a normalized
   25-table SQLite database (`data.db`) using `@effect/sql-sqlite-node` with
   migration-based schema management. Replaces the previous JSON file cache
+- **Process-level migration coordination** -- `ensureMigrated(dbPath)`
+  serializes SQLite migrations across reporter instances in the same
+  process via a `globalThis`-keyed promise cache
+  (`Symbol.for("vitest-agent-reporter/migration-promises")`). Required
+  for multi-project Vitest configs sharing a single `data.db`, where
+  concurrent migration attempts on a fresh database hit `SQLITE_BUSY`
+  because deferred-transaction write upgrades bypass SQLite's busy
+  handler. Once migration completes, concurrent reads/writes work under
+  WAL + better-sqlite3's 5s `busy_timeout`
 - **Per-project reporter isolation** -- in multi-project configs, the
   plugin creates a separate `AgentReporter` instance per project via
   `projectFilter`. Each reporter filters `testModules` to only its own
@@ -217,6 +226,9 @@ plugin (NOT a pnpm workspace). The root `vitest.config.ts` imports from
      |    +-- stash istanbul CoverageMap           |
      |                                             |
      |  onTestRunEnd(modules, errors, reason)      |
+     |    +-- await ensureMigrated(dbPath, ...)    |
+     |        (process-level migration coord;      |
+     |         globalThis-keyed promise cache)     |
      |    +-- filter modules by projectFilter     |
      |    +-- group modules by project.name        |
      |    +-- splitProject() for each group        |
@@ -281,8 +293,11 @@ plugin (NOT a pnpm workspace). The root `vitest.config.ts` imports from
      +--------------------------------------------+
      |     Claude Code Plugin (file-based)         |
      |     plugin/.claude-plugin/plugin.json       |
+     |     (inline mcpServers config)              |
      |                                             |
-     |  .mcp.json -> auto-registers MCP server     |
+     |  bin/mcp-server.mjs -> Node loader walks    |
+     |    up to user's node_modules and dynamic    |
+     |    imports the package's ./mcp export       |
      |  hooks/session-start.sh -> context inject   |
      |  hooks/post-test-run.sh -> test detection   |
      |  skills: TDD, debugging, configuration,     |
@@ -322,6 +337,7 @@ plugin (NOT a pnpm workspace). The root `vitest.config.ts` imports from
 | 23 | tRPC Router | `package/src/mcp/router.ts` | COMPLETE |
 | 24 | Claude Code Plugin | `plugin/` | COMPLETE |
 | 25 | LoggerLive | `package/src/layers/LoggerLive.ts` | COMPLETE |
+| 26 | ensureMigrated | `package/src/utils/ensure-migrated.ts` | COMPLETE |
 
 **Removed in Phase 5:**
 
@@ -368,9 +384,12 @@ For detailed component descriptions, interfaces, and APIs:
 - Working with data schemas or output format --> [data-structures.md](./data-structures.md)
 - Writing or reviewing tests --> [testing-and-phases.md](./testing-and-phases.md)
 
-**52 test files, 569 tests total.** All coverage metrics above 80%.
+**53 test files, 573 tests total.** All coverage metrics above 80%.
 
 **Document Status:** Current -- reflects Phase 1 through Phase 5
 implementation plus post-Phase-5 refinements (multi-project support,
 structured logging, strategy rename, MCP option, coverage table
-suppression, MCP discovery tools, source map wiring). All phases complete.
+suppression, MCP discovery tools, source map wiring) and bug/startup
+branch fixes (process-level migration coordination via
+`ensureMigrated`, derived error messages with `extractSqlReason`,
+plugin MCP loader with inline mcpServers config). All phases complete.

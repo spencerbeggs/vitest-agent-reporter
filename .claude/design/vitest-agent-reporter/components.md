@@ -3,8 +3,8 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-04-23
-last-synced: 2026-04-23
+updated: 2026-04-28
+last-synced: 2026-04-28
 post-phase5-sync: 2026-04-23
 completeness: 95
 related:
@@ -79,6 +79,11 @@ baselines/trends, and output rendering.
   and Vitest-native threshold format
 - Each lifecycle hook builds a scoped effect and runs it with
   `Effect.runPromise`, providing the `ReporterLive(dbPath)` layer inline
+- Before the main `Effect.runPromise` in `onTestRunEnd`, calls
+  `await ensureMigrated(dbPath, logLevel, logFile)` (see Component 26).
+  Bails with a printed `formatFatalError(err)` to stderr if migration
+  rejects. This serializes schema migration across reporter instances in
+  multi-project Vitest configs sharing a single `dbPath`
 
 **Key interfaces/APIs:**
 
@@ -328,10 +333,19 @@ merged composition layers.
 - **DataStoreError** (`package/src/errors/DataStoreError.ts`) --
   `Data.TaggedError` for database failures. Fields: `operation`
   (`"read" | "write" | "migrate"`), `table` (string), `reason` (string).
-  Replaces CacheError from Phase 2-4
+  Constructor sets `this.message` via `Object.defineProperty` to a derived
+  `[operation table] reason` string so `Cause.pretty()` surfaces the
+  operation/table/reason instead of the default "An error has occurred".
+  Also exports an `extractSqlReason(e: unknown) => string` helper that
+  pulls `SqlError.cause.message` (the actual SQLite error like
+  `"SQLITE_BUSY: database is locked"` or
+  `"UNIQUE constraint failed: ..."`) instead of the generic
+  `"Failed to execute statement"` wrapper. Replaces CacheError from
+  Phase 2-4
 - **DiscoveryError** (`package/src/errors/DiscoveryError.ts`) --
   `Data.TaggedError` for project discovery failures (glob, read, stat
-  operations). Unchanged from Phase 2
+  operations). Constructor uses the same derived-message pattern as
+  DataStoreError (`[operation path] reason`)
 
 **Removed in Phase 5:**
 
@@ -708,6 +722,13 @@ database. Replaces CacheWriter from Phase 2-4.
 - Depends on: `@effect/sql-sqlite-node` SqlClient
 - Used by: AgentReporter, MCP server (note CRUD)
 
+**Error mapping:** Every `Effect.mapError` callsite that produces a
+`DataStoreError` uses `extractSqlReason(e)` (from
+`errors/DataStoreError.ts`) for the `reason` field, surfacing the actual
+SQLite error message rather than `String(e)` of the SqlError wrapper.
+The previously-special-cased `writeErrors` mapError is unified with the
+rest using the helper.
+
 ---
 
 ## Component 18: DataReader Service
@@ -765,6 +786,11 @@ database. Replaces CacheReader from Phase 2-4.
 
 - Depends on: `@effect/sql-sqlite-node` SqlClient
 - Used by: CLI commands, MCP tools, HistoryTracker, AgentReporter
+
+**Error mapping:** All `Effect.mapError` callsites use
+`extractSqlReason(e)` (from `errors/DataStoreError.ts`) for the `reason`
+field of the resulting `DataStoreError`, exposing the underlying SQLite
+error rather than the generic SqlError wrapper.
 
 ---
 
@@ -951,8 +977,17 @@ integration in Claude Code sessions.
 **Structure:**
 
 - `.claude-plugin/plugin.json` -- plugin manifest (name, version, author)
-- `.mcp.json` -- MCP server auto-registration (runs
-  `npx vitest-agent-reporter-mcp` via stdio)
+  with inline `mcpServers` configuration (per Claude Code convention for
+  plugin-provided MCP servers). Declares a `vitest-reporter` server with
+  `command: "node"` and
+  `args: ["${CLAUDE_PLUGIN_ROOT}/bin/mcp-server.mjs"]`
+- `bin/mcp-server.mjs` -- Node loader for the MCP server. Walks up from
+  `process.cwd()` looking for `node_modules/vitest-agent-reporter`, reads
+  its `exports['./mcp']` from `package.json`, and dynamically imports it
+  via a `file://` URL. Bypasses Node's strict-exports CJS rejection
+  (the published package only declares `import` conditions). Fails fast
+  with a clear stderr message and install instructions for npm/pnpm/
+  yarn/bun if the package isn't found
 - `hooks/hooks.json` -- hook configuration
 - `hooks/session-start.sh` -- SessionStart hook: injects test context
   into the session via bash
@@ -968,9 +1003,19 @@ integration in Claude Code sessions.
 **Note:** The `plugin/` directory is NOT a pnpm workspace. It is a
 file-based plugin consumed by Claude Code directly.
 
+**Removed:**
+
+- `plugin/.mcp.json` -- previously held the MCP registration. Configuration
+  moved inline into `plugin.json`. The old config used
+  `npx vitest-agent-reporter-mcp` which on first run could fall back to
+  downloading from npm and exceed Claude Code's MCP startup window
+
 **Dependencies:**
 
-- Depends on: MCP server binary (`vitest-agent-reporter-mcp`)
+- Depends on: a project-level install of `vitest-agent-reporter` (the loader
+  resolves it from the user's `node_modules`). The MCP server is not
+  bundled with the plugin because the package has native dependencies
+  (`better-sqlite3`) that must match the user's platform/Node version
 - Used by: Claude Code (automatic plugin discovery)
 
 ---
@@ -1005,3 +1050,66 @@ methods for comprehensive I/O tracing.
 
 - Depends on: `effect` (Logger, LogLevel)
 - Used by: ReporterLive, CliLive (included in composition layers)
+
+---
+
+## Component 26: ensureMigrated
+
+**Location:** `package/src/utils/ensure-migrated.ts`
+
+**Status:** COMPLETE (bug/startup branch)
+
+**Purpose:** Process-level migration coordinator that ensures the SQLite
+database at a given `dbPath` is migrated exactly once per process before
+any reporter instance attempts to read or write.
+
+**Background:** In multi-project Vitest configurations, a single Vitest
+process creates multiple `AgentReporter` instances (one per project)
+that all share the same `data.db`. With a fresh database, each reporter
+previously ran migrations through its own `SqliteClient` connection.
+Two connections both starting deferred transactions and then upgrading
+to write produced `SQLITE_BUSY` (database is locked) -- SQLite's busy
+handler is not invoked for write-write upgrade conflicts in deferred
+transactions. After this fix, migration runs exactly once per `dbPath`;
+subsequent concurrent writes work normally under WAL mode plus
+better-sqlite3's 5s `busy_timeout`.
+
+**Key API:**
+
+```typescript
+function ensureMigrated(
+  dbPath: string,
+  logLevel?: LogLevel.LogLevel,
+  logFile?: string,
+): Promise<void>;
+
+function _resetMigrationCacheForTesting(): void; // @internal
+```
+
+**Implementation:**
+
+- Uses a `globalThis`-keyed cache
+  (`Symbol.for("vitest-agent-reporter/migration-promises")`) of
+  `Map<string, Promise<void>>` to serialize migrations across reporter
+  instances. The promise cache lives on `globalThis` because Vite's
+  multi-project pipeline can load this module under separate module
+  instances even in the same process; a module-local Map would result
+  in independent caches per project, defeating the coordination
+- Builds a one-shot Effect program that acquires `SqlClient` (forcing
+  the SQLite layer to set WAL mode and the Migrator layer to apply
+  migrations), provides `MigratorLayer`, `SqliteClient`, NodeContext,
+  and `LoggerLive(logLevel, logFile)`, then runs it via
+  `Effect.runPromise`
+- Caches the in-flight promise by `dbPath`. Concurrent calls share the
+  same promise; subsequent calls (after resolution) are no-ops
+- Suppresses `unhandledRejection` on the cached reference; callers await
+  the returned promise and handle rejection themselves
+
+**Dependencies:**
+
+- Depends on: `@effect/sql-sqlite-node` (SqliteClient, SqliteMigrator),
+  `@effect/sql/SqlClient`, `@effect/platform-node/NodeContext`,
+  `effect` (Effect, Layer), `LoggerLive`, `migrations/0001_initial`
+- Used by: `AgentReporter.onTestRunEnd` (called via `await` before the
+  main `Effect.runPromise`); errors are caught and printed via
+  `formatFatalError` to stderr with an early return

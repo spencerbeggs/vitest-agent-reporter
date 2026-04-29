@@ -2,7 +2,7 @@
 
 The `vitest-agent-reporter-mcp` binary provides an
 [MCP](https://modelcontextprotocol.io/) server over stdio transport,
-exposing 22 tools for querying test data, managing notes, running
+exposing 24 tools for querying test data, managing notes, running
 tests, and discovering project structure. LLM agent hosts like Claude
 Code can call these tools directly during a session.
 
@@ -28,18 +28,13 @@ configuration needed:
 /plugin install vitest-agent-reporter@spencerbeggs-bot --scope project
 ```
 
-This writes a `.mcp.json` configuration that Claude Code picks up:
-
-```json
-{
-  "mcpServers": {
-    "vitest-reporter": {
-      "command": "npx",
-      "args": ["vitest-agent-reporter-mcp"]
-    }
-  }
-}
-```
+The plugin declares the MCP server inline in
+`.claude-plugin/plugin.json` and ships a small loader at
+`bin/mcp-server.mjs` that resolves and launches the server from
+`vitest-agent-reporter` installed in your project's `node_modules`.
+This means the package **must be installed as a project dependency**
+for the plugin's MCP server to start; the loader fails fast with
+explicit install instructions if it's missing.
 
 ### Manual
 

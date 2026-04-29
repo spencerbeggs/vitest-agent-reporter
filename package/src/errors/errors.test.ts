@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { DataStoreError } from "./DataStoreError.js";
+import { DataStoreError, extractSqlReason } from "./DataStoreError.js";
 import { DiscoveryError } from "./DiscoveryError.js";
 
 describe("DiscoveryError", () => {
@@ -33,6 +33,11 @@ describe("DiscoveryError", () => {
 		const err = new DiscoveryError({ operation: "glob", path: "/tmp", reason: "fail" });
 		expect(err).toBeInstanceOf(Error);
 	});
+
+	it("derives a message from operation, path, and reason", () => {
+		const err = new DiscoveryError({ operation: "stat", path: "/tmp/file", reason: "ENOENT" });
+		expect(err.message).toBe("[stat /tmp/file] ENOENT");
+	});
 });
 
 describe("DataStoreError", () => {
@@ -53,5 +58,48 @@ describe("DataStoreError", () => {
 		const migrate = new DataStoreError({ operation: "migrate", table: "schema", reason: "failed" });
 		expect(read.operation).toBe("read");
 		expect(migrate.operation).toBe("migrate");
+	});
+
+	it("derives a message from operation, table, and reason", () => {
+		const err = new DataStoreError({
+			operation: "write",
+			table: "test_history",
+			reason: "UNIQUE constraint failed: test_history.full_name",
+		});
+		expect(err.message).toBe("[write test_history] UNIQUE constraint failed: test_history.full_name");
+	});
+
+	it("preserves field access on instance", () => {
+		const err = new DataStoreError({ operation: "write", table: "files", reason: "disk full" });
+		expect(err.operation).toBe("write");
+		expect(err.table).toBe("files");
+		expect(err.reason).toBe("disk full");
+	});
+});
+
+describe("extractSqlReason", () => {
+	it("returns cause.message for an Effect SqlError-shaped error", () => {
+		const err = { message: "Failed to execute statement", cause: { message: "SQLITE_BUSY: database is locked" } };
+		expect(extractSqlReason(err)).toBe("SQLITE_BUSY: database is locked");
+	});
+
+	it("falls back to message when cause is missing", () => {
+		const err = { message: "Failed to execute statement" };
+		expect(extractSqlReason(err)).toBe("Failed to execute statement");
+	});
+
+	it("returns string cause directly", () => {
+		expect(extractSqlReason({ cause: "raw cause string" })).toBe("raw cause string");
+	});
+
+	it("falls back to String(e) when nothing useful is available", () => {
+		expect(extractSqlReason("plain string")).toBe("plain string");
+		expect(extractSqlReason(42)).toBe("42");
+		expect(extractSqlReason(null)).toBe("null");
+	});
+
+	it("ignores empty messages", () => {
+		const err = { message: "" };
+		expect(extractSqlReason(err)).toBe("[object Object]");
 	});
 });

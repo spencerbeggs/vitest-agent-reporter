@@ -9,8 +9,50 @@ set -euo pipefail
 # Consume stdin to prevent broken pipe
 cat > /dev/null
 
-# Try to get status from CLI (may fail if no DB exists yet)
-STATUS=$(npx vitest-agent-reporter status --format json 2>/dev/null || echo '{}')
+# Anchor to the user's project. In marketplace installs the hook's cwd is
+# unrelated to the user's project; CLAUDE_PROJECT_DIR is the canonical
+# anchor that Claude Code sets for plugin hooks.
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+
+# Detect the project's package manager via packageManager field, then
+# lockfile, then npm fallback. Mirrors the project's pre-commit hook.
+detect_pm() {
+  if [ -f "$PROJECT_DIR/package.json" ]; then
+    pm=$(jq -r '.packageManager // empty' "$PROJECT_DIR/package.json" 2>/dev/null | cut -d'@' -f1)
+    if [ -n "$pm" ]; then
+      echo "$pm"
+      return
+    fi
+  fi
+  if [ -f "$PROJECT_DIR/pnpm-lock.yaml" ]; then
+    echo "pnpm"
+  elif [ -f "$PROJECT_DIR/yarn.lock" ]; then
+    echo "yarn"
+  elif [ -f "$PROJECT_DIR/bun.lock" ]; then
+    echo "bun"
+  else
+    echo "npm"
+  fi
+}
+
+# Run the CLI from the user's project so it discovers the right cache dir.
+# Use the project's package manager so the binary resolves from the local
+# node_modules/.bin without falling back to a remote npm fetch (`npx --no`
+# fails fast instead of downloading).
+run_status() {
+  local pm
+  pm=$(detect_pm)
+  cd "$PROJECT_DIR" 2>/dev/null || return 1
+  case "$pm" in
+    pnpm) pnpm exec vitest-agent-reporter status --format json 2>/dev/null ;;
+    yarn) yarn exec vitest-agent-reporter status --format json 2>/dev/null ;;
+    bun)  bunx vitest-agent-reporter status --format json 2>/dev/null ;;
+    *)    npx --no -- vitest-agent-reporter status --format json 2>/dev/null ;;
+  esac
+}
+
+# Try to get status from CLI; fall back to empty object if unavailable.
+STATUS=$(run_status || echo '{}')
 
 # Check if we have test data
 HAS_DATA=$(echo "$STATUS" | jq -r 'if (.manifest.projects // [] | length) > 0 then "true" else "false" end' 2>/dev/null || echo "false")

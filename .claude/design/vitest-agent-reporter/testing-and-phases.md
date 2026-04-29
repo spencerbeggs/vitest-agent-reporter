@@ -3,8 +3,8 @@ status: current
 module: vitest-agent-reporter
 category: testing
 created: 2026-03-20
-updated: 2026-04-23
-last-synced: 2026-04-23
+updated: 2026-04-28
+last-synced: 2026-04-28
 post-phase5-sync: 2026-04-23
 completeness: 95
 related:
@@ -55,6 +55,11 @@ MCP tools are tested via tRPC caller factory.
   var capture logic
 - `utils/capture-settings.test.ts` -- `captureSettings()` config extraction
   and hash computation
+- `utils/ensure-migrated.test.ts` -- migration coordinator (4 tests):
+  fresh DB migrates without error, concurrent calls with the same
+  `dbPath` share the same promise, distinct `dbPath`s yield independent
+  promises, and three concurrent callers serialize without
+  `SQLITE_BUSY`. Uses `_resetMigrationCacheForTesting` in `afterEach`
 - `schemas/Common.test.ts` -- shared literal schema validation including
   Environment, Executor, OutputFormat, DetailLevel
 - `schemas/AgentReport.test.ts` -- report schema validation and encoding
@@ -691,6 +696,77 @@ complete. These are not a new phase but a set of fixes and enhancements.
 - `vitest.config.ts` (plain defineConfig, extends: true)
 - `package/turbo.json` (build wrapper removed)
 
+### bug/startup Branch Refinements
+
+Bug fixes targeting startup races and error reporting in multi-project
+configurations. See Decisions 28 and 29 for background.
+
+**Changes:**
+
+- **Process-level migration coordination:** new utility
+  `package/src/utils/ensure-migrated.ts` exports
+  `ensureMigrated(dbPath, logLevel?, logFile?)` and an internal
+  `_resetMigrationCacheForTesting`. The promise cache lives at
+  `Symbol.for("vitest-agent-reporter/migration-promises")` on
+  `globalThis` so coordination survives Vite loading the plugin module
+  twice in the same process. AgentReporter awaits this before its main
+  `Effect.runPromise` and bails with `formatFatalError(err)` to stderr
+  on rejection. Fixes `SQLITE_BUSY` on fresh databases when multiple
+  reporter instances try to migrate concurrently
+- **`extractSqlReason(e)` helper:** new export on
+  `package/src/errors/DataStoreError.ts` extracts the underlying
+  `SqlError.cause.message` (real SQLite error text like
+  `"SQLITE_BUSY: database is locked"` or
+  `"UNIQUE constraint failed: ..."`) instead of the generic
+  `"Failed to execute statement"` wrapper. Every `Effect.mapError`
+  callsite in `DataStoreLive.ts` and `DataReaderLive.ts` now uses
+  `extractSqlReason(e)` for the `reason` field; the previously
+  special-cased `writeErrors` mapError is unified with the rest using
+  the helper
+- **Derived error messages:** `DataStoreError` and `DiscoveryError`
+  constructors set `this.message` via `Object.defineProperty` to
+  `[operation table-or-path] reason`, so `Cause.pretty()` produces
+  useful output instead of `"An error has occurred"`
+- **Plugin MCP loader:** new `plugin/bin/mcp-server.mjs` walks up from
+  `process.cwd()` looking for `node_modules/vitest-agent-reporter`,
+  reads its `exports['./mcp']`, and dynamically imports it via
+  `file://` URL. Bypasses Node's strict-exports CJS rejection. Fails
+  fast with install instructions for npm/pnpm/yarn/bun if the package
+  is missing
+- **Inline plugin MCP config:** `plugin/.claude-plugin/plugin.json`
+  now declares `mcpServers` inline (per Claude Code convention), with
+  `command: "node"` and arg
+  `${CLAUDE_PLUGIN_ROOT}/bin/mcp-server.mjs`
+- **Removed `plugin/.mcp.json`:** old config used
+  `npx vitest-agent-reporter-mcp` which on first run could fall back
+  to an npm download and exceed Claude Code's MCP startup window
+
+**New files:**
+
+- `package/src/utils/ensure-migrated.ts`
+- `package/src/utils/ensure-migrated.test.ts`
+- `plugin/bin/mcp-server.mjs`
+
+**Modified files:**
+
+- `package/src/reporter.ts` (awaits `ensureMigrated` in
+  `onTestRunEnd`)
+- `package/src/errors/DataStoreError.ts` (derived message,
+  `extractSqlReason` helper)
+- `package/src/errors/DiscoveryError.ts` (derived message)
+- `package/src/errors/errors.test.ts` (covers new behavior)
+- `package/src/layers/DataStoreLive.ts` (uses `extractSqlReason`
+  everywhere)
+- `package/src/layers/DataReaderLive.ts` (uses `extractSqlReason`
+  everywhere)
+- `package/src/utils/format-fatal-error.test.ts` (exercises new
+  reasons)
+- `plugin/.claude-plugin/plugin.json` (inline `mcpServers`)
+
+**Deleted files:**
+
+- `plugin/.mcp.json` (replaced by inline config + loader)
+
 ---
 
 ## Related Documentation
@@ -720,5 +796,6 @@ complete. These are not a new phase but a set of fixes and enhancements.
 ---
 
 **Document Status:** Current -- reflects Phase 1 through Phase 5
-implementation plus post-Phase-5 refinements. 569 tests across 52 files,
-all coverage metrics above 80%. All phases complete.
+implementation plus post-Phase-5 refinements and bug/startup branch
+fixes. 573 tests across 53 files, all coverage metrics above 80%. All
+phases complete.

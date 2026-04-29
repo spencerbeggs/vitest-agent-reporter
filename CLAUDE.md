@@ -38,7 +38,7 @@ All phases (1-5) are complete. Six primary capabilities:
 5. **Coverage thresholds, baselines, and trends** -- Vitest-native
    `coverageThresholds` format, aspirational `coverageTargets`, and
    auto-ratcheting baselines with per-project trend tracking
-6. **MCP server & Claude Code plugin** -- 21 MCP tools via tRPC router
+6. **MCP server & Claude Code plugin** -- 24 MCP tools via tRPC router
    for structured agent access to test data, plus file-based Claude Code
    plugin at `plugin/`
 
@@ -57,7 +57,7 @@ Source layout: `package/src/services/` (Effect tags),
 `package/src/cli/` (commands + lib),
 `package/src/errors/` (tagged errors),
 `package/src/formatters/` (markdown, gfm, json, silent),
-`package/src/mcp/` (MCP server + tRPC router + 21 tools),
+`package/src/mcp/` (MCP server + tRPC router + 24 tools),
 `package/src/migrations/` (SQLite schema),
 `package/src/sql/` (row types + assemblers).
 
