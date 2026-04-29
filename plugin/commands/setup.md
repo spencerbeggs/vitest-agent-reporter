@@ -11,12 +11,19 @@ steps:
 1. **Check if vitest.config.ts exists.** If not, inform the user
    they need a Vitest configuration first.
 
-2. **Check if AgentPlugin is already imported.** Read the vitest
+2. **Check if `vitest-agent-reporter` is installed.** Read the
+   project's `package.json`. If `vitest-agent-reporter` is not in
+   `dependencies` or `devDependencies`, install it as a dev
+   dependency using the project's package manager. The plugin's
+   MCP server loader requires the package to be present in the
+   project's `node_modules`.
+
+3. **Check if AgentPlugin is already imported.** Read the vitest
    config file and look for `AgentPlugin` or
    `vitest-agent-reporter` imports. If already present, inform
    the user it's already set up.
 
-3. **Add the AgentPlugin import and configuration.** Edit the
+4. **Add the AgentPlugin import and configuration.** Edit the
    vitest config to add:
 
    ```typescript
@@ -25,13 +32,13 @@ steps:
 
    And add `AgentPlugin()` to the `plugins` array.
 
-4. **Run an initial test** to populate the database:
+5. **Run an initial test** to populate the database:
 
    ```bash
    pnpm test
    ```
 
-5. **Verify MCP tools work** by calling `test_status`.
+6. **Verify MCP tools work** by calling `test_status`.
 
-6. **Inform the user** that setup is complete and which MCP tools
+7. **Inform the user** that setup is complete and which MCP tools
    are now available.

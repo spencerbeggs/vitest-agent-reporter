@@ -1,6 +1,6 @@
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Layer, Option } from "effect";
-import { DataStoreError } from "../errors/DataStoreError.js";
+import { DataStoreError, extractSqlReason } from "../errors/DataStoreError.js";
 import type { AgentReport } from "../schemas/AgentReport.js";
 import type { CoverageBaselines } from "../schemas/Baselines.js";
 import type { CacheManifest } from "../schemas/CacheManifest.js";
@@ -208,7 +208,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				return Option.some(report);
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "test_runs", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "test_runs", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const getRunsByProject = (): Effect.Effect<ReadonlyArray<ProjectRunSummary>, DataStoreError> =>
@@ -253,7 +255,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				}));
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "test_runs", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "test_runs", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const getHistory = (project: string, subProject: string | null): Effect.Effect<HistoryRecord, DataStoreError> =>
@@ -301,7 +305,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				return record;
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "test_history", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "test_history", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const getBaselines = (
@@ -353,7 +359,7 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
 				Effect.mapError(
-					(e) => new DataStoreError({ operation: "read", table: "coverage_baselines", reason: String(e) }),
+					(e) => new DataStoreError({ operation: "read", table: "coverage_baselines", reason: extractSqlReason(e) }),
 				),
 			);
 
@@ -410,7 +416,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				return Option.some(record);
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "coverage_trends", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "coverage_trends", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const getFlaky = (
@@ -455,7 +463,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				}));
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "test_history", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "test_history", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const getPersistentFailures = (
@@ -517,7 +527,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				}));
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "test_history", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "test_history", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const getFileCoverage = (runId: number): Effect.Effect<ReadonlyArray<FileCoverageReport>, DataStoreError> =>
@@ -547,7 +559,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				}));
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "file_coverage", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "file_coverage", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const getCoverage = (
@@ -654,7 +668,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				return Option.some(report);
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "file_coverage", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "file_coverage", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const getTestsForFile = (filePath: string): Effect.Effect<ReadonlyArray<string>, DataStoreError> =>
@@ -672,7 +688,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				return rows.map((r) => r.path);
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "source_test_map", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "source_test_map", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const getErrors = (
@@ -748,7 +766,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				}));
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "test_errors", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "test_errors", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const getNotes = (
@@ -789,7 +809,7 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				return rows.map(mapNoteRow);
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "notes", reason: String(e) })),
+				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "notes", reason: extractSqlReason(e) })),
 			);
 
 		const getNoteById = (id: number): Effect.Effect<Option.Option<NoteRow>, DataStoreError> =>
@@ -800,7 +820,7 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				return Option.some(mapNoteRow(rows[0]));
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "notes", reason: String(e) })),
+				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "notes", reason: extractSqlReason(e) })),
 			);
 
 		const searchNotes = (query: string): Effect.Effect<ReadonlyArray<NoteRow>, DataStoreError> =>
@@ -814,7 +834,7 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				return rows.map(mapNoteRow);
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "notes", reason: String(e) })),
+				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "notes", reason: extractSqlReason(e) })),
 			);
 
 		const getManifest = (): Effect.Effect<Option.Option<CacheManifest>, DataStoreError> =>
@@ -867,7 +887,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				return Option.some(manifest);
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "test_runs", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "test_runs", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const getSettings = (hash: string): Effect.Effect<Option.Option<SettingsRow>, DataStoreError> =>
@@ -915,7 +937,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				return Option.some(settings);
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "settings", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "settings", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const getLatestSettings = (): Effect.Effect<Option.Option<SettingsRow>, DataStoreError> =>
@@ -961,7 +985,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				return Option.some(settings);
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "settings", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "settings", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const getTestByFullName = (
@@ -1005,7 +1031,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				});
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "test_cases", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "test_cases", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const listTests = (
@@ -1098,7 +1126,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				return rows.map(mapTestListRow);
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "test_cases", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "test_cases", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const listModules = (
@@ -1138,7 +1168,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				}));
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "test_modules", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "test_modules", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const listSuites = (
@@ -1203,7 +1235,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				}));
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "test_suites", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "test_suites", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const listSettings = (): Effect.Effect<ReadonlyArray<SettingsListEntry>, DataStoreError> =>
@@ -1220,7 +1254,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				}));
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
-				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "settings", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "settings", reason: extractSqlReason(e) }),
+				),
 			);
 
 		return {

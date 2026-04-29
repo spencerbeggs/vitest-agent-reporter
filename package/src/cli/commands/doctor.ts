@@ -29,7 +29,7 @@ export const doctorCommand = Command.make("doctor", { format: formatOption }, ({
 		const results: CheckResult[] = [];
 
 		// Check 1: Database resolution
-		const dbResult = yield* resolveDbPath.pipe(
+		const dbResult = yield* resolveDbPath().pipe(
 			Effect.map((d) => ({ found: true as const, path: d })),
 			Effect.catchAll(() =>
 				Effect.succeed({

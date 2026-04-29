@@ -1,6 +1,6 @@
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Effect, Layer } from "effect";
-import { DataStoreError } from "../errors/DataStoreError.js";
+import { DataStoreError, extractSqlReason } from "../errors/DataStoreError.js";
 import type { CoverageBaselines } from "../schemas/Baselines.js";
 import type { TrendEntry } from "../schemas/Trends.js";
 import type {
@@ -33,7 +33,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				return rows[0].id;
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
-				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "files", reason: String(e) })),
+				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "files", reason: extractSqlReason(e) })),
 			);
 
 		const writeSettings = (
@@ -50,7 +50,9 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				}
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
-				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "settings", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "settings", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const writeRun = (input: TestRunInput): Effect.Effect<number, DataStoreError> =>
@@ -63,7 +65,9 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				return rows[0].id;
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
-				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "test_runs", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "test_runs", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const writeModules = (
@@ -81,7 +85,9 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				return ids;
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
-				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "test_modules", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "test_modules", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const writeSuites = (
@@ -99,7 +105,9 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				return ids;
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
-				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "test_suites", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "test_suites", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const writeTestCases = (
@@ -129,7 +137,9 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				return ids;
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
-				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "test_cases", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "test_cases", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const writeErrors = (runId: number, errors: ReadonlyArray<TestErrorInput>): Effect.Effect<void, DataStoreError> =>
@@ -157,12 +167,9 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				}
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
-				Effect.mapError((e) => {
-					// Extract the actual SQL error from Effect's SqlError wrapper
-					const sqlErr = e as { cause?: Error; message?: string };
-					const rootCause = sqlErr.cause?.message ?? sqlErr.message ?? String(e);
-					return new DataStoreError({ operation: "write", table: "test_errors", reason: rootCause });
-				}),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "test_errors", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const writeCoverage = (
@@ -176,7 +183,9 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				}
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
-				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "file_coverage", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "file_coverage", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const writeHistory = (
@@ -199,7 +208,9 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				yield* sql`DELETE FROM test_history WHERE id NOT IN (SELECT id FROM test_history WHERE project = ${project} AND sub_project IS ${subProject} AND full_name = ${fullName} ORDER BY timestamp DESC LIMIT 10) AND project = ${project} AND sub_project IS ${subProject} AND full_name = ${fullName}`;
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
-				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "test_history", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "test_history", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const writeBaselines = (baselines: CoverageBaselines): Effect.Effect<void, DataStoreError> =>
@@ -231,7 +242,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
 				Effect.mapError(
-					(e) => new DataStoreError({ operation: "write", table: "coverage_baselines", reason: String(e) }),
+					(e) => new DataStoreError({ operation: "write", table: "coverage_baselines", reason: extractSqlReason(e) }),
 				),
 			);
 
@@ -249,7 +260,9 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				yield* sql`DELETE FROM coverage_trends WHERE id NOT IN (SELECT id FROM coverage_trends WHERE project = ${project} AND sub_project IS ${subProject} ORDER BY timestamp DESC LIMIT 50) AND project = ${project} AND sub_project IS ${subProject}`;
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
-				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "coverage_trends", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "coverage_trends", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const writeSourceMap = (
@@ -265,7 +278,9 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				yield* sql`INSERT OR IGNORE INTO source_test_map (source_file_id, test_module_id, mapping_type) VALUES (${sourceFileId}, ${testModuleId}, ${mappingType})`;
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
-				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "source_test_map", reason: String(e) })),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "source_test_map", reason: extractSqlReason(e) }),
+				),
 			);
 
 		const writeNote = (note: NoteInput): Effect.Effect<number, DataStoreError> =>
@@ -278,7 +293,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				return rows[0].id;
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
-				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "notes", reason: String(e) })),
+				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "notes", reason: extractSqlReason(e) })),
 			);
 
 		const updateNote = (id: number, fields: Partial<NoteInput>): Effect.Effect<void, DataStoreError> =>
@@ -344,7 +359,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				yield* sql.unsafe(`UPDATE notes SET ${setClauses.join(", ")} WHERE id = ?`, [...values, id]);
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
-				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "notes", reason: String(e) })),
+				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "notes", reason: extractSqlReason(e) })),
 			);
 
 		const deleteNote = (id: number): Effect.Effect<void, DataStoreError> =>
@@ -353,7 +368,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				yield* sql`DELETE FROM notes WHERE id = ${id}`;
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
-				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "notes", reason: String(e) })),
+				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "notes", reason: extractSqlReason(e) })),
 			);
 
 		return {

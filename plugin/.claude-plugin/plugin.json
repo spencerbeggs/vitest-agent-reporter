@@ -8,5 +8,11 @@
 	},
 	"homepage": "https://github.com/spencerbeggs/vitest-agent-reporter",
 	"repository": "https://github.com/spencerbeggs/vitest-agent-reporter.git",
-	"license": "MIT"
+	"license": "MIT",
+	"mcpServers": {
+		"vitest-reporter": {
+			"command": "node",
+			"args": ["${CLAUDE_PLUGIN_ROOT}/bin/mcp-server.mjs"]
+		}
+	}
 }

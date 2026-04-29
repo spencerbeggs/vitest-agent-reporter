@@ -11,7 +11,7 @@ tools.
 
 - **SQLite persistence** -- normalized database replaces JSON files for
   richer queries and cross-run analysis
-- **MCP server** -- 22 tools over stdio for deep integration with LLM
+- **MCP server** -- 24 tools over stdio for deep integration with LLM
   agents (test data, notes, coverage, discovery, run tests)
 - **Claude Code plugin** -- auto-registers MCP tools, injects test
   context at session start, and provides teaching skills
@@ -74,7 +74,7 @@ Install the Claude Code plugin for the full agent experience:
 ```
 
 That's it. The plugin detects whether an agent, CI, or human is running
-tests and adjusts output automatically. Agents get 22 MCP tools for
+tests and adjusts output automatically. Agents get 24 MCP tools for
 querying test data, tracking coverage, and persisting notes -- with no
 manual MCP configuration.
 
@@ -151,7 +151,7 @@ plugin provides the full agent-native experience:
 
 The plugin provides:
 
-- **MCP auto-registration** -- all 22 tools available immediately with
+- **MCP auto-registration** -- all 24 tools available immediately with
   no manual `.mcp.json` configuration
 - **SessionStart hook** -- injects project status and available tools
   into Claude's context at the start of each session
@@ -174,7 +174,7 @@ npx vitest-agent-reporter-mcp
 ```
 
 <details>
-<summary>Full tool reference (22 tools)</summary>
+<summary>Full tool reference (24 tools)</summary>
 
 | Tool | Description |
 | --- | --- |

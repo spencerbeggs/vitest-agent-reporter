@@ -3,8 +3,8 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-04-23
-last-synced: 2026-04-23
+updated: 2026-04-28
+last-synced: 2026-04-28
 post-phase5-sync: 2026-04-23
 completeness: 95
 related:
@@ -147,6 +147,9 @@ package/
       capture-env.ts      -- captures CI/GitHub/Runner env vars
       capture-settings.ts -- captures Vitest config + computes hash
       classify-test.ts    -- pure test classification function
+      ensure-migrated.ts  -- process-level migration coordinator
+                             (globalThis-keyed promise cache,
+                             one-shot per dbPath)
       format-console.ts   -- legacy console formatter (delegates to markdown)
       format-gfm.ts       -- legacy GFM formatter (delegates to gfm)
       format-fatal-error.ts -- formats fatal error output for reporter errors
@@ -155,8 +158,14 @@ package/
 
 plugin/
   .claude-plugin/
-    plugin.json           -- Claude Code plugin manifest
-  .mcp.json               -- MCP server auto-registration
+    plugin.json           -- Claude Code plugin manifest with inline
+                             mcpServers configuration
+  bin/
+    mcp-server.mjs        -- Node loader for MCP server: walks up to
+                             user's node_modules, dynamically imports
+                             vitest-agent-reporter's ./mcp export via
+                             file:// URL; fails fast with install
+                             instructions if missing
   hooks/
     hooks.json            -- hook configuration (SessionStart, PostToolUse)
     session-start.sh      -- context injection on session start
@@ -240,10 +249,13 @@ package/src/
     split-project.test.ts   -- project name splitting
     capture-env.test.ts     -- env var capture
     capture-settings.test.ts -- settings capture + hash computation
+    ensure-migrated.test.ts -- migration coordinator (4 tests: fresh DB,
+                               concurrent same dbPath sharing, distinct
+                               dbPaths independent, race serialization)
     format-fatal-error.test.ts -- fatal error formatting
 ```
 
-**52 test files, 569 tests total.** All coverage metrics (statements,
+**53 test files, 573 tests total.** All coverage metrics (statements,
 branches, functions, lines) are above 80%.
 
 ---
@@ -690,17 +702,29 @@ Coverage regressing over 3 runs
 ## Error Handling Strategy
 
 - **Database write failures:** DataStoreError tagged error with `operation`,
-  `table`, and `reason` fields. Logged to stderr, don't crash the test run
+  `table`, and `reason` fields. The `reason` is extracted via
+  `extractSqlReason(e)` to surface the underlying SQLite message
+  (e.g. `"SQLITE_BUSY: database is locked"`,
+  `"UNIQUE constraint failed: ..."`) rather than the generic
+  `"Failed to execute statement"` SqlError wrapper. The error's
+  `message` property is set to `[operation table] reason` so
+  `Cause.pretty()` produces useful output. Logged to stderr; doesn't
+  crash the test run
 - **Database read failures:** DataReaderLive wraps SQL queries in
-  `Effect.try`, catching failures as typed `DataStoreError`. History reads
-  return empty records for missing data
-- **Database migration failures:** DataStoreError with `operation: "migrate"`.
-  Propagated as fatal on first access
+  `Effect.try`, catching failures as typed `DataStoreError` with
+  `extractSqlReason`-derived reason. History reads return empty records
+  for missing data
+- **Database migration failures:** Migrations run via `ensureMigrated`
+  before the main reporter Effect. If the migration promise rejects,
+  AgentReporter prints `formatFatalError(err)` to stderr and returns
+  early without writing data. DataStoreError uses `operation: "migrate"`
 - **Coverage duck-type mismatch:** CoverageAnalyzer returns `Option.none()`,
   coverage section silently skipped
 - **Missing `GITHUB_STEP_SUMMARY`:** Skip GFM output (no warning)
-- **Project discovery failures:** DiscoveryError tagged error, CLI reports
-  the issue and continues with available data
+- **Project discovery failures:** DiscoveryError tagged error (with the
+  same derived `[operation path] reason` message format as
+  DataStoreError); CLI reports the issue and continues with available
+  data
 
 ---
 
@@ -719,6 +743,12 @@ onCoverage(coverage)
   +-- stash as this.coverage
 
 onTestRunEnd(testModules, unhandledErrors, reason)
+  |
+  +-- await ensureMigrated(dbPath, logLevel, logFile)
+  |     +-- on rejection: stderr.write(formatFatalError(err))
+  |     |   and return early
+  |     +-- otherwise: migration cached on globalThis Symbol;
+  |         concurrent reporter instances share the same promise
   |
   +-- Filter testModules by projectFilter (if set)
   |
@@ -830,14 +860,14 @@ vitest-agent-reporter <command> [--format <format>] [options]
   |     +-- OutputRenderer.render() -> stdout
   |
   +-- cache path:
-  |     +-- resolveCacheDir -> stdout
+  |     +-- resolveDbPath -> stdout
   |
   +-- cache clean:
-  |     +-- resolveCacheDir
+  |     +-- resolveDbPath
   |     +-- FileSystem.remove(cacheDir, { recursive: true })
   |
   +-- doctor:
-        +-- resolveCacheDir
+        +-- resolveDbPath
         +-- DataReader.getManifest()
         +-- DataReader.getLatestRun() per project (integrity)
         +-- staleness check

@@ -42,7 +42,7 @@
 		"@effect/sql": "catalog:silk",
 		"@effect/sql-sqlite-node": "catalog:silk",
 		"@modelcontextprotocol/sdk": "^1.29.0",
-		"@trpc/server": "^11.16.0",
+		"@trpc/server": "^11.17.0",
 		"effect": "catalog:silk",
 		"std-env": "^4.1.0",
 		"zod": "^4.3.6"

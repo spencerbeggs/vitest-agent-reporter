@@ -3,8 +3,8 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-04-23
-last-synced: 2026-04-23
+updated: 2026-04-28
+last-synced: 2026-04-28
 post-phase5-sync: 2026-04-23
 completeness: 95
 related:
@@ -519,6 +519,105 @@ Same values (`"own" | "complement"`, default `"complement"`).
 **Why chosen:** Shorter, cleaner API. The option controls the
 overall strategy for how the plugin interacts with Vitest's reporter
 chain, not just console behavior.
+
+### Decision 28: Process-Level Migration Coordination via globalThis Cache (bug/startup branch)
+
+**Context:** In multi-project Vitest configurations sharing a single
+`data.db`, each `AgentReporter` instance ran SQLite migrations through
+its own `SqliteClient` connection. With a fresh database, two
+connections would both start deferred transactions and then attempt to
+upgrade to write, producing `SQLITE_BUSY` (database is locked). SQLite's
+busy handler is not invoked for write-write upgrade conflicts on
+deferred transactions, so better-sqlite3's 5s `busy_timeout` did not
+help. This was a real bug reproducible on the bug/startup branch.
+
+**Options considered:**
+
+1. **Process-level coordinator with `globalThis`-keyed promise cache (Chosen):**
+   - Pros: Migration runs exactly once per `dbPath`; concurrent reporter
+     instances share the same in-flight promise; works across module
+     instances when Vite's multi-project pipeline loads our plugin
+     module twice in the same Node process; no inter-process locking
+     required; subsequent reads/writes work normally under WAL +
+     `busy_timeout` once migration completes
+   - Cons: Adds a hidden `Symbol.for(...)` global; couples coordination
+     to process lifetime
+   - Why chosen: Solves the actual race condition without serializing
+     anything but the migration step itself
+
+2. **Module-local `Map` cache:**
+   - Pros: Simpler, avoids `globalThis` pollution
+   - Cons: Vite's multi-project pipeline can load our module under
+     separate module instances (one per project) within the same
+     process. A module-local Map results in independent caches per
+     project, defeating coordination
+   - Why rejected: Breaks for the very scenario it's meant to fix
+
+3. **File-based lock or busier `BEGIN IMMEDIATE` retries:**
+   - Pros: No globals
+   - Cons: File locks are platform-fraught; `BEGIN IMMEDIATE` would
+     require rewriting the migrator's transaction boundaries, which we
+     don't own
+   - Why rejected: Migrating the migrator is out of scope; the fix
+     should live at the call site
+
+**Implementation:** New utility
+`package/src/utils/ensure-migrated.ts` exports `ensureMigrated(dbPath,
+logLevel?, logFile?)`. The promise cache lives at
+`Symbol.for("vitest-agent-reporter/migration-promises")` on
+`globalThis`. `AgentReporter.onTestRunEnd` awaits `ensureMigrated`
+before the main `Effect.runPromise`; on rejection, it prints
+`formatFatalError(err)` to stderr and returns. The function is also
+referenced from a new test file with a `_resetMigrationCacheForTesting`
+internal helper.
+
+### Decision 29: Plugin MCP Server Loader (bug/startup branch)
+
+**Context:** The Phase 5d plugin previously registered the MCP server
+via a separate `.mcp.json` file with `npx vitest-agent-reporter-mcp`.
+Two problems: (a) on first run, `npx` could fall back to downloading
+the package from the registry and exceed Claude Code's MCP startup
+window, and (b) Node's strict-exports CJS rejection blocked dynamic
+loading of our published `./mcp` subpath because the package only
+declares an `import` condition for it.
+
+**Chosen approach:**
+
+- Inline the `mcpServers` configuration into
+  `plugin/.claude-plugin/plugin.json` (per Claude Code's plugin
+  convention)
+- Ship a small Node loader at `plugin/bin/mcp-server.mjs` invoked as
+  `command: "node"` with arg
+  `"${CLAUDE_PLUGIN_ROOT}/bin/mcp-server.mjs"`
+- The loader walks up from `process.cwd()` looking for
+  `node_modules/vitest-agent-reporter`, reads its `exports['./mcp']`
+  from `package.json`, and dynamically imports it via a `file://` URL
+- If the package is missing, fail fast with a clear stderr message and
+  install instructions for npm/pnpm/yarn/bun
+- Delete the old `plugin/.mcp.json`
+
+**Why chosen:**
+
+- Resolving from the user's `node_modules` is required because the
+  package depends on `better-sqlite3`, a native module that must match
+  the user's platform/Node version. We cannot bundle the MCP server
+  inside the plugin
+- Walking up from `process.cwd()` mirrors Node's resolution algorithm
+  and works for hoisted monorepo installs across all package managers
+- Dynamic `import()` of a `file://` URL bypasses CJS-vs-ESM exports
+  validation that blocks the canonical `import "vitest-agent-reporter/mcp"`
+  path when conditions don't match
+- Failing fast with install instructions is more useful than a silent
+  npx download that could time out the MCP handshake
+
+**Trade-offs:**
+
+- The loader is brittle to deeply non-standard install layouts (anything
+  Node's own resolver couldn't find), but those layouts already break
+  most tools
+- Plugin users must install `vitest-agent-reporter` as a project
+  dependency. This is consistent with how the Vitest reporter and CLI
+  are already used and is documented in the failure message
 
 ---
 

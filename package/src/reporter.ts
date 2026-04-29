@@ -35,6 +35,7 @@ import { buildAgentReport } from "./utils/build-report.js";
 import { captureEnvVars } from "./utils/capture-env.js";
 import { captureSettings, hashSettings } from "./utils/capture-settings.js";
 import { computeTrend } from "./utils/compute-trend.js";
+import { ensureMigrated } from "./utils/ensure-migrated.js";
 import { formatFatalError } from "./utils/format-fatal-error.js";
 import { formatGfm } from "./utils/format-gfm.js";
 import { resolveThresholds } from "./utils/resolve-thresholds.js";
@@ -290,6 +291,19 @@ export class AgentReporter {
 
 		// Ensure the parent directory for the SQLite DB exists
 		mkdirSync(dirname(dbPath), { recursive: true });
+
+		// Serialize migrations across reporter instances in the same process.
+		// Multi-project Vitest runs create one reporter per project, all sharing
+		// the same dbPath. Concurrent migration attempts on a fresh database hit
+		// SQLITE_BUSY (database is locked) because deferred-transaction write
+		// upgrades don't invoke SQLite's busy_handler. After this resolves,
+		// concurrent reads/writes from separate connections work under WAL mode.
+		try {
+			await ensureMigrated(dbPath, logLevel, logFile);
+		} catch (err) {
+			process.stderr.write(`vitest-agent-reporter: ${formatFatalError(err)}\n`);
+			return;
+		}
 
 		const program = Effect.gen(function* () {
 			const store = yield* DataStore;
