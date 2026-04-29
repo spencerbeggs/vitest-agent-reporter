@@ -5,7 +5,8 @@ and instructions for development.
 
 ## Prerequisites
 
-- Node.js 24+
+- Node.js 22+ (the development environment uses 24.x; published
+  packages declare `node >= 22`)
 - pnpm 10+
 
 ## Development Setup
@@ -27,61 +28,58 @@ pnpm run test
 
 ## Project Structure
 
-This is a pnpm monorepo. The publishable package lives under `package/`,
-with example workspaces under `examples/`.
+This is a pnpm monorepo. As of 2.0 the publishable code is split into
+four packages under `packages/`, with example workspaces under
+`examples/` and a Claude Code plugin under `plugin/`.
 
 ```text
 vitest-agent-reporter/
-├── package/                    # Main package workspace
-│   ├── src/
-│   │   ├── index.ts                # Public API re-exports
-│   │   ├── reporter.ts             # AgentReporter class (Vitest adapter)
-│   │   ├── plugin.ts               # AgentPlugin function
-│   │   ├── cli/
-│   │   │   ├── index.ts            # CLI entry point (runCli)
-│   │   │   ├── commands/           # Thin command wrappers (status, overview, coverage, history)
-│   │   │   └── lib/                # Testable formatting logic for each command
-│   │   ├── services/
-│   │   │   ├── AgentDetection.ts   # std-env wrapper for environment detection
-│   │   │   ├── CacheWriter.ts      # Write reports, manifest, and history to disk
-│   │   │   ├── CacheReader.ts      # Read reports, manifest, and history from disk
-│   │   │   ├── CoverageAnalyzer.ts # Coverage processing with scoped support
-│   │   │   ├── HistoryTracker.ts   # Test classification from failure history
-│   │   │   └── ProjectDiscovery.ts # Test file discovery via globs
-│   │   ├── layers/
-│   │   │   ├── *Live.ts            # Production implementations (Node.js I/O)
-│   │   │   ├── *Test.ts            # Test implementations (mock state containers)
-│   │   │   ├── ReporterLive.ts     # Merged layer for reporter runtime
-│   │   │   └── CliLive.ts          # Merged layer for CLI runtime
-│   │   ├── errors/
-│   │   │   ├── CacheError.ts       # Data.TaggedError for file I/O failures
-│   │   │   └── DiscoveryError.ts   # Data.TaggedError for project discovery
-│   │   ├── schemas/
-│   │   │   ├── AgentReport.ts      # Report, module, and test schemas
-│   │   │   ├── CacheManifest.ts    # Manifest and entry schemas
-│   │   │   ├── Coverage.ts         # Coverage report and totals schemas
-│   │   │   ├── History.ts          # History record, test history, test run schemas
-│   │   │   ├── Options.ts          # Reporter and plugin option schemas
-│   │   │   └── Common.ts           # Shared literals (TestState, TestRunReason, etc.)
-│   │   └── utils/
-│   │       ├── compress-lines.ts   # Line range compression
-│   │       ├── safe-filename.ts    # Filename sanitization
-│   │       ├── ansi.ts             # ANSI color helpers
-│   │       ├── strip-console-reporters.ts
-│   │       ├── detect-pm.ts        # Package manager detection
-│   │       ├── build-report.ts     # Report builder (pure function)
-│   │       ├── format-console.ts   # Console markdown formatter (pure function)
-│   │       └── format-gfm.ts       # GitHub Actions GFM formatter (pure function)
-│   ├── bin/
-│   │   └── vitest-agent-reporter.js  # CLI shebang wrapper
-│   ├── rslib.config.ts            # Rslib build configuration
-│   └── package.json               # Package manifest
+├── packages/
+│   ├── reporter/               # vitest-agent-reporter (Vitest plugin + reporter)
+│   │   └── src/
+│   │       ├── index.ts            # Public API (re-exports from shared)
+│   │       ├── reporter.ts         # AgentReporter class
+│   │       ├── plugin.ts           # AgentPlugin function
+│   │       └── layers/             # Reporter-specific Effect layers
+│   ├── shared/                 # vitest-agent-reporter-shared (data layer + services)
+│   │   └── src/
+│   │       ├── schemas/            # Effect Schema definitions
+│   │       ├── services/           # Effect Context.Tag definitions
+│   │       ├── layers/             # Live + test layer implementations
+│   │       ├── errors/             # Tagged error types
+│   │       ├── formatters/         # markdown, gfm, json, silent
+│   │       ├── migrations/         # SQLite migrations
+│   │       ├── sql/                # Row types + assemblers
+│   │       └── utils/              # Pure utilities
+│   ├── cli/                    # vitest-agent-reporter-cli (CLI bin)
+│   │   └── src/
+│   │       ├── index.ts            # @effect/cli entry point
+│   │       ├── commands/           # Thin command wrappers
+│   │       └── lib/                # Testable formatting logic
+│   └── mcp/                    # vitest-agent-reporter-mcp (MCP server bin)
+│       └── src/
+│           ├── index.ts            # MCP stdio entry point
+│           ├── server.ts           # @modelcontextprotocol/sdk server
+│           ├── router.ts           # tRPC router
+│           ├── context.ts          # ManagedRuntime context
+│           └── tools/              # 24 MCP tool implementations
+├── plugin/                     # Claude Code plugin (NOT a pnpm workspace)
+│   ├── .claude-plugin/plugin.json  # Manifest with inline mcpServers
+│   ├── bin/mcp-server.mjs          # PM-detect + spawn loader
+│   ├── hooks/                      # SessionStart, PreToolUse, PostToolUse
+│   ├── skills/                     # tdd, debugging, configuration, coverage-improvement
+│   └── commands/                   # setup, configure
 ├── examples/                   # Example workspaces
 ├── docs/                       # User-facing documentation
 ├── lib/configs/                # Shared tool configuration
 ├── pnpm-workspace.yaml         # Workspace definitions
 └── .claude/design/             # Architecture design documents
 ```
+
+`vitest-agent-reporter-shared` is the dependency hub — `reporter`,
+`cli`, and `mcp` all import from it. The `reporter` package declares
+`cli` and `mcp` as required peer dependencies so they auto-install
+together for end users.
 
 ## Architecture Patterns
 
@@ -90,13 +88,16 @@ vitest-agent-reporter/
 The project uses [Effect](https://effect.website/) for dependency injection
 and service composition. Key patterns:
 
-- **Services** (`package/src/services/`) define interfaces via `Context.Tag`
-- **Live layers** (`package/src/layers/*Live.ts`) provide production
-  implementations using `@effect/platform` for file I/O
-- **Test layers** (`package/src/layers/*Test.ts`) provide mock
+- **Services** (`packages/shared/src/services/`) define interfaces via
+  `Context.Tag`
+- **Live layers** (`packages/shared/src/layers/*Live.ts`) provide
+  production implementations using `@effect/platform` for file I/O and
+  `@effect/sql-sqlite-node` for the database
+- **Test layers** (`packages/shared/src/layers/*Test.ts`) provide mock
   implementations with state containers for assertions
-- **Schemas** (`package/src/schemas/`) use Effect Schema (not Zod) for data
-  validation and serialization
+- **Schemas** (`packages/shared/src/schemas/`) use Effect Schema (not
+  Zod) for data validation and serialization. Zod is used only inside
+  `packages/mcp/` for tRPC procedure input schemas
 
 ### Reporter Integration
 
@@ -107,9 +108,11 @@ managed runtime lifecycle concerns.
 
 ### Pure Functions
 
-Formatters (`format-console.ts`, `format-gfm.ts`) and utilities
-(`compress-lines.ts`, `safe-filename.ts`) are plain functions, not Effect
-services. They are trivially testable without layers.
+Formatters (`packages/shared/src/formatters/`) and small utilities
+(`packages/shared/src/utils/compress-lines.ts`,
+`packages/shared/src/utils/safe-filename.ts`, etc.) are plain
+functions, not Effect services. They are trivially testable without
+layers.
 
 ## Available Scripts
 
@@ -169,7 +172,7 @@ pnpm run test:watch
 pnpm run test:coverage
 
 # Run a specific test file
-pnpm vitest run package/src/utils/compress-lines.test.ts
+pnpm vitest run packages/shared/src/utils/compress-lines.test.ts
 ```
 
 ### Testing Effect Services
@@ -178,17 +181,18 @@ Service tests use the state-container pattern with test layers:
 
 ```typescript
 import { Effect } from "effect";
-import { CacheReader } from "../services/CacheReader.js";
-import { CacheReaderTest } from "../layers/CacheReaderTest.js";
+import { DataReader } from "../services/DataReader.js";
+import { DataStoreTest } from "../layers/DataStoreTest.js";
 
-const testLayer = CacheReaderTest.layer(/* mock state */);
+// Provide a test layer wired to an in-memory or fixture-backed state
+const testLayer = DataStoreTest.layer(/* mock state */);
 
-const run = <A, E>(effect: Effect.Effect<A, E, CacheReader>) =>
+const run = <A, E>(effect: Effect.Effect<A, E, DataReader>) =>
   Effect.runPromise(Effect.provide(effect, testLayer));
 
-it("reads manifest from cache dir", async () => {
+it("returns the latest run for a project", async () => {
   const result = await run(
-    Effect.flatMap(CacheReader, (svc) => svc.readManifest("/tmp/cache")),
+    Effect.flatMap(DataReader, (svc) => svc.getLatestRun("my-app", null)),
   );
   // assertions...
 });
@@ -198,8 +202,9 @@ Reporter integration tests compose test layers:
 
 ```typescript
 const TestReporterLive = Layer.mergeAll(
-  CacheWriterTest.layer(writeState),
+  DataStoreTest.layer(writeState),
   CoverageAnalyzerTest.layer(),
+  HistoryTrackerTest.layer(),
 );
 ```
 

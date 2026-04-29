@@ -47,15 +47,18 @@ Or configure permanently in your Claude Code settings:
 
 The plugin registers the `vitest-reporter` MCP server automatically
 via the `mcpServers` field in `.claude-plugin/plugin.json`. A small
-loader (`bin/mcp-server.mjs`) shipped with the plugin resolves and
-launches the MCP server from `vitest-agent-reporter` installed in
-your project's `node_modules` (walking up from your CWD, so it works
-with hoisted monorepo installs).
+zero-dependency loader (`bin/mcp-server.mjs`) shipped with the plugin
+detects your package manager (npm, pnpm, yarn, or bun) from
+`packageManager` in `package.json` or your lockfile, then spawns the
+`vitest-agent-reporter-mcp` bin through that package manager so it
+resolves from your project's `node_modules`.
 
-This means **`vitest-agent-reporter` must be installed as a
-dependency of your project** for the plugin's MCP server to start.
-If it's missing, the loader fails fast with explicit install
-instructions for npm, pnpm, yarn, and bun. See
+This means `vitest-agent-reporter` must be installed as a dependency
+of your project for the plugin's MCP server to start. The package's
+required peer dependencies (`vitest-agent-reporter-mcp` and
+`vitest-agent-reporter-cli`) are auto-installed by modern pnpm and
+npm. If the MCP bin is missing, the loader prints PM-specific
+install instructions and exits non-zero. See
 [Prerequisites](#prerequisites) below.
 
 The server exposes 24 tools for querying test data stored in the
@@ -94,7 +97,15 @@ the `help` tool for the full list with parameters.
 | Hook | Trigger | Behavior |
 | --- | --- | --- |
 | `SessionStart` | Claude session begins | Injects project test status and MCP tool reference into context |
+| `PreToolUse` (`mcp__vitest-agent-reporter__*`) | Before any vitest-agent-reporter MCP tool call | Auto-allows the call without a permission prompt when the tool is on the bundled allowlist (all 24 current tools are listed) |
 | `PostToolUse` (Bash) | After any Bash tool call | Detects test runs; suggests MCP tools when tests fail |
+
+The `PreToolUse` allowlist lives at
+`hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt`. Every tool the MCP
+server exposes today (read-only queries, discovery, `run_tests`, and the
+notes CRUD operations) is on the list. Future tools added to the server
+fall back to the standard permission prompt until they are added to the
+file.
 
 ### Skills
 
@@ -118,15 +129,25 @@ Commands are invoked via `/<name>` in Claude Code.
 
 ## Prerequisites
 
-The plugin's MCP server loader resolves `vitest-agent-reporter` from
-your project's `node_modules`, so the package **must be installed as
-a project dependency**:
+`vitest-agent-reporter` must be installed as a project dependency so
+the plugin's loader can spawn the MCP server through your package
+manager:
 
 ```bash
 npm install --save-dev vitest-agent-reporter
 pnpm add -D vitest-agent-reporter
 yarn add -D vitest-agent-reporter
 bun add -d vitest-agent-reporter
+```
+
+The required peer dependencies (`vitest-agent-reporter-mcp` for the
+MCP bin and `vitest-agent-reporter-cli` for the CLI) are
+auto-installed by modern pnpm and npm. If your package manager is
+configured to skip peer deps (e.g. pnpm with `auto-install-peers: false`),
+install them explicitly:
+
+```bash
+pnpm add -D vitest-agent-reporter vitest-agent-reporter-cli vitest-agent-reporter-mcp
 ```
 
 Additional setup:
@@ -137,10 +158,14 @@ Additional setup:
 ## How It Works
 
 After each `vitest` run, `AgentReporter` writes structured data to a
-SQLite database (default: `node_modules/.vite/vitest-agent-reporter/data.db`
-when using `AgentPlugin`, or `.vitest-agent-reporter/data.db` standalone).
-The MCP server reads this database on demand -- no background process
-required.
+SQLite database under your XDG data directory (default
+`$XDG_DATA_HOME/vitest-agent-reporter/<workspaceName>/data.db`,
+falling back to `~/.local/share/vitest-agent-reporter/<workspaceName>/data.db`).
+The location is derived from your root `package.json` `name`, so two
+worktrees of the same repo share history; override it via
+`vitest-agent-reporter.config.toml` (`cacheDir` or `projectKey`) at
+the workspace root. The MCP server reads this database on demand --
+no background process required.
 
 The `SessionStart` hook queries the CLI (`vitest-agent-reporter status`)
 at session start and injects a markdown summary with available tools and

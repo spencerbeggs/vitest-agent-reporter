@@ -13,6 +13,18 @@
 				]
 			}
 		],
+		"PreToolUse": [
+			{
+				"matcher": "mcp__vitest-agent-reporter__.*",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use-mcp.sh\"",
+						"timeout": 5
+					}
+				]
+			}
+		],
 		"PostToolUse": [
 			{
 				"matcher": "Bash",

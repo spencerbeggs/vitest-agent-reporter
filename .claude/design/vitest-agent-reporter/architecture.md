@@ -3,9 +3,10 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-04-28
-last-synced: 2026-04-28
+updated: 2026-04-29
+last-synced: 2026-04-29
 post-phase5-sync: 2026-04-23
+post-2-0-sync: 2026-04-29
 completeness: 95
 related:
   - vitest-agent-reporter/components.md
@@ -30,17 +31,34 @@ only what you need for the task at hand.
 
 | Document | Load when... | Content |
 | -------- | ------------ | ------- |
-| [components.md](./components.md) | Working on specific components, need API details | 25 component descriptions with interfaces and dependencies |
-| [decisions.md](./decisions.md) | Need to understand "why" something was built a certain way | 27 architectural decisions, 9 design patterns, constraints/trade-offs |
-| [data-structures.md](./data-structures.md) | Working with schemas, DB schema, output, or data flow | File structure, TypeScript interfaces, SQLite schema, output format, data flow diagrams, integration points |
-| [testing-and-phases.md](./testing-and-phases.md) | Writing tests, reviewing test coverage, or checking phase status | 53 test files, test patterns, Phase 1-5 history |
+| [components.md](./components.md) | Working on specific components, need API details | Component descriptions with interfaces and dependencies (incl. four-package layout, XDG path resolution, plugin spawn loader) |
+| [decisions.md](./decisions.md) | Need to understand "why" something was built a certain way | Architectural decisions (incl. 2.0 four-package split, XDG path resolution, retired plugin file:// loader), design patterns, constraints/trade-offs |
+| [data-structures.md](./data-structures.md) | Working with schemas, DB schema, output, or data flow | File structure across four packages, TypeScript interfaces, SQLite schema, XDG data layout, config file schema, data flow diagrams, integration points |
+| [testing-and-phases.md](./testing-and-phases.md) | Writing tests, reviewing test coverage, or checking phase status | Test patterns, Phase 1-5 history, Phase 6 (2.0 architectural restructure: XDG paths + package split) |
 
 ---
 
 ## Overview
 
-`vitest-agent-reporter` provides exports targeting LLM coding agents and CI
-systems, implemented across five phases:
+As of 2.0, `vitest-agent-reporter` ships as **four coordinated pnpm
+workspaces** under `packages/` instead of a single package. The split lets
+the MCP server and the reporter version independently while sharing one
+schema/data-layer contract:
+
+| Package | Path | Role |
+| --- | --- | --- |
+| `vitest-agent-reporter-shared` | `packages/shared/` | Effect Schema, SQLite migrations, errors, `DataStore`/`DataReader` services + live layers, all pipeline services (Environment/Executor/Format/Detail/OutputRenderer) and live layers, History/ProjectDiscovery, Logger, formatters, utilities, **and the new XDG path-resolution stack** (`AppDirs`, ConfigFile, WorkspaceDiscovery, `resolveDataPath`). No internal dependencies. |
+| `vitest-agent-reporter` | `packages/reporter/` | The Vitest reporter + plugin + `ReporterLive` + `CoverageAnalyzer`. Depends on shared. Declares the CLI and MCP packages as required `peerDependencies`. No bin entries. |
+| `vitest-agent-reporter-cli` | `packages/cli/` | `vitest-agent-reporter` bin (`@effect/cli`-based). Depends on shared. Owns `CliLive`. |
+| `vitest-agent-reporter-mcp` | `packages/mcp/` | `vitest-agent-reporter-mcp` bin (`@modelcontextprotocol/sdk` + tRPC). Depends on shared. Owns `McpLive`. |
+
+Examples live under `examples/*` (not pnpm workspaces by name, but
+included as a fifth Vitest project for integration coverage). The
+`plugin/` directory is the file-based Claude Code plugin and is NOT a
+pnpm workspace.
+
+The package provides exports targeting LLM coding agents and CI systems,
+implemented across six phases:
 
 1. **`AgentReporter`** (Phase 1-2, COMPLETE) -- a Vitest `Reporter`
    (requires Vitest >= 3.2.0) that produces structured markdown to console,
@@ -104,6 +122,26 @@ systems, implemented across five phases:
      for MCP auto-registration, SessionStart and PostToolUse hooks,
      4 skills (TDD, debugging, configuration, coverage-improvement),
      and 2 commands (setup, configure).
+7. **2.0 architectural restructure** (Phase 6, COMPLETE) -- closes [issue
+   #39][issue-39] by replacing the artifact-probing `resolveDbPath` with
+   deterministic XDG-based resolution, splits the monolith into four
+   packages (shared/reporter/cli/mcp), and rewrites the Claude Code
+   plugin's MCP loader to detect-the-PM-and-spawn instead of walking
+   `node_modules` and dynamic-importing via `file://` URL. Adopts
+   `xdg-effect`, `config-file-effect`, and `workspaces-effect`. Default
+   DB location is now
+   `$XDG_DATA_HOME/vitest-agent-reporter/<workspaceKey>/data.db` (with
+   `~/.local/share/...` fallback), where `<workspaceKey>` is the root
+   `package.json` `name` normalized for filesystem safety
+   (`@org/pkg` -> `@org__pkg`). Optional
+   `vitest-agent-reporter.config.toml` overrides via
+   `cacheDir`/`projectKey`. Decision 29 (plugin file:// loader) is
+   retired; Decision 28 (`ensureMigrated`) remains in force after an
+   investigation concluded `xdg-effect`'s `SqliteState.Live` would
+   reintroduce the SQLITE_BUSY race. See Phase 6 in
+   [testing-and-phases.md](./testing-and-phases.md).
+
+[issue-39]: https://github.com/spencerbeggs/vitest-agent-reporter/issues/39
 
 The package complements Vitest's built-in `agent` reporter. The built-in
 handles console noise suppression in-process; this package adds persistence
@@ -113,20 +151,49 @@ coverage trend tracking, monorepo-aware data storage, GFM output for CI,
 scoped coverage for partial test runs, MCP tool access to all test data,
 and agent tooling for test discovery via the CLI.
 
-The repository is structured as a pnpm monorepo with workspaces: `package`
-(the publishable npm package) and `examples/*` (test projects for
-integration testing). The `plugin/` directory contains the Claude Code
-plugin (NOT a pnpm workspace). The root `vitest.config.ts` imports from
-`./package/src/plugin.js`.
+The repository is a pnpm monorepo with four publishable workspaces under
+`packages/` (`shared`, `reporter`, `cli`, `mcp`) plus `examples/*` for
+integration coverage. The `plugin/` directory contains the Claude Code
+plugin (NOT a pnpm workspace). The root `vitest.config.ts` imports the
+plugin from `./packages/reporter/src/plugin.js` and runs five named
+Vitest projects (one per package plus `example-basic`).
 
 ---
 
 ## Key Design Principles
 
+- **Four-package split with shared data layer (2.0)** -- the schema,
+  migrations, errors, services, formatters, utilities, and the new XDG
+  path-resolution stack live in `vitest-agent-reporter-shared`. The
+  reporter (`vitest-agent-reporter`), CLI
+  (`vitest-agent-reporter-cli`), and MCP server
+  (`vitest-agent-reporter-mcp`) each depend on the shared package and
+  are released in lockstep. The reporter declares the CLI and MCP
+  packages as required `peerDependencies` so the agent tooling story is
+  always installed alongside the reporter
+- **Deterministic XDG-based data path (2.0)** -- the SQLite database
+  lives at `$XDG_DATA_HOME/vitest-agent-reporter/<workspaceKey>/data.db`
+  (falling back to `~/.local/share/...`). `<workspaceKey>` is derived
+  from the root `package.json` `name` via `WorkspaceDiscovery` from
+  `workspaces-effect` and normalized via `normalizeWorkspaceKey`
+  (`@org/pkg` -> `@org__pkg`). Optional
+  `vitest-agent-reporter.config.toml` overrides via `cacheDir` (full
+  path) or `projectKey` (key segment). Programmatic
+  `reporter.cacheDir` is highest precedence. **No more
+  artifact-probing** of `node_modules/.vite/...` -- the path is a
+  function of identity, not filesystem layout. Closes
+  [issue #39](https://github.com/spencerbeggs/vitest-agent-reporter/issues/39)
+- **Fail-loud on missing workspace identity** -- if no `projectKey`
+  override is set and the root workspace has no `name` field,
+  `resolveDataPath` raises `WorkspaceRootNotFoundError` instead of
+  silently falling back to a path hash. Silent fallbacks make the DB
+  location depend on filesystem layout instead of identity (the bug
+  class 2.0 leaves behind)
 - **Effect service architecture** -- all I/O and shared logic encapsulated
   in Effect services (DataStore, DataReader, CoverageAnalyzer,
   ProjectDiscovery, EnvironmentDetector, HistoryTracker, ExecutorResolver,
-  FormatSelector, DetailResolver, OutputRenderer) with live and test layer
+  FormatSelector, DetailResolver, OutputRenderer,
+  VitestAgentReporterConfigFile) with live and test layer
   implementations for dependency injection
 - **SQLite-first persistence** -- all test data stored in a normalized
   25-table SQLite database (`data.db`) using `@effect/sql-sqlite-node` with
@@ -185,31 +252,62 @@ plugin (NOT a pnpm workspace). The root `vitest.config.ts` imports from
 - **Progressive enhancement** -- Phase 1 is a standalone reporter; Phase 2
   adds Effect services, CLI tooling, and hybrid mode; Phase 3 adds failure
   history; Phase 4 adds coverage thresholds, baselines, and trends; Phase 5
-  adds SQLite, output pipeline, MCP server, and Claude Code plugin
+  adds SQLite, output pipeline, MCP server, and Claude Code plugin;
+  Phase 6 (2.0) splits the monolith into four packages, replaces
+  artifact-probing path resolution with deterministic XDG-based
+  derivation, and rewrites the plugin's MCP loader to spawn the bin
+  through the user's package manager
 
 ---
 
 ## Architecture Diagram
 
 ```text
++-----------------------------------------------------------+
+| Package layout (4 pnpm workspaces under packages/)        |
+|                                                           |
+|   vitest-agent-reporter-shared (no internal deps)         |
+|     - schemas, migrations, errors                         |
+|     - DataStore, DataReader, output pipeline services     |
+|     - HistoryTracker, ProjectDiscovery, Logger            |
+|     - formatters, utilities                               |
+|     - XDG path stack: AppDirs, ConfigFile,                |
+|       WorkspaceDiscovery, resolveDataPath,                |
+|       PathResolutionLive, ConfigLive                      |
+|                                                           |
+|   vitest-agent-reporter      depends on shared            |
+|     - reporter.ts, plugin.ts                              |
+|     - ReporterLive, CoverageAnalyzer                      |
+|     - peerDeps: -cli + -mcp (required)                    |
+|                                                           |
+|   vitest-agent-reporter-cli  depends on shared            |
+|     - bin: vitest-agent-reporter                          |
+|     - CliLive                                             |
+|                                                           |
+|   vitest-agent-reporter-mcp  depends on shared            |
+|     - bin: vitest-agent-reporter-mcp                      |
+|     - McpLive                                             |
++-----------------------------------------------------------+
+
                         vitest run
                             |
                             v
                +-----------------------------+
                |  AgentPlugin (optional)     |
+               |  (packages/reporter)        |
                |  async configureVitest hook |
                |                             |
                |  1. EnvironmentDetector     |
                |     (std-env) -> env        |
                |  2. ExecutorResolver        |
                |     env -> executor         |
-               |  3. Resolve cacheDir/dbPath |
-               |  4. Resolve coverage thresh |
+               |  3. Resolve coverage thresh |
                |     + targets + autoUpdate  |
-               |  5. Set coverage.reporter=[]|
+               |  4. Set coverage.reporter=[]|
                |     (suppress text table)  |
-               |  6. Push AgentReporter     |
-               |     w/ projectFilter       |
+               |  5. Push AgentReporter     |
+               |     w/ projectFilter +     |
+               |     optional cacheDir      |
                +-----------+-----------------+
                            |
                            v
@@ -217,15 +315,22 @@ plugin (NOT a pnpm workspace). The root `vitest.config.ts` imports from
      |              AgentReporter                  |
      |     (Effect.runPromise + ReporterLive)      |
      |                                             |
-     |  onInit(vitest)                             |
+     |  async onInit(vitest)                       |
      |    +-- store vitest instance                |
-     |    +-- captureSettings + captureEnvVars     |
-     |    +-- DataStore.writeSettings()            |
+     |    +-- await ensureDbPath()                 |
+     |        +-- if options.cacheDir set:         |
+     |        |   mkdirSync + dbPath = it/data.db  |
+     |        +-- else: resolveDataPath(cwd)       |
+     |            via PathResolutionLive           |
+     |            -> $XDG_DATA_HOME/               |
+     |               vitest-agent-reporter/        |
+     |               <workspaceKey>/data.db        |
      |                                             |
      |  onCoverage(coverage)                       |
      |    +-- stash istanbul CoverageMap           |
      |                                             |
-     |  onTestRunEnd(modules, errors, reason)      |
+     |  async onTestRunEnd(modules, errors, reason)|
+     |    +-- await ensureDbPath() (defensive)     |
      |    +-- await ensureMigrated(dbPath, ...)    |
      |        (process-level migration coord;      |
      |         globalThis-keyed promise cache)     |
@@ -248,23 +353,23 @@ plugin (NOT a pnpm workspace). The root `vitest.config.ts` imports from
                |              |              |
                v              v              v
           +---------+  +--------------+  +----------+
-          | stdout  |  |  cacheDir/   |  | GITHUB_  |
-          | (md/    |  |  data.db     |  | STEP_    |
-          |  json)  |  |  (SQLite)    |  | SUMMARY  |
+          | stdout  |  | $XDG_DATA_   |  | GITHUB_  |
+          | (md/    |  | HOME/.../    |  | STEP_    |
+          |  json)  |  | <wsKey>/     |  | SUMMARY  |
+          |         |  | data.db      |  |          |
           +---------+  +--------------+  +----------+
                               ^
                               |
      +--------------------------------------------+
-     |           CLI Bin (on-demand)               |
-     |     (NodeRuntime.runMain + CliLive)         |
+     |           CLI Bin (vitest-agent-reporter)   |
+     |   (packages/cli, NodeRuntime.runMain)       |
      |                                             |
-     |  status  -- per-project state from DB       |
-     |  overview -- test landscape + file mapping  |
-     |  coverage -- gap analysis from cached data  |
-     |  history -- flaky/persistent failure trends |
-     |  trends  -- coverage trend visualization    |
-     |  cache   -- path / clean cache management   |
-     |  doctor  -- cache health diagnostic         |
+     |  resolveDataPath(cwd) via                   |
+     |    PathResolutionLive                       |
+     |  -> CliLive(dbPath, logLevel, logFile)      |
+     |                                             |
+     |  status / overview / coverage / history /   |
+     |    trends / cache / doctor                  |
      |  --format flag on all commands              |
      |                                             |
      |  Uses: DataReader, ProjectDiscovery,        |
@@ -273,8 +378,17 @@ plugin (NOT a pnpm workspace). The root `vitest.config.ts` imports from
                               ^
                               |
      +--------------------------------------------+
-     |           MCP Server (stdio)                |
-     |  (ManagedRuntime + McpLive + tRPC router)   |
+     |         MCP Server (stdio)                  |
+     |     (vitest-agent-reporter-mcp bin,         |
+     |      ManagedRuntime + McpLive + tRPC)       |
+     |                                             |
+     |  resolveProjectDir() ::=                    |
+     |    VITEST_AGENT_REPORTER_PROJECT_DIR        |
+     |    | CLAUDE_PROJECT_DIR                     |
+     |    | process.cwd()                          |
+     |  resolveDataPath(projectDir) via            |
+     |    PathResolutionLive                       |
+     |  -> ManagedRuntime.make(McpLive(dbPath))    |
      |                                             |
      |  24 tools via @modelcontextprotocol/sdk:    |
      |  help, test_status, test_overview,          |
@@ -293,17 +407,44 @@ plugin (NOT a pnpm workspace). The root `vitest.config.ts` imports from
      +--------------------------------------------+
      |     Claude Code Plugin (file-based)         |
      |     plugin/.claude-plugin/plugin.json       |
-     |     (inline mcpServers config)              |
+     |     (inline mcpServers config invokes       |
+     |      ${CLAUDE_PLUGIN_ROOT}/bin/             |
+     |       mcp-server.mjs via "node")            |
      |                                             |
-     |  bin/mcp-server.mjs -> Node loader walks    |
-     |    up to user's node_modules and dynamic    |
-     |    imports the package's ./mcp export       |
+     |  bin/mcp-server.mjs (zero-deps Node):       |
+     |    1. projectDir = CLAUDE_PROJECT_DIR       |
+     |       || process.cwd()                      |
+     |    2. detect PM (packageManager field       |
+     |       or lockfile: pnpm-lock, bun.lock,     |
+     |       yarn.lock, package-lock.json)         |
+     |    3. spawn `<pm exec>                      |
+     |       vitest-agent-reporter-mcp` with       |
+     |       stdio:'inherit', cwd: projectDir,     |
+     |       env: VITEST_AGENT_REPORTER_           |
+     |            PROJECT_DIR=projectDir           |
+     |    4. forward exit code; on non-zero,      |
+     |       print PM-specific install hint        |
+     |    5. re-raise termination signals          |
+     |                                             |
      |  hooks/session-start.sh -> context inject   |
      |  hooks/post-test-run.sh -> test detection   |
      |  skills: TDD, debugging, configuration,     |
      |          coverage-improvement                |
      |  commands: setup, configure                 |
      +--------------------------------------------+
+
+XDG data path resolution (resolveDataPath, packages/shared)
+-----------------------------------------------------------
+Precedence (highest first):
+  1. options.cacheDir (programmatic, e.g. plugin's reporter.cacheDir)
+     -> mkdirSync + <cacheDir>/data.db
+  2. cacheDir from vitest-agent-reporter.config.toml
+     -> <cacheDir>/data.db
+  3. projectKey from config TOML
+     -> AppDirs.ensureData / <normalized projectKey> / data.db
+  4. Workspace name via WorkspaceDiscovery
+     -> AppDirs.ensureData / <normalized name> / data.db
+  5. fail with WorkspaceRootNotFoundError
 ```
 
 ---
@@ -312,32 +453,38 @@ plugin (NOT a pnpm workspace). The root `vitest.config.ts` imports from
 
 | # | Component | Location | Status |
 | - | --------- | -------- | ------ |
-| 1 | AgentReporter | `package/src/reporter.ts` | COMPLETE |
-| 2 | AgentPlugin | `package/src/plugin.ts` | COMPLETE |
-| 3 | Effect Services (10) | `package/src/services/` | COMPLETE |
-| 4 | Effect Layers | `package/src/layers/` | COMPLETE |
-| 5 | Error Types | `package/src/errors/` | COMPLETE |
-| 6 | Schemas | `package/src/schemas/` | COMPLETE |
-| 7 | CLI Bin | `package/src/cli/` | COMPLETE |
-| 8 | Formatters | `package/src/formatters/` | COMPLETE |
-| 9 | Report Builder | `package/src/utils/build-report.ts` | COMPLETE |
-| 10 | PM Detection | `package/src/utils/detect-pm.ts` | COMPLETE |
-| 11 | Utilities | `package/src/utils/` | COMPLETE |
-| 12 | Failure History | `package/src/services/HistoryTracker.ts`, `package/src/schemas/History.ts` | COMPLETE |
-| 13 | Coverage Thresholds | `package/src/schemas/Thresholds.ts`, `package/src/utils/resolve-thresholds.ts` | COMPLETE |
-| 14 | Coverage Baselines | `package/src/schemas/Baselines.ts` | COMPLETE |
-| 15 | Coverage Trends | `package/src/schemas/Trends.ts`, `package/src/utils/compute-trend.ts` | COMPLETE |
-| 16 | CLI Diagnostics | `package/src/cli/commands/doctor.ts`, `package/src/cli/commands/cache.ts`, `package/src/cli/commands/trends.ts` | COMPLETE |
-| 17 | DataStore | `package/src/services/DataStore.ts`, `package/src/layers/DataStoreLive.ts` | COMPLETE |
-| 18 | DataReader | `package/src/services/DataReader.ts`, `package/src/layers/DataReaderLive.ts` | COMPLETE |
-| 19 | SQLite Migration | `package/src/migrations/0001_initial.ts` | COMPLETE |
-| 20 | SQL Helpers | `package/src/sql/rows.ts`, `package/src/sql/assemblers.ts` | COMPLETE |
-| 21 | Output Pipeline | `package/src/layers/OutputPipelineLive.ts` (5 services) | COMPLETE |
-| 22 | MCP Server | `package/src/mcp/` | COMPLETE |
-| 23 | tRPC Router | `package/src/mcp/router.ts` | COMPLETE |
-| 24 | Claude Code Plugin | `plugin/` | COMPLETE |
-| 25 | LoggerLive | `package/src/layers/LoggerLive.ts` | COMPLETE |
-| 26 | ensureMigrated | `package/src/utils/ensure-migrated.ts` | COMPLETE |
+| 1 | AgentReporter | `packages/reporter/src/reporter.ts` | COMPLETE |
+| 2 | AgentPlugin | `packages/reporter/src/plugin.ts` | COMPLETE |
+| 3 | Effect Services (11) | `packages/shared/src/services/` (10) + `packages/reporter/src/services/CoverageAnalyzer.ts` | COMPLETE |
+| 4 | Effect Layers | `packages/shared/src/layers/` + `packages/reporter/src/layers/` (`ReporterLive`, `CoverageAnalyzerLive`) + `packages/cli/src/layers/CliLive.ts` + `packages/mcp/src/layers/McpLive.ts` | COMPLETE |
+| 5 | Error Types | `packages/shared/src/errors/` (DataStoreError, DiscoveryError, **PathResolutionError**) | COMPLETE |
+| 6 | Schemas | `packages/shared/src/schemas/` (incl. **`Config.ts`** for the TOML config file) | COMPLETE |
+| 7 | CLI Bin | `packages/cli/` (own package) | COMPLETE |
+| 8 | Formatters | `packages/shared/src/formatters/` | COMPLETE |
+| 9 | Report Builder | `packages/shared/src/utils/build-report.ts` | COMPLETE |
+| 10 | PM Detection | `packages/shared/src/utils/detect-pm.ts` (plus zero-deps inline copy in `plugin/bin/mcp-server.mjs`) | COMPLETE |
+| 11 | Utilities | `packages/shared/src/utils/` (most) + `packages/reporter/src/utils/` (`capture-env.ts`, `capture-settings.ts`, `resolve-thresholds.ts`, `strip-console-reporters.ts`) | COMPLETE |
+| 12 | Failure History | `packages/shared/src/services/HistoryTracker.ts`, `packages/shared/src/schemas/History.ts` | COMPLETE |
+| 13 | Coverage Thresholds | `packages/shared/src/schemas/Thresholds.ts`, `packages/reporter/src/utils/resolve-thresholds.ts` | COMPLETE |
+| 14 | Coverage Baselines | `packages/shared/src/schemas/Baselines.ts` | COMPLETE |
+| 15 | Coverage Trends | `packages/shared/src/schemas/Trends.ts`, `packages/shared/src/utils/compute-trend.ts` | COMPLETE |
+| 16 | CLI Diagnostics | `packages/cli/src/commands/doctor.ts`, `packages/cli/src/commands/cache.ts`, `packages/cli/src/commands/trends.ts` | COMPLETE |
+| 17 | DataStore | `packages/shared/src/services/DataStore.ts`, `packages/shared/src/layers/DataStoreLive.ts` | COMPLETE |
+| 18 | DataReader | `packages/shared/src/services/DataReader.ts`, `packages/shared/src/layers/DataReaderLive.ts` | COMPLETE |
+| 19 | SQLite Migration | `packages/shared/src/migrations/0001_initial.ts` | COMPLETE |
+| 20 | SQL Helpers | `packages/shared/src/sql/rows.ts`, `packages/shared/src/sql/assemblers.ts` | COMPLETE |
+| 21 | Output Pipeline | `packages/shared/src/layers/OutputPipelineLive.ts` (5 services) | COMPLETE |
+| 22 | MCP Server | `packages/mcp/` (own package) | COMPLETE |
+| 23 | tRPC Router | `packages/mcp/src/router.ts` | COMPLETE |
+| 24 | Claude Code Plugin | `plugin/` (loader rewritten in 2.0 -- see Component 24) | COMPLETE |
+| 25 | LoggerLive | `packages/shared/src/layers/LoggerLive.ts` | COMPLETE |
+| 26 | ensureMigrated | `packages/shared/src/utils/ensure-migrated.ts` | COMPLETE |
+| 27 | Shared package | `packages/shared/` -- the no-internal-deps base depended on by reporter, cli, and mcp | COMPLETE |
+| 28 | CLI package | `packages/cli/` -- houses the `vitest-agent-reporter` bin and `CliLive` | COMPLETE |
+| 29 | MCP package | `packages/mcp/` -- houses the `vitest-agent-reporter-mcp` bin and `McpLive` | COMPLETE |
+| 30 | XDG path resolution | `packages/shared/src/utils/resolve-data-path.ts`, `packages/shared/src/utils/resolve-workspace-key.ts`, `packages/shared/src/utils/normalize-workspace-key.ts`, `packages/shared/src/layers/PathResolutionLive.ts` | COMPLETE |
+| 31 | TOML config file | `packages/shared/src/schemas/Config.ts`, `packages/shared/src/services/Config.ts`, `packages/shared/src/layers/ConfigLive.ts` | COMPLETE |
+| 32 | PathResolutionError | `packages/shared/src/errors/PathResolutionError.ts` | COMPLETE |
 
 **Removed in Phase 5:**
 
@@ -347,8 +494,15 @@ plugin (NOT a pnpm workspace). The root `vitest.config.ts` imports from
 | CacheReader | `package/src/services/CacheReader.ts` | DataReader |
 | CacheError | `package/src/errors/CacheError.ts` | DataStoreError |
 | AgentDetection | `package/src/services/AgentDetection.ts` | EnvironmentDetector |
-| Console Formatter | `package/src/utils/format-console.ts` | `package/src/formatters/markdown.ts` |
-| GFM Formatter | `package/src/utils/format-gfm.ts` | `package/src/formatters/gfm.ts` |
+| Console Formatter | `package/src/utils/format-console.ts` | `packages/shared/src/formatters/markdown.ts` |
+| GFM Formatter | `package/src/utils/format-gfm.ts` | `packages/shared/src/formatters/gfm.ts` |
+
+**Removed in 2.0 (Phase 6):**
+
+| Component | Former Location | Replaced By |
+| --------- | --------------- | ----------- |
+| `resolveDbPath` (artifact-probing) | `package/src/cli/lib/resolve-cache-dir.ts` | `resolveDataPath` (XDG-derived) in `packages/shared/src/utils/resolve-data-path.ts` |
+| Plugin `file://` import loader | `plugin/bin/mcp-server.mjs` (walked `node_modules`, dynamic-imported `./mcp` via file URL) | PM-detect + spawn `vitest-agent-reporter-mcp` (same path, new body) |
 
 For detailed component descriptions, interfaces, and APIs:
 --> [components.md](./components.md)
@@ -384,12 +538,25 @@ For detailed component descriptions, interfaces, and APIs:
 - Working with data schemas or output format --> [data-structures.md](./data-structures.md)
 - Writing or reviewing tests --> [testing-and-phases.md](./testing-and-phases.md)
 
-**53 test files, 573 tests total.** All coverage metrics above 80%.
+**618 tests total** across 5 named Vitest projects:
 
-**Document Status:** Current -- reflects Phase 1 through Phase 5
-implementation plus post-Phase-5 refinements (multi-project support,
-structured logging, strategy rename, MCP option, coverage table
-suppression, MCP discovery tools, source map wiring) and bug/startup
-branch fixes (process-level migration coordination via
-`ensureMigrated`, derived error messages with `extractSqlReason`,
-plugin MCP loader with inline mcpServers config). All phases complete.
+| Project | Tests |
+| --- | --- |
+| `vitest-agent-reporter` | 102 |
+| `vitest-agent-reporter-shared` | 429 |
+| `vitest-agent-reporter-mcp` | 40 |
+| `vitest-agent-reporter-cli` | 39 |
+| `example-basic` | 8 |
+
+All coverage metrics above 80%.
+
+**Document Status:** Current -- reflects Phase 1 through Phase 6 (2.0
+architectural restructure on `feat/db-issues`). Phase 6 highlights:
+four-package split (`shared`/`reporter`/`cli`/`mcp`); deterministic
+XDG-based DB path via `resolveDataPath` (closes
+[issue #39][issue-39]); `vitest-agent-reporter.config.toml` overrides
+via `cacheDir`/`projectKey`; async `AgentReporter.onInit`; plugin's
+MCP loader rewritten as PM-detect + spawn (Decision 29 retired);
+investigation confirmed `xdg-effect`'s `SqliteState.Live` cannot
+replace `ensureMigrated` (Decision 28 still in force). All phases
+complete.

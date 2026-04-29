@@ -1,0 +1,72 @@
+{
+	"name": "vitest-agent-reporter-cli",
+	"version": "1.3.1",
+	"private": true,
+	"description": "On-demand CLI for vitest-agent-reporter. Reads cached test data and reports status, overview, coverage, history, trends, and cache health.",
+	"keywords": ["vitest", "agent", "cli", "tests", "coverage"],
+	"homepage": "https://github.com/spencerbeggs/vitest-agent-reporter#readme",
+	"bugs": {
+		"url": "https://github.com/spencerbeggs/vitest-agent-reporter/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/spencerbeggs/vitest-agent-reporter.git",
+		"directory": "packages/cli"
+	},
+	"license": "MIT",
+	"author": {
+		"name": "C. Spencer Beggs",
+		"email": "spencer@beggs.codes",
+		"url": "https://spencerbeg.gs"
+	},
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"bin": {
+		"vitest-agent-reporter": "./src/bin.ts"
+	},
+	"scripts": {
+		"build:dev": "rslib build --config-loader native --env-mode dev",
+		"build:inspect": "rslib inspect --config-loader native --env-mode npm --verbose",
+		"build:prod": "rslib build --config-loader native --env-mode npm",
+		"prepare": "turbo run build:dev build:prod --log-order=grouped --log-prefix=none",
+		"types:check": "tsgo --noEmit"
+	},
+	"dependencies": {
+		"@effect/cli": "catalog:silk",
+		"@effect/platform": "catalog:silk",
+		"@effect/platform-node": "catalog:silk",
+		"@effect/sql": "catalog:silk",
+		"@effect/sql-sqlite-node": "catalog:silk",
+		"effect": "catalog:silk",
+		"vitest-agent-reporter-shared": "workspace:*"
+	},
+	"devDependencies": {
+		"@savvy-web/rslib-builder": "^0.20.3",
+		"@types/node": "catalog:silk",
+		"@vitest/coverage-v8": "^4.1.5",
+		"vitest": "^4.1.5"
+	},
+	"publishConfig": {
+		"access": "public",
+		"directory": "dist/dev",
+		"linkDirectory": true,
+		"targets": [
+			{
+				"protocol": "npm",
+				"registry": "https://npm.pkg.github.com/",
+				"directory": "dist/github",
+				"access": "public",
+				"provenance": true
+			},
+			{
+				"protocol": "npm",
+				"registry": "https://registry.npmjs.org/",
+				"directory": "dist/npm",
+				"access": "public",
+				"provenance": true
+			}
+		]
+	}
+}

@@ -2,87 +2,123 @@
 /**
  * Plugin MCP server loader.
  *
- * Resolves and runs the `vitest-agent-reporter` MCP server from the user's
- * project. The package is resolved from the user's project — not bundled
- * with the plugin — because it has native dependencies (better-sqlite3)
- * that must match the user's platform/Node version.
+ * Detects the user's package manager and spawns
+ * `vitest-agent-reporter-mcp` through it. The package manager handles
+ * binary resolution (node_modules/.bin lookup, monorepo hoisting, etc.)
+ * and we just forward stdio so Claude Code talks to the MCP subprocess
+ * directly.
  *
- * The search root is `process.env.CLAUDE_PROJECT_DIR` when set, falling
- * back to `process.cwd()`. When the plugin is installed via a Claude Code
- * marketplace, the plugin lives under `~/.claude/plugins/...` and the
- * MCP server's cwd at spawn time is unrelated to the user's project, so
- * `CLAUDE_PROJECT_DIR` is the only reliable anchor for finding the user's
- * `node_modules`.
- *
- * Fails fast with a clear stderr message if the package isn't installed,
- * which is more useful than `npx` silently downloading from npm and
- * potentially exceeding Claude Code's MCP startup window.
+ * Zero runtime dependencies on purpose — this script must work without
+ * an `npm install`. It resolves the user's project from
+ * `CLAUDE_PROJECT_DIR` (falling back to `process.cwd()`), detects the
+ * package manager from a `packageManager` field or lockfile, then
+ * spawns the bin. On non-zero exit (typically a missing peer dep) it
+ * prints install instructions for the detected PM and exits with the
+ * same code.
  */
 
+import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { join } from "node:path";
 
-const PACKAGE_NAME = "vitest-agent-reporter";
+const BIN_NAME = "vitest-agent-reporter-mcp";
+
+/** @type {Record<string, { cmd: string; args: string[]; install: string }>} */
+const PM = {
+	npm: { cmd: "npx", args: ["--no-install"], install: "npm install --save-dev vitest-agent-reporter" },
+	pnpm: { cmd: "pnpm", args: ["exec"], install: "pnpm add -D vitest-agent-reporter" },
+	yarn: { cmd: "yarn", args: ["run"], install: "yarn add -D vitest-agent-reporter" },
+	bun: { cmd: "bun", args: ["x"], install: "bun add -d vitest-agent-reporter" },
+};
+
+const LOCKFILES = [
+	["pnpm-lock.yaml", "pnpm"],
+	["bun.lock", "bun"],
+	["bun.lockb", "bun"],
+	["yarn.lock", "yarn"],
+	["package-lock.json", "npm"],
+];
 
 const projectDir = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
 
-const fail = (message) => {
+/**
+ * Detect the user's package manager. Order:
+ *  1. `packageManager` field in `<projectDir>/package.json`
+ *  2. Lockfile presence in `projectDir`
+ *  3. Default to `npm`
+ */
+const detectPm = (dir) => {
+	const pkgPath = join(dir, "package.json");
+	if (existsSync(pkgPath)) {
+		try {
+			const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+			if (typeof pkg.packageManager === "string") {
+				const name = pkg.packageManager.split("@")[0];
+				if (name in PM) return name;
+			}
+		} catch {
+			// Fall through to lockfile detection.
+		}
+	}
+	for (const [lockfile, pm] of LOCKFILES) {
+		if (existsSync(join(dir, lockfile))) return pm;
+	}
+	return "npm";
+};
+
+const pmName = detectPm(projectDir);
+const pm = PM[pmName];
+
+// Forward the resolved project root so the MCP server uses the right
+// workspace root for path resolution. Claude Code does not reliably
+// propagate CLAUDE_PROJECT_DIR to MCP server subprocesses.
+const env = { ...process.env, VITEST_AGENT_REPORTER_PROJECT_DIR: projectDir };
+
+const child = spawn(pm.cmd, [...pm.args, BIN_NAME], {
+	cwd: projectDir,
+	stdio: "inherit",
+	env,
+});
+
+child.on("error", (err) => {
 	process.stderr.write(
 		[
-			"vitest-agent-reporter plugin: failed to locate the MCP server.",
+			`vitest-agent-reporter plugin: failed to invoke '${pm.cmd}'.`,
 			"",
-			`Searched from: ${projectDir}`,
-			`(source: ${process.env.CLAUDE_PROJECT_DIR ? "CLAUDE_PROJECT_DIR" : "process.cwd()"})`,
+			`Detected package manager: ${pmName}`,
+			`Project directory: ${projectDir}`,
 			"",
-			"Install vitest-agent-reporter as a project dependency:",
-			"  npm install --save-dev vitest-agent-reporter",
-			"  pnpm add -D vitest-agent-reporter",
-			"  yarn add -D vitest-agent-reporter",
-			"  bun add -d vitest-agent-reporter",
+			`Make sure '${pm.cmd}' is on your PATH.`,
+			`Install ${BIN_NAME} as a project dependency:`,
+			`  ${pm.install}`,
 			"",
-			`Details: ${message}`,
+			`Details: ${err.message}`,
 			"",
 		].join("\n"),
 	);
 	process.exit(1);
-};
+});
 
-/**
- * Walk up from `startDir` looking for `node_modules/<packageName>`. Mirrors
- * Node's module resolution algorithm so it works for hoisted monorepo
- * installs (npm/pnpm/yarn/bun).
- */
-const findPackageDir = (startDir, packageName) => {
-	let dir = startDir;
-	while (true) {
-		const candidate = join(dir, "node_modules", packageName);
-		if (existsSync(join(candidate, "package.json"))) return candidate;
-		const parent = dirname(dir);
-		if (parent === dir) return null;
-		dir = parent;
+child.on("exit", (code, signal) => {
+	if (code === 0) {
+		process.exit(0);
 	}
-};
-
-const pkgDir = findPackageDir(projectDir, PACKAGE_NAME);
-if (!pkgDir) {
-	fail(`Could not find ${PACKAGE_NAME} in any node_modules above ${projectDir}.`);
-}
-
-let mcpFileUrl;
-try {
-	const pkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8"));
-	const mcpExport = pkg.exports?.["./mcp"];
-	const mcpRel = typeof mcpExport === "string" ? mcpExport : (mcpExport?.import ?? mcpExport?.default ?? "./mcp.js");
-	mcpFileUrl = pathToFileURL(join(pkgDir, mcpRel)).href;
-} catch (err) {
-	fail(`Could not read MCP entry from ${pkgDir}/package.json: ${err instanceof Error ? err.message : String(err)}`);
-}
-
-// Forward the resolved project root to the MCP server. Claude Code may not
-// reliably propagate CLAUDE_PROJECT_DIR to MCP server subprocesses (only
-// CLAUDE_PLUGIN_ROOT and CLAUDE_PLUGIN_DATA are documented to be exported),
-// so we set our own variable that the server reads with priority.
-process.env.VITEST_AGENT_REPORTER_PROJECT_DIR = projectDir;
-
-await import(mcpFileUrl);
+	if (signal) {
+		// Re-raise the signal on this process so the parent sees the right termination cause.
+		process.kill(process.pid, signal);
+		return;
+	}
+	process.stderr.write(
+		[
+			`vitest-agent-reporter plugin: ${pm.cmd} ${pm.args.join(" ")} ${BIN_NAME} exited with code ${code}.`,
+			"",
+			`Detected package manager: ${pmName}`,
+			`Project directory: ${projectDir}`,
+			"",
+			`If '${BIN_NAME}' is not installed, add it to your project:`,
+			`  ${pm.install}`,
+			"",
+		].join("\n"),
+	);
+	process.exit(code ?? 1);
+});

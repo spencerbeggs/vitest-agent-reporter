@@ -39,7 +39,7 @@ All options are optional. Defaults:
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `cacheDir` | `".vitest-agent-reporter"` | Directory for the SQLite database (relative to cwd) |
+| `cacheDir` | XDG-derived (see [Configuration > Cache Directory Resolution](configuration.md#cache-directory-resolution)) | Override the directory holding `data.db`. When unset, the path is derived from `$XDG_DATA_HOME` and the root workspace name. |
 | `consoleOutput` | `"failures"` | `"failures"`, `"full"`, or `"silent"` |
 | `omitPassingTests` | `true` | Exclude passing tests from reports |
 | `coverageThresholds` | `{}` | Vitest-native threshold format (per-metric, per-glob) |
@@ -56,8 +56,13 @@ All options are optional. Defaults:
 | `mcp` | `false` | Show MCP tool hints in "Next steps" output |
 | `projectFilter` | -- | Glob pattern to filter which projects are included in output |
 
-Note: when using the plugin, `cacheDir` defaults to Vite's cache directory
-instead of `".vitest-agent-reporter"`. The reporter standalone uses a simpler default.
+Note: both `AgentPlugin` and `AgentReporter` resolve `cacheDir` the
+same way in 2.0 — by deriving an XDG path from the root workspace
+`name`. Setting `cacheDir` explicitly skips the resolver and uses the
+literal path. See
+[Configuration > Cache Directory Resolution](configuration.md#cache-directory-resolution)
+for the full priority order, including the optional
+`vitest-agent-reporter.config.toml` overrides.
 
 ## Lifecycle Hooks
 

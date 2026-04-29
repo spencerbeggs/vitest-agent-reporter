@@ -62,7 +62,8 @@ type AgentReportType = typeof AgentReport.Type;
 ## Programmatic Database Access
 
 For consumers who want to read data via Effect services, the package
-exports `DataReader` and `DataReaderLive`:
+re-exports `DataReader` / `DataReaderLive` (and `DataStore` /
+`DataStoreLive`) from `vitest-agent-reporter-shared`:
 
 ```typescript
 import {
@@ -71,7 +72,17 @@ import {
   DataStoreError,
 } from "vitest-agent-reporter";
 import { Effect, Layer } from "effect";
-import { NodeFileSystem } from "@effect/platform-node";
+import { SqliteClient } from "@effect/sql-sqlite-node";
+import { NodeContext } from "@effect/platform-node";
+
+const SqliteLayer = SqliteClient.layer({
+  filename: "/path/to/data.db",
+});
+
+const live = DataReaderLive.pipe(
+  Layer.provide(SqliteLayer),
+  Layer.provideMerge(NodeContext.layer),
+);
 
 const program = Effect.gen(function* () {
   const reader = yield* DataReader;
@@ -79,21 +90,19 @@ const program = Effect.gen(function* () {
   // ... process project run summaries
 });
 
-const live = DataReaderLive.pipe(
-  Layer.provideMerge(NodeFileSystem.layer),
-);
-
 await Effect.runPromise(Effect.provide(program, live));
 ```
 
-For write operations, use `DataStore` and `DataStoreLive`:
+`DataReaderLive` and `DataStoreLive` require `SqlClient` (from
+`@effect/sql-sqlite-node`). The reporter, CLI, and MCP server each
+build a private composition layer that adds the SQLite client, the
+migrator, and `NodeContext`; programmatic consumers need to do the
+same. To resolve the right database file, use `resolveDataPath` from
+`vitest-agent-reporter-shared` or read it from
+`vitest-agent-reporter cache path`.
 
-```typescript
-import {
-  DataStore,
-  DataStoreLive,
-} from "vitest-agent-reporter";
-```
+For write operations, swap `DataReader`/`DataReaderLive` for
+`DataStore`/`DataStoreLive` (same `SqlClient` requirement).
 
 ## Output Pipeline
 
