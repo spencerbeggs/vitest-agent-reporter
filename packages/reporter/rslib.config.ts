@@ -1,7 +1,16 @@
 import { NodeLibraryBuilder } from "@savvy-web/rslib-builder";
 
 export default NodeLibraryBuilder.create({
-	externals: ["vitest", "effect", "@effect/cli", "@effect/platform", "@effect/platform-node", "std-env"],
+	externals: [
+		"effect",
+		"@effect/platform",
+		"@effect/platform-node",
+		"@effect/sql",
+		"@effect/sql-sqlite-node",
+		"vitest",
+		"vitest/node",
+		"vitest-agent-reporter-shared",
+	],
 	apiModel: {
 		suppressWarnings: [{ messageId: "ae-forgotten-export", pattern: "_base" }],
 	},

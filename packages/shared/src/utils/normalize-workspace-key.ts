@@ -9,7 +9,11 @@
  * Rules (applied in order):
  *
  * 1. Replace `/` with `__` so scoped names like `@org/pkg` collapse to
- *    `@org__pkg` rather than introducing a subdirectory boundary.
+ *    `@org__pkg` rather than introducing a subdirectory boundary. Scoped
+ *    npm names contain at most one `/` (between scope and name), and
+ *    leading-`@` requires the scope/name form, so `@org__pkg` is not a
+ *    valid unscoped npm name -- the `__` token is unambiguous in
+ *    practice.
  * 2. Replace any character outside `[A-Za-z0-9._@-]` with `_`. This catches
  *    Windows-reserved characters (`\`, `:`, `*`, `?`, `"`, `<`, `>`, `|`),
  *    control characters, whitespace, and anything else that varies in
