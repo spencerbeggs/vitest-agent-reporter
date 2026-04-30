@@ -140,6 +140,26 @@ export interface NoteInput {
 	readonly pinned?: boolean;
 }
 
+export interface SessionInput {
+	readonly cc_session_id: string;
+	readonly project: string;
+	readonly sub_project?: string;
+	readonly cwd: string;
+	readonly agent_kind: "main" | "subagent";
+	readonly agent_type?: string;
+	readonly parent_session_id?: number;
+	readonly triage_was_non_empty?: boolean;
+	readonly started_at: string;
+}
+
+export interface TurnInput {
+	readonly session_id: number;
+	readonly turn_no: number;
+	readonly type: "user_prompt" | "tool_call" | "tool_result" | "file_edit" | "hook_fire" | "note" | "hypothesis";
+	readonly payload: string; // pre-stringified JSON, validated by record CLI
+	readonly occurred_at: string;
+}
+
 export class DataStore extends Context.Tag("vitest-agent-reporter/DataStore")<
 	DataStore,
 	{
@@ -194,5 +214,7 @@ export class DataStore extends Context.Tag("vitest-agent-reporter/DataStore")<
 		readonly writeNote: (note: NoteInput) => Effect.Effect<number, DataStoreError>;
 		readonly updateNote: (id: number, fields: Partial<NoteInput>) => Effect.Effect<void, DataStoreError>;
 		readonly deleteNote: (id: number) => Effect.Effect<void, DataStoreError>;
+		readonly writeSession: (input: SessionInput) => Effect.Effect<number, DataStoreError>;
+		readonly writeTurn: (input: TurnInput) => Effect.Effect<number, DataStoreError>;
 	}
 >() {}

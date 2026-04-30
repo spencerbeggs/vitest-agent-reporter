@@ -7,11 +7,13 @@ import type {
 	FileCoverageInput,
 	ModuleInput,
 	NoteInput,
+	SessionInput,
 	SettingsInput,
 	SuiteInput,
 	TestCaseInput,
 	TestErrorInput,
 	TestRunInput,
+	TurnInput,
 } from "../services/DataStore.js";
 import { DataStore } from "../services/DataStore.js";
 
@@ -371,6 +373,34 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "notes", reason: extractSqlReason(e) })),
 			);
 
+		const writeSession = (input: SessionInput): Effect.Effect<number, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("writeSession").pipe(Effect.annotateLogs({ cc_session_id: input.cc_session_id }));
+				yield* sql`INSERT INTO sessions (cc_session_id, project, sub_project, cwd, agent_kind, agent_type, parent_session_id, triage_was_non_empty, started_at) VALUES (${input.cc_session_id}, ${input.project}, ${input.sub_project ?? null}, ${input.cwd}, ${input.agent_kind}, ${input.agent_type ?? null}, ${input.parent_session_id ?? null}, ${boolToInt(input.triage_was_non_empty) ?? 0}, ${input.started_at})`;
+				const rows = yield* sql<{ id: number }>`SELECT id FROM sessions WHERE cc_session_id = ${input.cc_session_id}`;
+				return rows[0].id;
+			}).pipe(
+				Effect.annotateLogs("service", "DataStore"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "sessions", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const writeTurn = (input: TurnInput): Effect.Effect<number, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("writeTurn").pipe(
+					Effect.annotateLogs({ session_id: input.session_id, turn_no: input.turn_no, type: input.type }),
+				);
+				yield* sql`INSERT INTO turns (session_id, turn_no, type, payload, occurred_at) VALUES (${input.session_id}, ${input.turn_no}, ${input.type}, ${input.payload}, ${input.occurred_at})`;
+				const rows = yield* sql<{
+					id: number;
+				}>`SELECT id FROM turns WHERE session_id = ${input.session_id} AND turn_no = ${input.turn_no}`;
+				return rows[0].id;
+			}).pipe(
+				Effect.annotateLogs("service", "DataStore"),
+				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "turns", reason: extractSqlReason(e) })),
+			);
+
 		return {
 			ensureFile,
 			writeSettings,
@@ -387,6 +417,8 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 			writeNote,
 			updateNote,
 			deleteNote,
+			writeSession,
+			writeTurn,
 		};
 	}),
 );

@@ -216,3 +216,160 @@ export const SourceTestMapRow = Schema.Struct({
 	test_module_id: Schema.Number,
 	mapping_type: Schema.String,
 });
+
+// Phase 6 / 2.0 schema additions
+
+export const SessionRow = Schema.Struct({
+	id: Schema.Number,
+	cc_session_id: Schema.String,
+	project: Schema.String,
+	sub_project: Schema.NullOr(Schema.String),
+	cwd: Schema.String,
+	agent_kind: Schema.String,
+	agent_type: Schema.NullOr(Schema.String),
+	parent_session_id: Schema.NullOr(Schema.Number),
+	triage_was_non_empty: Schema.Number,
+	started_at: Schema.String,
+	ended_at: Schema.NullOr(Schema.String),
+	end_reason: Schema.NullOr(Schema.String),
+});
+
+export const TurnRow = Schema.Struct({
+	id: Schema.Number,
+	session_id: Schema.Number,
+	turn_no: Schema.Number,
+	type: Schema.String,
+	payload: Schema.String,
+	occurred_at: Schema.String,
+});
+
+export const ToolInvocationRow = Schema.Struct({
+	id: Schema.Number,
+	turn_id: Schema.Number,
+	tool_name: Schema.String,
+	params_hash: Schema.NullOr(Schema.String),
+	result_summary: Schema.NullOr(Schema.String),
+	duration_ms: Schema.NullOr(Schema.Number),
+	success: Schema.Number,
+});
+
+export const FileEditRow = Schema.Struct({
+	id: Schema.Number,
+	turn_id: Schema.Number,
+	file_id: Schema.Number,
+	edit_kind: Schema.String,
+	lines_added: Schema.NullOr(Schema.Number),
+	lines_removed: Schema.NullOr(Schema.Number),
+	diff: Schema.NullOr(Schema.String),
+});
+
+export const HypothesisRow = Schema.Struct({
+	id: Schema.Number,
+	session_id: Schema.Number,
+	created_turn_id: Schema.NullOr(Schema.Number),
+	content: Schema.String,
+	cited_test_error_id: Schema.NullOr(Schema.Number),
+	cited_stack_frame_id: Schema.NullOr(Schema.Number),
+	validated_turn_id: Schema.NullOr(Schema.Number),
+	validated_at: Schema.NullOr(Schema.String),
+	validation_outcome: Schema.NullOr(Schema.String),
+});
+
+export const CommitRow = Schema.Struct({
+	id: Schema.Number,
+	sha: Schema.String,
+	parent_sha: Schema.NullOr(Schema.String),
+	message: Schema.NullOr(Schema.String),
+	author: Schema.NullOr(Schema.String),
+	committed_at: Schema.NullOr(Schema.String),
+	branch: Schema.NullOr(Schema.String),
+});
+
+export const RunChangedFileRow = Schema.Struct({
+	run_id: Schema.Number,
+	file_id: Schema.Number,
+	change_kind: Schema.String,
+	commit_sha: Schema.NullOr(Schema.String),
+});
+
+export const RunTriggerRow = Schema.Struct({
+	run_id: Schema.Number,
+	trigger: Schema.String,
+	invocation_method: Schema.NullOr(Schema.String),
+	agent_session_id: Schema.NullOr(Schema.Number),
+	watch_trigger_files: Schema.NullOr(Schema.String),
+});
+
+export const BuildArtifactRow = Schema.Struct({
+	id: Schema.Number,
+	run_id: Schema.NullOr(Schema.Number),
+	tool_kind: Schema.String,
+	exit_code: Schema.Number,
+	output: Schema.NullOr(Schema.String),
+	duration_ms: Schema.NullOr(Schema.Number),
+	captured_at: Schema.String,
+});
+
+export const TddSessionRow = Schema.Struct({
+	id: Schema.Number,
+	session_id: Schema.Number,
+	goal: Schema.String,
+	started_at: Schema.String,
+	ended_at: Schema.NullOr(Schema.String),
+	outcome: Schema.NullOr(Schema.String),
+	parent_tdd_session_id: Schema.NullOr(Schema.Number),
+	summary_note_id: Schema.NullOr(Schema.Number),
+});
+
+export const TddSessionBehaviorRow = Schema.Struct({
+	id: Schema.Number,
+	parent_tdd_session_id: Schema.Number,
+	ordinal: Schema.Number,
+	behavior: Schema.String,
+	suggested_test_name: Schema.String,
+	depends_on_behavior_ids: Schema.NullOr(Schema.String),
+	status: Schema.String,
+	child_tdd_session_id: Schema.NullOr(Schema.Number),
+});
+
+export const TddPhaseRow = Schema.Struct({
+	id: Schema.Number,
+	tdd_session_id: Schema.Number,
+	behavior_id: Schema.NullOr(Schema.Number),
+	phase: Schema.String,
+	started_at: Schema.String,
+	ended_at: Schema.NullOr(Schema.String),
+	transition_reason: Schema.NullOr(Schema.String),
+	parent_phase_id: Schema.NullOr(Schema.Number),
+});
+
+export const TddArtifactRow = Schema.Struct({
+	id: Schema.Number,
+	phase_id: Schema.Number,
+	artifact_kind: Schema.String,
+	file_id: Schema.NullOr(Schema.Number),
+	test_case_id: Schema.NullOr(Schema.Number),
+	test_run_id: Schema.NullOr(Schema.Number),
+	test_first_failure_run_id: Schema.NullOr(Schema.Number),
+	diff_excerpt: Schema.NullOr(Schema.String),
+	recorded_at: Schema.String,
+});
+
+export const FailureSignatureRow = Schema.Struct({
+	signature_hash: Schema.String,
+	first_seen_run_id: Schema.NullOr(Schema.Number),
+	first_seen_at: Schema.String,
+	occurrence_count: Schema.Number,
+});
+
+export const HookExecutionRow = Schema.Struct({
+	id: Schema.Number,
+	run_id: Schema.Number,
+	test_module_id: Schema.NullOr(Schema.Number),
+	test_suite_id: Schema.NullOr(Schema.Number),
+	test_case_id: Schema.NullOr(Schema.Number),
+	hook_kind: Schema.String,
+	passed: Schema.Number,
+	duration_ms: Schema.NullOr(Schema.Number),
+	error_id: Schema.NullOr(Schema.Number),
+});

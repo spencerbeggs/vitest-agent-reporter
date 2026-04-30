@@ -107,7 +107,7 @@ TypeScript and serializable to/from JSON files on disk.
 `z.infer<>` in `types.ts`, codecs via `z.codec()`.
 
 **Phase 2 approach (current):** Effect Schema definitions split across
-`package/src/schemas/` directory. TypeScript types derived via
+`packages/shared/src/schemas/` directory. TypeScript types derived via
 `typeof Schema.Type`. JSON encode/decode via `Schema.decodeUnknown` /
 `Schema.encodeUnknown`. Schemas are exported from the public API so
 consumers can validate report files.
@@ -176,13 +176,13 @@ filesystem discovery (globbing for test files, reading source files) that
 would slow down every test run. On-demand generation is more appropriate
 for discovery data that changes infrequently.
 
-### Decision 9: Hybrid Console Strategy (Phase 2, renamed post-Phase-5)
+### Decision 9: Hybrid Console Strategy
 
 **Context:** Vitest 4.1 added a built-in `agent` reporter. Our plugin
 originally stripped all console reporters and took over output entirely.
 
 **Chosen approach:** New `strategy` option (originally `consoleStrategy`,
-renamed post-Phase-5 -- see Decision 27):
+see Decision 27 for the rename):
 
 - `"complement"` (default) -- layers on top of Vitest's built-in agent
   reporter. Does not strip reporters. Writes to database only.
@@ -207,6 +207,12 @@ is simpler than a separate reporter class. In complement mode, GFM is
 left to Vitest's built-in reporter.
 
 ### Decision 11: Cache Directory Resolution
+
+> **Superseded by Decision 31 in 2.0.** The 1.x three-priority
+> resolution described below -- including the
+> `vite.cacheDir + "/vitest-agent-reporter"` fallback -- was replaced
+> by deterministic XDG-based resolution. See Decision 31 for the
+> current behavior.
 
 **Context:** The cache directory needs to work in multiple contexts:
 standalone reporter, plugin with Vite, CLI reading cached data, MCP
@@ -312,7 +318,7 @@ of run health.
   CLI hints
 
 **Phase 5 update:** Tiered output is now implemented in the markdown
-formatter (`package/src/formatters/markdown.ts`) and controlled by the
+formatter (`packages/shared/src/formatters/markdown.ts`) and controlled by the
 DetailResolver service, which maps `(executor, runHealth)` to a
 `DetailLevel` enum.
 
@@ -460,7 +466,7 @@ throughout the data layer.
 "all sub-projects of my-app" or "all unit test results across projects"
 without string parsing at query time.
 
-### Decision 24: Effect-Based Structured Logging (post-Phase-5)
+### Decision 24: Effect-Based Structured Logging
 
 **Context:** The previous `debug: boolean` option was too coarse and
 produced unstructured output. Debugging data layer issues required
@@ -478,7 +484,7 @@ Case-insensitive level names via `resolveLogLevel` helper.
 NDJSON is parseable by log aggregation tools. The env var fallback
 enables logging without config changes (useful for CI debugging).
 
-### Decision 25: Per-Project Reporter Instances (post-Phase-5)
+### Decision 25: Per-Project Reporter Instances
 
 **Context:** In multi-project Vitest configs, a single reporter
 instance receives all test modules from all projects. This caused
@@ -495,7 +501,7 @@ each project its own reporter instance. Filtering at the reporter
 level is simpler than coordinating between instances. Alphabetical
 coverage dedup is deterministic and requires no shared state.
 
-### Decision 26: Native Coverage Table Suppression (post-Phase-5)
+### Decision 26: Native Coverage Table Suppression
 
 **Context:** Vitest prints a large text coverage table to the console
 by default. This duplicates the reporter's own compact coverage output
@@ -509,7 +515,7 @@ Our reporter produces its own compact coverage gaps section.
 cleanest way to suppress the table without affecting coverage data
 collection. The table is redundant with our output.
 
-### Decision 27: `consoleStrategy` Renamed to `strategy` (post-Phase-5)
+### Decision 27: `consoleStrategy` Renamed to `strategy`
 
 **Context:** The `consoleStrategy` option name was verbose and the
 `console` prefix was redundant given the plugin context.
@@ -521,7 +527,7 @@ Same values (`"own" | "complement"`, default `"complement"`).
 overall strategy for how the plugin interacts with Vitest's reporter
 chain, not just console behavior.
 
-### Decision 28: Process-Level Migration Coordination via globalThis Cache (bug/startup branch)
+### Decision 28: Process-Level Migration Coordination via globalThis Cache
 
 **Context:** In multi-project Vitest configurations sharing a single
 `data.db`, each `AgentReporter` instance ran SQLite migrations through
@@ -530,7 +536,7 @@ connections would both start deferred transactions and then attempt to
 upgrade to write, producing `SQLITE_BUSY` (database is locked). SQLite's
 busy handler is not invoked for write-write upgrade conflicts on
 deferred transactions, so better-sqlite3's 5s `busy_timeout` did not
-help. This was a real bug reproducible on the bug/startup branch.
+help.
 
 **Options considered:**
 
@@ -563,7 +569,7 @@ help. This was a real bug reproducible on the bug/startup branch.
      should live at the call site
 
 **Implementation:** New utility
-`package/src/utils/ensure-migrated.ts` exports `ensureMigrated(dbPath,
+`packages/shared/src/utils/ensure-migrated.ts` exports `ensureMigrated(dbPath,
 logLevel?, logFile?)`. The promise cache lives at
 `Symbol.for("vitest-agent-reporter/migration-promises")` on
 `globalThis`. `AgentReporter.onTestRunEnd` awaits `ensureMigrated`
@@ -572,61 +578,14 @@ before the main `Effect.runPromise`; on rejection, it prints
 referenced from a new test file with a `_resetMigrationCacheForTesting`
 internal helper.
 
-### Decision 29: Plugin MCP Server Loader (bug/startup branch) — RETIRED in 2.0
+### Decision 29: Plugin MCP Server Loader (RETIRED)
 
-> **Retired in 2.0 (Phase 6).** Superseded by Decision 30 below. The
-> `file://` dynamic-import + `node_modules` walk described here is
-> gone. The new loader detects the user's package manager and spawns
-> `vitest-agent-reporter-mcp` (now its own package with its own bin)
-> through that PM. The decision is preserved in this document for
-> historical context — anyone reading the bug/startup branch git
-> history will encounter the old loader.
-
-**Context:** The Phase 5d plugin previously registered the MCP server
-via a separate `.mcp.json` file with `npx vitest-agent-reporter-mcp`.
-Two problems: (a) on first run, `npx` could fall back to downloading
-the package from the registry and exceed Claude Code's MCP startup
-window, and (b) Node's strict-exports CJS rejection blocked dynamic
-loading of our published `./mcp` subpath because the package only
-declares an `import` condition for it.
-
-**Chosen approach:**
-
-- Inline the `mcpServers` configuration into
-  `plugin/.claude-plugin/plugin.json` (per Claude Code's plugin
-  convention)
-- Ship a small Node loader at `plugin/bin/mcp-server.mjs` invoked as
-  `command: "node"` with arg
-  `"${CLAUDE_PLUGIN_ROOT}/bin/mcp-server.mjs"`
-- The loader walks up from `process.cwd()` looking for
-  `node_modules/vitest-agent-reporter`, reads its `exports['./mcp']`
-  from `package.json`, and dynamically imports it via a `file://` URL
-- If the package is missing, fail fast with a clear stderr message and
-  install instructions for npm/pnpm/yarn/bun
-- Delete the old `plugin/.mcp.json`
-
-**Why chosen:**
-
-- Resolving from the user's `node_modules` is required because the
-  package depends on `better-sqlite3`, a native module that must match
-  the user's platform/Node version. We cannot bundle the MCP server
-  inside the plugin
-- Walking up from `process.cwd()` mirrors Node's resolution algorithm
-  and works for hoisted monorepo installs across all package managers
-- Dynamic `import()` of a `file://` URL bypasses CJS-vs-ESM exports
-  validation that blocks the canonical `import "vitest-agent-reporter/mcp"`
-  path when conditions don't match
-- Failing fast with install instructions is more useful than a silent
-  npx download that could time out the MCP handshake
-
-**Trade-offs:**
-
-- The loader is brittle to deeply non-standard install layouts (anything
-  Node's own resolver couldn't find), but those layouts already break
-  most tools
-- Plugin users must install `vitest-agent-reporter` as a project
-  dependency. This is consistent with how the Vitest reporter and CLI
-  are already used and is documented in the failure message
+> Retired in 2.0 (Phase 6). Superseded by Decision 30 (PM-detect +
+> spawn loader). The previous `file://` dynamic-import + `node_modules`
+> walk is gone -- `vitest-agent-reporter-mcp` is now its own package
+> with its own bin, so the user's package manager can resolve and
+> execute it directly. Original rationale preserved in git history at
+> commit 813eef2.
 
 ### Decision 30: Plugin MCP Loader as PM-Detect + Spawn (Phase 6)
 
@@ -703,16 +662,13 @@ project root the loader resolved.
   yarn berry strict, bun varies). The README documents this so
   install UX surprises are mitigated
 
-**Decision 29 status:** retired. See the inline note on Decision 29
-above.
-
 ### Decision 31: Deterministic XDG Path Resolution (Phase 6)
 
 **Context:** The 1.x `resolveDbPath` was an artifact-probing resolver
 that walked
 `node_modules/.vite/vitest/<hash>/.../vitest-agent-reporter/data.db`
 to find an existing database. This was the root cause of
-[issue #39](https://github.com/spencerbeggs/agent-reporter/issues/39):
+[issue #39](https://github.com/spencerbeggs/vitest-agent-reporter/issues/39):
 on a fresh project where the DB didn't exist yet, the resolver fell back
 to a literal path that often disagreed with where Vitest later
 created it. The MCP server baked the wrong path into `McpLive` at
@@ -807,7 +763,7 @@ gains the benefits above for free.
   location is determined a priori, the old location was probed at
   runtime, so a one-time copy isn't even straightforward)
 
-### Decision 32: Keep `ensureMigrated` Instead of `xdg-effect`'s `SqliteState.Live` (Phase 6)
+### Decision 32: Keep `ensureMigrated` Instead of `xdg-effect`'s `SqliteState.Live`
 
 **Context:** `xdg-effect` ships a `SqliteState.Live` that combines an
 XDG-resolved path, a SQLite client, and a migrator into a single
@@ -848,7 +804,7 @@ This decision resolves the open question raised in the 2.0 plan
 under "Open Implementation Questions". Decision 28 remains in force
 as the canonical fix for the SQLITE_BUSY race.
 
-### Decision 33: Four-Package Split (Phase 6)
+### Decision 33: Four-Package Split
 
 **Context:** The 1.x `vitest-agent-reporter` package shipped the
 reporter, plugin, CLI bin, and MCP server in one npm package. Three
@@ -929,17 +885,254 @@ one runtime package.
   `from "vitest-agent-reporter-shared"` instead of
   `from "vitest-agent-reporter"`. Documented as a breaking change
 
+### Decision D9: Last Drop-and-Recreate Migration (2.0.0-α)
+
+**Context:** The 2.0.0-α schema rewrite (`0002_comprehensive`) adds
+15 new tables, augments `test_errors`/`stack_frames` with new
+columns, and replaces `notes_fts` with corrected triggers. Two
+choices: (a) a single drop-and-recreate that reinitializes the
+entire schema, or (b) a sequence of `CREATE TABLE` /
+`ALTER TABLE` / `DROP TRIGGER` migrations that preserve 1.x data
+in place.
+
+**Decision:** ship `0002_comprehensive` as a drop-and-recreate.
+After this migration, **no future migration is allowed to drop and
+recreate**. 2.0.x and beyond are ALTER-only; for any breaking
+schema shape that ALTER cannot express, ship a one-shot
+export/import path on a major bump rather than dropping data.
+
+**Why drop-and-recreate now:**
+
+- 1.x data is already gone for the average user: 2.0.0 changed the
+  DB location from `node_modules/.vite/.../data.db` to the XDG
+  workspace-keyed path (Decision 31, intentionally no-migration).
+  Anyone upgrading 1.x → 2.0 already lost their history. Adding a
+  preserving 1.x → 2.0.0-α migration on top would only help users
+  who were already on a 2.0 alpha and accumulated some history
+  there, which is a small population
+- The schema diff is large. Writing per-column ALTER scripts for
+  every 1.x table to add the 2.0.0-α shape (notably the
+  `test_errors.signature_hash` FK requiring `failure_signatures`
+  to exist first, the `stack_frames` source-map columns, the
+  trigger rewrite for `notes_fts`) and then verifying the result
+  matches a fresh `CREATE TABLE` is a meaningful amount of test
+  code for marginal value
+- The drop ordering itself is the cost we're paying once: drop
+  children before parents, drop FTS triggers *before*
+  `notes`/`notes_fts` so cascading triggers don't fire against an
+  already-dropped virtual table. That code stays in
+  `0002_comprehensive` forever; we don't pay it again
+
+**Why ALTER-only forever after:**
+
+- Drop-and-recreate is never a free choice once users have data in
+  the schema. Every drop-and-recreate after 2.0.0-α would be data
+  loss for users on whatever the current minor was. Calling out
+  "this is the last one" in the design contract makes the
+  no-data-loss invariant enforceable in code review
+- For migrations that genuinely need a new shape ALTER cannot
+  express (e.g., splitting a JSON column into a relational
+  subtree), the right escape hatch is the one-shot export/import
+  path on a major bump -- not a silent drop. We retain the option
+  without defaulting to it
+
+**Trade-offs:**
+
+- Anyone running a 2.0 alpha before 2.0.0-α loses their accumulated
+  alpha data. Acceptable given the alpha audience and the upside
+  of not maintaining a parallel ALTER path
+- Future major bumps that need a non-ALTER shape change require an
+  export/import script in shared; we don't have one yet, but we
+  haven't needed one yet either. The cost is deferred
+- The drop section in `0002_comprehensive` is forever: it's the
+  schema's "this is what 1.x looked like" archaeological record.
+  This is fine -- migrations are append-only and the drops are
+  bounded in size
+
+### Decision D10: Stable Failure Signatures via AST Function Boundary (2.0.0-α)
+
+**Context:** Failures need a stable identity that lets us
+deduplicate "the same failure across different test runs," count
+recurrences in `failure_signatures.occurrence_count`, and group
+failures in agent-facing summaries. The naive identity (full stack
+trace + assertion message) churns on every line drift in unrelated
+code: any insertion above the failing assertion shifts the line
+number and breaks signature continuity. The next-naivest identity
+(raw line number) has the same problem, plus assertion literals
+(`expect(42)` vs `expect(43)`) churn the signature for trivial
+value changes.
+
+**Decision:** the failure signature is a 16-char `sha256` hex
+prefix of `(error_name | normalized assertion shape | top
+non-framework function name | function-boundary line)`, computed
+by `computeFailureSignature` in
+`packages/shared/src/utils/failure-signature.ts`. The
+function-boundary line comes from `findFunctionBoundary` in
+`packages/shared/src/utils/function-boundary.ts`, which parses the
+source via `acorn` and walks the AST for the smallest enclosing
+function (FunctionDeclaration / FunctionExpression /
+ArrowFunctionExpression) whose `loc` range contains the failing
+line. The function's *start* line becomes the signature's spatial
+coordinate. The assertion shape is normalized via
+`normalizeAssertionShape`, which strips matcher arguments to type
+tags (`<number>`, `<string>`, `<boolean>`, `<null>`,
+`<undefined>`, `<object>`, `<expr>`).
+
+**Why the function boundary (vs raw line):**
+
+- Insertions, deletions, comment edits, formatter changes, and
+  unrelated assertions inside the same function don't move the
+  function's *start* line as long as the function definition
+  itself doesn't move. So the signature stays stable across the
+  kinds of edits that happen during normal development
+- A new function inserted *before* the failing function does shift
+  the boundary line, which is the correct behavior: the failure
+  is now structurally located somewhere different in the file
+- Tied to the parsed AST, so the boundary survives whitespace-only
+  reformatting that would defeat any text-based heuristic
+
+**Why type-tag assertion normalization:**
+
+- `expect(42).toBe(43)` and `expect(7).toBe(8)` should produce the
+  same signature -- they're the same failure shape with different
+  literals. Normalizing both to `toBe(<number>)` collapses them
+- Different *shapes* still produce different signatures:
+  `toBe(<number>)` vs `toBe(<string>)` vs `toEqual(<object>)`. We
+  collapse value churn while preserving structural intent
+
+**Why a 10-line raw-line fallback bucket:**
+
+When `findFunctionBoundary` returns null (parse error, top-level
+code outside any function), the signature falls back to
+`raw:<floor(line/10)*10>` -- a 10-line bucket on the raw line. It
+loses some stability (a 9-line shift could move the failure
+between buckets) but doesn't churn on every single-line edit. When
+even the raw line is unknown, falls back to `raw:?`, which means
+all such failures collapse to one signature -- intentional, since
+we have no better discriminator.
+
+**Why acorn (vs other parsers):**
+
+- Zero-deps on the parser side; acorn is `^8.16.0` and well-
+  maintained
+- We only need ES module parsing; we don't need the heavier
+  TypeScript or JSX parser surface (failures we're hashing are
+  almost always in compiled output anyway -- the relevant source
+  is JS by the time we see a stack frame)
+- Returns AST nodes with `loc` data when `locations: true` is
+  passed, which is exactly the data we need
+- Throws cleanly on syntax errors so we can fall through to the
+  bucket fallback rather than blowing up the reporter
+
+**Trade-offs:**
+
+- New runtime dependency on `acorn` in shared (`^8.16.0`), with
+  matching `@types/acorn ^6.0.4` devDep. Acceptable -- acorn is
+  the canonical zero-deps JS parser and is widely audited
+- Re-parsing source on every signature computation is moderately
+  expensive (microseconds per parse). The reporter only hashes
+  failure signatures, not every assertion, so the cost is bounded
+  by the failure count. If this becomes a bottleneck we can cache
+  parses by `(file, mtime)` in shared
+- The boundary line shifts when the function definition itself
+  moves. This is correct behavior, but it does mean a refactor
+  that splits a function in half produces new signatures for the
+  failures inside it. Considered acceptable -- those failures
+  *are* structurally different post-refactor
+
+### Decision D11: TDD Phase-Transition Evidence Binding (2.0.0-α)
+
+**Context:** The TDD orchestrator subagent (out of scope on the
+2.0.0-α schema branch -- a later phase) needs to validate that an
+agent's request to transition between TDD phases (e.g.
+`red → green`) is backed by real evidence: a recent test failure
+for `red → green`, a recent test pass for `green → refactor`, etc.
+Without binding rules, an agent could cite *any* failing test
+from history to claim "the current behavior is in red," skipping
+the actual TDD discipline of writing a new failing test for the
+goal at hand.
+
+**Decision:** evidence binding is encoded in three rules,
+enforced by the pure `validatePhaseTransition` function in
+`packages/shared/src/utils/validate-phase-transition.ts`. The
+function takes a `PhaseTransitionContext` (current phase,
+requested phase, cited artifact, requested behavior) and returns
+a discriminated `PhaseTransitionResult` -- either acceptance or a
+denial with a typed reason and a remediation hint.
+
+**The three D2 binding rules:**
+
+1. **Evidence in phase window AND session.** The cited test must
+   have been authored in the current phase window
+   (`test_case_created_turn_at >= phase_started_at`) AND in the
+   current session (`test_case_authored_in_session === true`).
+   Prevents citing a test written before the phase started or in
+   another session
+2. **Behavior match.** When the orchestrator requests a transition
+   for a specific behavior, the cited artifact's `behavior_id`
+   must equal the `requested_behavior_id`. Prevents citing the
+   right kind of evidence but for the wrong behavior
+3. **Test wasn't already failing.** For `red → green`
+   transitions where the cited evidence is a `test_failed_run`,
+   the test's `test_first_failure_run_id` must equal the cited
+   `test_run_id`. Prevents citing a test that was *already*
+   failing on main as proof of "I just put it in red"
+
+Plus the artifact-kind precondition: `red → green` requires
+`test_failed_run`, `green → refactor` requires `test_passed_run`,
+`refactor → red` requires `test_passed_run` (refactor must end
+with all tests still passing). Other transitions trigger
+`wrong_source_phase` denials when no specific binding exists.
+
+**Why a pure function (vs Effect service):**
+
+- The function takes a context object and returns a result. No
+  I/O, no async. Effect service wrapping would be ceremony for no
+  testability gain
+- The orchestrator subagent will load the binding context (cited
+  artifact details, session info) via `DataReader` Effect calls
+  and then pass the resolved context to `validatePhaseTransition`
+  as plain data. Keeping the validator pure means it composes
+  cleanly into the Effect program without nested service
+  requirements
+
+**Why typed denial reasons + remediation:**
+
+- The `DenialReason` discriminator is a closed union the
+  orchestrator surfaces back to the agent in structured form, not
+  a free-text "evidence rejected" message. The agent can match
+  on the reason and recover programmatically
+- Each denial carries a `Remediation` with a `suggestedTool`,
+  `suggestedArgs`, and `humanHint` so the agent has an obvious
+  next step (typically: "run the test via `run_tests` and record
+  the artifact"). This converts a deny into a "do this next"
+  prompt rather than a dead-end
+
+**Trade-offs:**
+
+- The validator only enforces binding rules; it does not verify
+  the cited artifact actually exists, that the session is still
+  open, or that the goal is started. Those are pre-validator
+  responsibilities of the orchestrator (which already needs the
+  artifact details for the context object). Keeps the validator
+  small and pure
+- Adding a fourth binding rule later is a typed extension to
+  `DenialReason` and a new branch in the function -- no schema
+  change. Easy to evolve
+
 ---
 
 ## Design Patterns Used
 
 ### Pattern: Manifest-First Read
 
-- **Where used:** DataReader (backward-compatible manifest assembly)
+- **Where used:** DataReader (derived manifest view)
 - **Why used:** Agents and CLI commands can quickly assess project states
   before fetching detailed data
 - **Implementation:** `DataReader.getManifest()` assembles a
-  `CacheManifest` from the latest test run per project in the database
+  `CacheManifest` on-the-fly from the latest test run per project in the
+  `test_runs` table. The manifest is a derived view, not a primary
+  on-disk data structure
 
 ### Pattern: Range Compression
 
@@ -969,8 +1162,10 @@ one runtime package.
 - **Where used:** All Effect services (Phase 2+)
 - **Why used:** Clean separation between service interface (Context.Tag)
   and implementation (Layer). Enables swapping live I/O for test mocks
-- **Implementation:** Service tags in `package/src/services/`, live and
-  test layers in `package/src/layers/`, merged composition layers
+- **Implementation:** Service tags in `packages/shared/src/services/`
+  (plus `packages/reporter/src/services/CoverageAnalyzer.ts`), live and
+  test layers in `packages/shared/src/layers/` (plus the
+  reporter-specific `CoverageAnalyzerLive`), merged composition layers
   (`ReporterLive`, `CliLive`, `McpLive`, `OutputPipelineLive`)
 
 ### Pattern: Scoped Effect.runPromise
@@ -1013,11 +1208,12 @@ one runtime package.
 
 ## Constraints and Trade-offs
 
-### Constraint: Vitest >= 3.2.0
+### Constraint: Vitest >= 4.1.0
 
-- **Description:** Requires stable Reporter v2 API with `TestProject`
-- **Impact:** Limits adoption to Vitest 3.2+
-- **Mitigation:** Vitest 3.2 is current stable; peer dep is explicit
+- **Description:** Requires the Vitest 4 Reporter API with `TestProject`,
+  `TestModule`, and `TestCase`
+- **Impact:** Limits adoption to Vitest 4.1+
+- **Mitigation:** Vitest 4.1+ is current stable; peer dep is explicit
 
 ### Trade-off: `onCoverage` Ordering
 

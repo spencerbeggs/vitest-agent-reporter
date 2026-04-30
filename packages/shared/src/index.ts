@@ -42,6 +42,7 @@ export * from "./layers/ProjectDiscoveryTest.js";
 
 // Migrations
 export { default as migration0001 } from "./migrations/0001_initial.js";
+export { default as migration0002 } from "./migrations/0002_comprehensive.js";
 
 // Schemas
 export * from "./schemas/AgentReport.js";
@@ -54,6 +55,9 @@ export * from "./schemas/History.js";
 export * from "./schemas/Options.js";
 export * from "./schemas/Thresholds.js";
 export * from "./schemas/Trends.js";
+
+// 2.0 turn schemas
+export * from "./schemas/turns/index.js";
 
 // Services
 export * from "./services/Config.js";
@@ -78,11 +82,14 @@ export * from "./utils/compress-lines.js";
 export * from "./utils/compute-trend.js";
 export * from "./utils/detect-pm.js";
 export * from "./utils/ensure-migrated.js";
+export * from "./utils/failure-signature.js";
 export * from "./utils/format-console.js";
 export * from "./utils/format-fatal-error.js";
 export * from "./utils/format-gfm.js";
+export * from "./utils/function-boundary.js";
 export * from "./utils/normalize-workspace-key.js";
 export * from "./utils/resolve-data-path.js";
 export * from "./utils/resolve-workspace-key.js";
 export * from "./utils/safe-filename.js";
 export * from "./utils/split-project.js";
+export * from "./utils/validate-phase-transition.js";

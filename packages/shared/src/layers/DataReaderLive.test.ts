@@ -5,6 +5,7 @@ import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
 import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import migration0001 from "../migrations/0001_initial.js";
+import migration0002 from "../migrations/0002_comprehensive.js";
 import { DataReader } from "../services/DataReader.js";
 import { DataStore } from "../services/DataStore.js";
 import { DataReaderLive } from "./DataReaderLive.js";
@@ -14,7 +15,10 @@ const SqliteLayer = sqliteClientLayer({ filename: ":memory:" });
 const PlatformLayer = NodeContext.layer;
 
 const MigratorLayer = SqliteMigrator.layer({
-	loader: SqliteMigrator.fromRecord({ "0001_initial": migration0001 }),
+	loader: SqliteMigrator.fromRecord({
+		"0001_initial": migration0001,
+		"0002_comprehensive": migration0002,
+	}),
 }).pipe(Layer.provide(Layer.merge(SqliteLayer, PlatformLayer)));
 
 const TestLayer = Layer.mergeAll(
@@ -1168,6 +1172,60 @@ describe("DataReaderLive", () => {
 			expect(settings.coverageProvider).toBe("v8");
 			expect(settings.coverageEnabled).toBe(true);
 			expect(settings.envVars).toEqual({ CI: "true", NODE_ENV: "test" });
+		});
+	});
+
+	describe("getSessionById + searchTurns", () => {
+		it("round-trips a session and its turns", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sid = yield* ds.writeSession({
+						cc_session_id: "cc-rt",
+						project: "p",
+						cwd: "/tmp/p",
+						agent_kind: "main",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					yield* ds.writeTurn({
+						session_id: sid,
+						turn_no: 1,
+						type: "user_prompt",
+						payload: "{}",
+						occurred_at: "2026-04-29T00:00:01Z",
+					});
+					yield* ds.writeTurn({
+						session_id: sid,
+						turn_no: 2,
+						type: "tool_call",
+						payload: "{}",
+						occurred_at: "2026-04-29T00:00:02Z",
+					});
+
+					const dr = yield* DataReader;
+					const session = yield* dr.getSessionById(sid);
+					const turns = yield* dr.searchTurns({ sessionId: sid, limit: 100 });
+					return { session, turns };
+				}),
+			);
+
+			expect(Option.isSome(result.session)).toBe(true);
+			expect(result.turns).toHaveLength(2);
+			expect(result.turns[0].turnNo).toBe(2); // DESC order
+		});
+	});
+
+	describe("computeAcceptanceMetrics", () => {
+		it("returns zeros on an empty DB", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const dr = yield* DataReader;
+					return yield* dr.computeAcceptanceMetrics();
+				}),
+			);
+			expect(result.phaseEvidenceIntegrity.total).toBe(0);
+			expect(result.phaseEvidenceIntegrity.ratio).toBe(0);
+			expect(result.antiPatternDetectionRate.cleanSessions).toBe(0);
 		});
 	});
 });

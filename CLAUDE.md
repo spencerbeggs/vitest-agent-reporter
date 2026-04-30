@@ -154,11 +154,17 @@ plus `node_modules` walk approach.
 
 `packages/shared/src/` -- `services/` (Effect tags), `layers/` (live +
 test, including `LoggerLive`, `ConfigLive`, `PathResolutionLive`,
-`OutputPipelineLive`), `schemas/` (Effect Schema definitions),
-`utils/` (pure functions, including `resolve-data-path`,
-`resolve-workspace-key`, `normalize-workspace-key`, `ensure-migrated`),
+`OutputPipelineLive`), `schemas/` (Effect Schema definitions; 2.0.0-α
+adds `schemas/turns/` with the seven `TurnPayload` discriminated-union
+payloads), `utils/` (pure functions, including `resolve-data-path`,
+`resolve-workspace-key`, `normalize-workspace-key`, `ensure-migrated`;
+2.0.0-α adds `function-boundary` (acorn AST walk),
+`failure-signature` (deterministic 16-char sha256 hash), and
+`validate-phase-transition` (TDD evidence-binding rules)),
 `errors/` (tagged errors), `formatters/` (markdown, gfm, json, silent),
-`migrations/` (SQLite schema), `sql/` (row types + assemblers).
+`migrations/` (`0001_initial` for 1.x; 2.0.0-α adds
+`0002_comprehensive` -- the **last** drop-and-recreate migration,
+40 tables total), `sql/` (row types + assemblers).
 
 `packages/reporter/src/` -- `reporter.ts` (`AgentReporter`),
 `plugin.ts` (`AgentPlugin`), `services/CoverageAnalyzer.ts`,
@@ -181,7 +187,7 @@ test, including `LoggerLive`, `ConfigLive`, `PathResolutionLive`,
 `commands/` (setup, configure).
 
 **Spec:** [GitHub Issue #1](https://github.com/spencerbeggs/vitest-agent-reporter/issues/1)
-**2.0 plan:** [`@./.claude/plans/2026-04-29-2.0.0-xdg-paths-and-package-split.md`](./.claude/plans/2026-04-29-2.0.0-xdg-paths-and-package-split.md)
+**2.0 plan (archived):** [`./.claude/plans/archive/2026-04-29-2.0.0-xdg-paths-and-package-split.md`](./.claude/plans/archive/2026-04-29-2.0.0-xdg-paths-and-package-split.md)
 (implements [issue #39](https://github.com/spencerbeggs/vitest-agent-reporter/issues/39))
 
 **For architecture details (progressive loading -- load only what you need):**
@@ -194,8 +200,10 @@ test, including `LoggerLive`, `ConfigLive`, `PathResolutionLive`,
   Load when you need to understand "why" a design choice was made.
 - @./.claude/design/vitest-agent-reporter/data-structures.md
   Load when working with schemas, cache format, output, or data flow.
-- @./.claude/design/vitest-agent-reporter/testing-and-phases.md
-  Load when writing tests, reviewing coverage, or checking phase status.
+- @./.claude/design/vitest-agent-reporter/testing-strategy.md
+  Load when writing tests or reviewing testing patterns and coverage.
+- @./.claude/design/vitest-agent-reporter/phase-history.md
+  Load when reviewing implementation history or checking when a feature shipped.
 
 ## Build Pipeline
 
