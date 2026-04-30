@@ -33,12 +33,12 @@ explicit `include` globs per project.
 
 | Project | Tests |
 | --- | --- |
-| `vitest-agent-reporter-shared` | 488 |
-| `vitest-agent-reporter` | 102 |
+| `vitest-agent-reporter-shared` | 498 |
+| `vitest-agent-reporter` | 103 |
+| `vitest-agent-reporter-cli` | 48 |
 | `vitest-agent-reporter-mcp` | 40 |
-| `vitest-agent-reporter-cli` | 39 |
 | `example-basic` | 8 |
-| **Total** | **677** |
+| **Total** | **697** |
 
 The shared count grew by 59 on the 2.0.0-α schema branch:
 `0002_comprehensive` migration verification, the seven turn
@@ -48,6 +48,28 @@ shape normalization, `validate-phase-transition` D2 binding rules,
 and the new DataStore / DataReader methods
 (`writeSession`/`writeTurn`, `getSessionById`/`searchTurns`/
 `computeAcceptanceMetrics`).
+
+The β substrate-wiring branch added 20 more tests across packages:
+
+- shared (+10): `writeFailureSignature` upsert + occurrence-count
+  increment, `endSession` updates, `writeTurn` auto-`turn_no`,
+  `getSessionByCcId`, `listSessions`,
+  `getFailureSignatureByHash`, `getTddSessionById`,
+  `listHypotheses`, plus the `acorn-typescript` plugin keeping
+  `findFunctionBoundary` parsing TS sources without throwing
+- reporter (+1): `processFailure` round-trip (stack-frame walk,
+  source-map, function-boundary, signature hash)
+- cli (+9): `parseAndValidateTurnPayload` against each
+  `TurnPayload` variant, `recordTurnEffect` against an in-memory
+  DataStore, `recordSessionStart` and `recordSessionEnd`
+  round-trips
+- mcp (+0): existing test patterns continue to cover the seven
+  new tools via `createCallerFactory` (Pattern 2). No new test
+  file added on this branch -- the tools are exercised through
+  the same test layers as the existing 24
+
+The Task 30 e2e test (spawnSync against the built bin) was
+deferred per Decision β-N2.
 
 All four coverage metrics (statements, branches, functions, lines)
 are above 80%. The root `vitest.config.ts` `coverage.exclude` list
@@ -224,6 +246,6 @@ disk-backed DBs to avoid concurrent-test isolation issues.
 
 ---
 
-**Document Status:** Current. Reflects the post-2.0 four-package
-test layout. For when each pattern was introduced, see
-[phase-history.md](./phase-history.md).
+**Document Status:** Current. Reflects the post-2.0.0-β
+four-package test layout. For when each pattern was introduced,
+see [phase-history.md](./phase-history.md).

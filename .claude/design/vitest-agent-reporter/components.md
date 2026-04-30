@@ -34,8 +34,9 @@ covers one package; load only the section you need:
 - **Shared package** -- the no-internal-deps base: schemas, services,
   layers, formatters, errors, migrations, utilities, XDG path stack
 - **CLI package** -- `vitest-agent-reporter` bin and `CliLive`
-- **MCP package** -- `vitest-agent-reporter-mcp` bin, tRPC router, 24
-  tools, and `McpLive`
+- **MCP package** -- `vitest-agent-reporter-mcp` bin, tRPC router, 31
+  tools (24 from Phase 5/6 plus 7 read-only β tools over the α
+  schema substrate), and `McpLive`
 - **Claude Code plugin** -- file-based plugin with the MCP loader,
   hooks, skills, and commands
 
@@ -107,7 +108,18 @@ tracking, coverage baselines/trends, and output rendering.
    classifications, and `DataStore.writeRun()` / `writeModules()` /
    `writeSuites()` / `writeTestCases()` / `writeErrors()` /
    `writeCoverage()` / `writeHistory()` / `writeSourceMap()` persist
-   the data
+   the data. **(2.0.0-β)** Before `writeErrors`, each error in the
+   report passes through `processFailure(error, options)` (see
+   **Reporter-only utilities** below) to source-map the top
+   non-framework frame, run `findFunctionBoundary` on the
+   resolved source, and call `computeFailureSignature`. The
+   resulting `signatureHash` is upserted via
+   `DataStore.writeFailureSignature()` (idempotent ON CONFLICT,
+   increments `occurrence_count`); `writeErrors` then persists
+   `test_errors.signature_hash` and the per-frame
+   `stack_frames.source_mapped_line` /
+   `function_boundary_line` columns by passing the
+   `frames: StackFrameInput[]` array on `TestErrorInput`
 5. Reads existing baselines via `DataReader.getBaselines()`, computes
    updated baselines, writes via `DataStore.writeBaselines()`. On
    full (non-scoped) runs, computes per-project trends via
@@ -255,8 +267,11 @@ co-located with the reporter that feeds it.
 
 **Location:** `packages/reporter/src/utils/`
 
-Four pure utilities that only the reporter and plugin call. Anything
-used by more than one runtime package lives in shared instead.
+Pure utilities that only the reporter and plugin call. Anything used
+by more than one runtime package lives in shared instead. The β
+release adds `process-failure` -- the only one that bridges to a
+shared utility (`failure-signature` + `function-boundary`) at
+runtime.
 
 - `strip-console-reporters.ts` -- removes console reporters from
   Vitest's reporter chain, plus the `CONSOLE_REPORTERS` constant.
@@ -271,6 +286,20 @@ used by more than one runtime package lives in shared instead.
   `packages/shared/src/services/DataStore.ts` so DataStore owns its
   full input contract without circular imports between reporter and
   shared
+- `process-failure.ts` (2.0.0-β) -- per-error processing pipeline
+  called from `AgentReporter.onTestRunEnd` before
+  `DataStore.writeErrors`. Walks the Vitest stack frames on a
+  `ReportError`, identifies the top non-framework frame
+  (skipping `node:internal`, `node_modules/vitest/`, and other
+  framework prefixes), source-maps it via the source-map-resolver
+  fed from the test module, runs `findFunctionBoundary` on the
+  resolved source, then calls `computeFailureSignature` with the
+  parsed pieces. Returns
+  `{ frames: StackFrameInput[], signatureHash: string }` so the
+  reporter can pass `frames` and `signatureHash` straight into
+  `DataStore.writeErrors` (via `TestErrorInput`) and
+  `DataStore.writeFailureSignature`. Pure async function -- no
+  Effect service wrapping
 
 ### ReporterLive composition layer
 
@@ -315,7 +344,14 @@ one of them stays in that package.
 - `acorn ^8.16.0` (2.0.0-α) -- AST parser used by
   `findFunctionBoundary` to identify the smallest enclosing function
   for a given source line. Enables stable failure signatures
-  (Decision D9). `@types/acorn ^6.0.4` is the matching devDependency
+  (Decision D10). `@types/acorn ^6.0.4` is the matching devDependency
+- `acorn-typescript ^1.4.13` (2.0.0-β) -- TypeScript plugin for
+  acorn. Imported as the named `tsPlugin` export and applied via
+  `Parser.extend(tsPlugin())` so `findFunctionBoundary` can parse
+  the `.ts` source files Vitest stack frames source-map back to.
+  Closes α D10's deferred TS-support note (the failure signature's
+  function-boundary coordinate is now stable for TS projects too,
+  not just JS)
 
 Plus `effect`, `@effect/platform`, `@effect/platform-node`,
 `@effect/sql`, `@effect/sql-sqlite-node`, `std-env`.
@@ -493,17 +529,45 @@ database.
 | `ensureFile(filePath)` | ensure file path exists in `files` table; returns `fileId` |
 | `writeNote(note)` / `updateNote(id, fields)` / `deleteNote(id)` | note CRUD |
 | `writeSession(input: SessionInput)` (2.0.0-α) | inserts a Claude Code session row; returns `sessionId`. Carries `cc_session_id` (Claude Code session ID), `agent_kind` (`"main"` or `"subagent"`), optional `parent_session_id`, `triage_was_non_empty`, project/sub-project/cwd, and `started_at` |
-| `writeTurn(input: TurnInput)` (2.0.0-α) | inserts a turn-log row under a session; returns `turnId`. Caller pre-stringifies the payload JSON (validated against `TurnPayload` by the forthcoming `record` CLI). Type discriminator is one of `user_prompt`, `tool_call`, `tool_result`, `file_edit`, `hook_fire`, `note`, `hypothesis` |
+| `writeTurn(input: TurnInput)` (2.0.0-α; β auto-`turn_no`) | inserts a turn-log row under a session; returns `turnId`. Caller pre-stringifies the payload JSON (validated against `TurnPayload` by the `record` CLI). Type discriminator is one of `user_prompt`, `tool_call`, `tool_result`, `file_edit`, `hook_fire`, `note`, `hypothesis`. **β:** `turn_no` is now optional on `TurnInput`; the live layer computes `MAX(turn_no)+1` per session inside the same transaction when omitted |
+| `writeFailureSignature(input: FailureSignatureWriteInput)` (2.0.0-β) | idempotent upsert on `failure_signatures(signature_hash)`. New rows record `first_seen_run_id`, `first_seen_at`, and `occurrence_count = 1`; `ON CONFLICT(signature_hash) DO UPDATE` increments `occurrence_count` and refreshes `last_seen_at`. Called by the reporter for each error `signatureHash` returned by `processFailure` |
+| `endSession(ccSessionId, endedAt, endReason)` (2.0.0-β) | updates `sessions.ended_at` and `sessions.end_reason` for a Claude Code session ID. Called by the `record session-end` CLI subcommand (driven by the `session-end-record.sh` plugin hook) |
 
 **Key input types:**
 
 `TestRunInput`, `ModuleInput`, `TestCaseInput`, `TestErrorInput`,
 `FileCoverageInput`, `SuiteInput`, `NoteInput`, **`SettingsInput`**,
-`SessionInput`, `TurnInput` -- all defined in `DataStore.ts`.
-`SettingsInput` is owned by
-DataStore (rather than by `utils/capture-settings.ts` in the reporter
-package, which produces values matching this shape) to avoid a
-circular import path between reporter and shared.
+`SessionInput`, `TurnInput`, **`StackFrameInput`** (2.0.0-β),
+**`FailureSignatureWriteInput`** (2.0.0-β) -- all defined in
+`DataStore.ts`. `SettingsInput` is owned by DataStore (rather than
+by `utils/capture-settings.ts` in the reporter package, which
+produces values matching this shape) to avoid a circular import
+path between reporter and shared.
+
+**β input shapes:**
+
+- `StackFrameInput` -- shape attached to `TestErrorInput.frames`
+  carrying `function_name`, `file_path`, `raw_line`,
+  `raw_column`, optional `source_mapped_line`, and optional
+  `function_boundary_line`. The live layer pivots this into
+  one row per frame in `stack_frames`
+- `FailureSignatureWriteInput` -- the persistence-time shape
+  `{ signatureHash, firstSeenRunId, firstSeenAt }`. Distinct from
+  `failure-signature.ts`'s compute-time `FailureSignatureInput`
+  (which carries the un-hashed `error_name` /
+  `assertion_message` / `top_frame_function_name` /
+  `top_frame_function_boundary_line` / `top_frame_raw_line`
+  fields hashed *into* the signature). The naming
+  disambiguation is intentional -- `*WriteInput` mirrors the
+  existing convention used for the other DataStore inputs
+
+**β `TestErrorInput` extension:** `signatureHash` and `frames`
+are both optional. When `signatureHash` is provided, the live
+layer writes `test_errors.signature_hash` (the FK to
+`failure_signatures`); when `frames` is provided, it writes a
+row per frame to `stack_frames`, including the new
+`source_mapped_line` and `function_boundary_line` columns from
+α's `0002_comprehensive` migration.
 
 **`TestCaseInput.suiteId`:** the reporter populates `suiteId` from
 `testCase.parent.fullName` via the `suiteIdMap` it builds when
@@ -555,6 +619,11 @@ database. Shared between reporter, CLI, and MCP.
 | `getSessionById(id)` (2.0.0-α) | `Option<SessionDetail>` for a Claude Code session row |
 | `searchTurns(options: TurnSearchOptions)` (2.0.0-α) | `TurnSummary[]`; filters by `sessionId`, `type`, `since` (timestamp), and `limit` |
 | `computeAcceptanceMetrics()` (2.0.0-α) | `AcceptanceMetrics` -- four ratios from spec Annex A: phase-evidence integrity (red-before-code), compliance-hook responsiveness, orientation usefulness, anti-pattern detection rate. Each metric returns `{ total, <numerator>, ratio }` |
+| `getSessionByCcId(ccSessionId)` (2.0.0-β) | `Option<SessionDetail>` looked up by Claude Code session ID. Used by the `record turn` CLI to resolve the session before writing a turn |
+| `listSessions(options: { project?, agentKind?, limit? })` (2.0.0-β) | `SessionSummary[]` filtered by project and `agent_kind` (`"main"`/`"subagent"`). Default limit 50, ordered by `started_at DESC`. Backs the `session_list` MCP tool |
+| `getFailureSignatureByHash(hash)` (2.0.0-β) | `Option<FailureSignatureDetail>` -- the `failure_signatures` row plus the up-to-10 most recent `test_errors` rows joined via `signature_hash`. Backs the `failure_signature_get` MCP tool |
+| `getTddSessionById(id)` (2.0.0-β) | `Option<TddSessionDetail>` -- the `tdd_sessions` row plus its `tdd_phases` (with nested `tdd_artifacts` per phase). Pre-rolls the joins so the `tdd_session_get` MCP tool returns one tree |
+| `listHypotheses(options: { sessionId?, outcome?, limit? })` (2.0.0-β) | `HypothesisSummary[]` filtered by `sessionId` and validation outcome. `outcome="open"` matches `validation_outcome IS NULL`; other values match the literal CHECK enum (`confirmed`/`refuted`/`abandoned`). Default limit 50 |
 
 **`getManifest`:** resolves `cacheDir` (and the per-project
 placeholders) from SQLite's own metadata via `PRAGMA database_list`,
@@ -574,7 +643,11 @@ per-file rows; in that case the query falls back to
 `NoteRow`, `SettingsRow`, `TestListEntry`, `ModuleListEntry`,
 `SuiteListEntry`, `SettingsListEntry`, `SessionDetail` (2.0.0-α),
 `TurnSummary` (2.0.0-α), `TurnSearchOptions` (2.0.0-α),
-`AcceptanceMetrics` (2.0.0-α) -- all defined in `DataReader.ts`.
+`AcceptanceMetrics` (2.0.0-α), `SessionSummary` (2.0.0-β),
+`FailureSignatureDetail` (2.0.0-β), `TddSessionDetail` (2.0.0-β),
+`TddPhaseDetail` (2.0.0-β), `TddArtifactDetail` (2.0.0-β),
+`HypothesisSummary` (2.0.0-β), `HypothesisDetail` (2.0.0-β) -- all
+defined in `DataReader.ts`.
 
 **Dependencies:**
 
@@ -1089,7 +1162,7 @@ Pure utility functions that don't warrant Effect service wrapping.
 | `normalize-workspace-key.ts` | Pure path-segment normalizer (see XDG Path Resolution) |
 | `resolve-workspace-key.ts` | Workspace key resolver (see XDG Path Resolution) |
 | `resolve-data-path.ts` | The `resolveDataPath` orchestrator (see XDG Path Resolution) |
-| `function-boundary.ts` (2.0.0-α) | `findFunctionBoundary(source, line)` returns `FunctionBoundary` or `null`. Parses via `acorn` (`ecmaVersion: "latest"`, `sourceType: "module"`, `locations: true`) and walks the AST for `FunctionDeclaration`, `FunctionExpression`, and `ArrowFunctionExpression` nodes whose `loc` range contains `line`, returning the **smallest** enclosing function's `{ line: start.line, name }`. Anonymous functions on a `VariableDeclarator` init borrow the declarator's name; otherwise the literal string `<anonymous>`. Returns `null` on parse error |
+| `function-boundary.ts` (2.0.0-α; β TS-aware) | `findFunctionBoundary(source, line)` returns `FunctionBoundary` or `null`. Parses via `acorn` extended with the `acorn-typescript` plugin (`Parser.extend(tsPlugin())`), `ecmaVersion: "latest"`, `sourceType: "module"`, `locations: true` -- so TS sources with type annotations, generics, decorators, and `as` casts now parse without throwing. Walks the AST for `FunctionDeclaration`, `FunctionExpression`, and `ArrowFunctionExpression` nodes whose `loc` range contains `line`, returning the **smallest** enclosing function's `{ line: start.line, name }`. Anonymous functions on a `VariableDeclarator` init borrow the declarator's name; otherwise the literal string `<anonymous>`. Returns `null` on parse error. **β closes α D10's deferred TS support:** the function-boundary coordinate is now stable for TS projects, not just JS |
 | `failure-signature.ts` (2.0.0-α) | `computeFailureSignature(input)` returns a 16-char `sha256` of `error_name`, normalized assertion shape, top-frame function name, and line coord (joined by a pipe character). `normalizeAssertionShape` strips assertion literals to angle-bracketed type tags (`number`, `string`, `boolean`, `null`, `undefined`, `object`, `expr` — each wrapped in `<` and `>`) so unrelated literal changes don't perturb the signature. The line coord prefers `fb:` followed by the function-boundary line; falls back to `raw:` followed by `floor(line/10)*10` (10-line bucket) when the boundary is unknown, then `raw:?` if no raw line is supplied either |
 | `validate-phase-transition.ts` (2.0.0-α) | Pure `validatePhaseTransition(ctx) => PhaseTransitionResult` encoding the three D2 evidence-binding rules: (1) cited test was authored in the current phase window AND in the current session, (2) the cited artifact's `behavior_id` matches the requested behavior when one is specified, (3) for `red→green` transitions, the cited test wasn't already failing on main (`test_first_failure_run_id === test_run_id`). Enforces the required artifact kind per transition (`red→green` needs `test_failed_run`; `green→refactor` and `refactor→red` need `test_passed_run`); all other transitions are evidence-free and accepted unconditionally (including `spike→red`, the entry point for every TDD cycle). Returns a discriminated union with either `{ accepted: true, phase }` or `{ accepted: false, phase, denialReason, remediation: { suggestedTool, suggestedArgs, humanHint } }`. `DenialReason` is one of `missing_artifact_evidence`, `wrong_source_phase`, `unknown_session`, `session_already_ended`, `goal_not_started`, `refactor_without_passing_run`, `evidence_not_in_phase_window`, `evidence_not_for_behavior`, `evidence_test_was_already_failing` |
 
@@ -1148,13 +1221,28 @@ so installing the reporter pulls the CLI along with it.
   `PathResolutionLive(projectDir) + NodeContext.layer`, then provides
   `CliLive(dbPath, logLevel, logFile)` to the `@effect/cli`
   `Command.run` effect. Handles defects by printing
-  `formatFatalError(cause)` to stderr
+  `formatFatalError(cause)` to stderr. β registers the `record`
+  subcommand alongside the existing seven
 - `packages/cli/src/index.ts` -- public `runCli()` re-export
-- `packages/cli/src/commands/{status,overview,coverage,history,trends,cache,doctor}.ts`
+- `packages/cli/src/commands/{status,overview,coverage,history,trends,cache,doctor,record}.ts`
   -- one file per subcommand, each a thin wrapper over the matching
-  `lib/format-*.ts` function
+  `lib/*.ts` function. β adds `record.ts` (top-level command that
+  dispatches to `record-turn` / `record-session-start` /
+  `record-session-end` subcommands)
 - `packages/cli/src/lib/format-{status,overview,coverage,history,trends,doctor}.ts`
-  -- testable pure formatting logic
+  -- testable pure formatting logic for the read-side commands
+- `packages/cli/src/lib/record-turn.ts` (2.0.0-β) --
+  `parseAndValidateTurnPayload` validates the JSON-stringified
+  payload against the α `TurnPayload` Effect Schema discriminated
+  union (decoding through `Schema.decodeUnknown`); `recordTurnEffect`
+  resolves the session via `DataReader.getSessionByCcId` and writes
+  the turn via `DataStore.writeTurn` (omitting `turnNo` to take
+  advantage of β's auto-assignment in the live layer)
+- `packages/cli/src/lib/record-session.ts` (2.0.0-β) --
+  `recordSessionStart` calls `DataStore.writeSession` with
+  cc_session_id / agent_kind / project / cwd / started_at;
+  `recordSessionEnd` calls `DataStore.endSession` with
+  cc_session_id / ended_at / end_reason
 
 **Commands:**
 
@@ -1171,6 +1259,20 @@ so installing the reporter pulls the CLI along with it.
   `resolveDataPath`) rather than scanning the filesystem
 - `cache clean` -- deletes entire cache directory (idempotent)
 - `doctor` -- cache health diagnostic
+- `record turn` (2.0.0-β) -- accepts
+  `--cc-session-id <id> <payload-json>`, validates the payload
+  against `TurnPayload`, resolves the session, writes a turn row.
+  Driven by the `user-prompt-submit-record.sh`,
+  `pre-tool-use-record.sh`, `post-tool-use-record.sh`, and
+  `pre-compact-record.sh` plugin hooks
+- `record session-start` (2.0.0-β) -- accepts
+  `--cc-session-id <id> --project <name> --cwd <path>` plus
+  optional `--agent-kind` (defaults to `main`); writes a
+  `sessions` row. Driven by the `session-start-record.sh` hook
+- `record session-end` (2.0.0-β) -- accepts
+  `--cc-session-id <id>` and optional `--end-reason`; updates
+  `sessions.ended_at` / `sessions.end_reason`. Driven by the
+  `session-end-record.sh` hook
 
 **Dependencies:**
 
@@ -1187,18 +1289,21 @@ so installing the reporter pulls the CLI along with it.
 
 **Signature:** `CliLive(dbPath: string, logLevel?, logFile?)`
 
-**Composition:** DataReaderLive + ProjectDiscoveryLive +
-HistoryTrackerLive + OutputPipelineLive + SqliteClient + Migrator +
-NodeContext + NodeFileSystem + LoggerLive(...). Used by the CLI bin
-via `NodeRuntime.runMain`.
+**Composition:** `DataReaderLive`, `DataStoreLive` (β: required by
+the `record` subcommand), `ProjectDiscoveryLive`,
+`HistoryTrackerLive`, `OutputPipelineLive`, `SqliteClient`,
+`Migrator`, `NodeContext`, `NodeFileSystem`, and `LoggerLive(...)`.
+Used by the CLI bin via `NodeRuntime.runMain`.
 
 ---
 
 ## MCP package (vitest-agent-reporter-mcp)
 
-Model Context Protocol server providing 24 tools for agent
-integration. Uses `@modelcontextprotocol/sdk` with stdio transport
-and tRPC for routing.
+Model Context Protocol server providing 31 tools for agent
+integration (24 from Phase 5/6 plus 7 new read-only β tools over
+α's session/turn/TDD/hypothesis/failure-signature schema substrate).
+Uses `@modelcontextprotocol/sdk` with stdio transport and tRPC for
+routing.
 
 **npm name:** `vitest-agent-reporter-mcp`
 **bin:** `vitest-agent-reporter-mcp`
@@ -1234,9 +1339,11 @@ coordination without bundling the dependency tree.
 - `context.ts` -- tRPC context definition with `ManagedRuntime`
   carrying DataReader, DataStore, ProjectDiscovery, OutputRenderer
   services
-- `router.ts` -- tRPC router aggregating all 24 tool procedures
+- `router.ts` -- tRPC router aggregating all 31 tool procedures
+  (24 from Phase 5/6 plus 7 read-only β additions)
 - `server.ts` -- `startMcpServer()` registers all tools with the MCP
-  SDK
+  SDK using zod input schemas (the SDK side; tRPC inputs are also
+  zod, kept in sync between the two registrations)
 - `layers/McpLive.ts` -- composition layer (covered below)
 
 **Dependencies:**
@@ -1249,15 +1356,16 @@ coordination without bundling the dependency tree.
   `plugin.json`, which spawns the bin through the user's package
   manager), and any MCP-compatible agent
 
-### tRPC Router & Tools (24 tools)
+### tRPC Router & Tools (31 tools)
 
 **Locations:**
 
 - `packages/mcp/src/router.ts`, `packages/mcp/src/context.ts`
 - `packages/mcp/src/tools/` -- one file per tool
 
-The tRPC router aggregates all 24 MCP tool procedures. The context
-carries a `ManagedRuntime` for Effect service access, allowing tRPC
+The tRPC router aggregates all 31 MCP tool procedures (24 from
+Phase 5/6 plus 7 read-only β additions). The context carries a
+`ManagedRuntime` for Effect service access, allowing tRPC
 procedures to call Effect services via
 `ctx.runtime.runPromise(effect)`.
 
@@ -1294,6 +1402,22 @@ interface McpContext {
   create/get/update/delete) -- `tools/notes.ts` -> `note_create`,
   `note_list`, `note_get`, `note_update`, `note_delete`,
   `note_search`
+- **Sessions / Turns / TDD reads (β)** (JSON output) --
+  `tools/session-list.ts`, `tools/session-get.ts`,
+  `tools/turn-search.ts`, `tools/failure-signature-get.ts`,
+  `tools/tdd-session-get.ts`, `tools/hypothesis-list.ts`,
+  `tools/acceptance-metrics.ts` -> `session_list`, `session_get`,
+  `turn_search`, `failure_signature_get`, `tdd_session_get`,
+  `hypothesis_list`, `acceptance_metrics`. Each procedure validates
+  input with a zod schema, calls the matching `DataReader` method
+  via `ctx.runtime.runPromise`, and returns JSON. All seven are
+  read-only -- the write-side TDD lifecycle and hypothesis tools
+  (`tdd_session_start`, `tdd_phase_transition_request`,
+  `tdd_session_end`, `tdd_artifact_record`, `hypothesis_record`,
+  `hypothesis_validate`) are deferred to RC. Auto-allowed via
+  `plugin/hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt`. The
+  `help` tool (`tools/help.ts`) lists them under a new
+  "Sessions / Turns / TDD reads (β)" section
 
 **Project handling in discovery tools:** `module_list`, `suite_list`,
 and `test_list` enumerate every project from
@@ -1376,13 +1500,23 @@ decisions.md covers the loader rewrite; Decision 29 (the prior
 The script imports only `node:child_process`, `node:fs`, and
 `node:path` so it runs before the user has installed anything.
 
-### Hooks (SessionStart, PreToolUse, PostToolUse)
+### Hooks (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, SessionEnd, PreCompact)
 
 Hook configuration lives in `plugin/hooks/hooks.json`; scripts live
-under `plugin/hooks/`.
+under `plugin/hooks/`. The β release adds six `*-record.sh` scripts
+that drive the new `record` CLI subcommand to capture session/turn
+data, and registers two new event types (UserPromptSubmit,
+SessionEnd, PreCompact) that the plugin previously ignored.
 
 - **SessionStart** -- `session-start.sh` injects test context into
-  the session via bash
+  the session via bash. **(β)** Parallel `session-start-record.sh`
+  invokes `vitest-agent-reporter record session-start
+  --cc-session-id ... --project ... --cwd ...` to write a
+  `sessions` row
+- **UserPromptSubmit (β)** -- `user-prompt-submit-record.sh` reads
+  the prompt envelope and invokes `record turn` with a stringified
+  `UserPromptPayload` JSON (validated against `TurnPayload` by the
+  CLI before persistence)
 - **PreToolUse** -- `pre-tool-use-mcp.sh` matches
   `mcp__vitest-agent-reporter__.*`. Reads the PreToolUse envelope,
   strips the `mcp__vitest-agent-reporter__` prefix from `tool_name`,
@@ -1390,15 +1524,28 @@ under `plugin/hooks/`.
   remaining suffix appears in
   `hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt`. Tools not in
   the allowlist fall through to the standard permission prompt.
-  5-second hook timeout
+  5-second hook timeout. **(β)** Parallel `pre-tool-use-record.sh`
+  invokes `record turn` with a `ToolCallPayload`
 - **Allowlist** -- `hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt`
-  enumerates all 24 MCP tools to auto-allow (one operation suffix
+  enumerates all 31 MCP tools to auto-allow (one operation suffix
   per line, with `#` comments for category headings: meta `help`;
   11 read-only queries; 5 discovery tools; `run_tests`; 6 note CRUD
-  ops). The script strips blank lines and comments before exact
-  matching
+  ops; **(β) 7 sessions/turns/TDD/hypothesis/metrics reads**). The
+  script strips blank lines and comments before exact matching
 - **PostToolUse** -- `post-test-run.sh` runs on the Bash tool;
-  detects test runs and triggers post-run actions
+  detects test runs and triggers post-run actions. **(β)** Parallel
+  `post-tool-use-record.sh` runs on **every** tool result and
+  invokes `record turn` with a `ToolResultPayload`. For
+  `Edit`/`Write`/`MultiEdit` tools it additionally invokes a second
+  `record turn` with a `FileEditPayload` (lines added/removed,
+  diff)
+- **SessionEnd (β)** -- `session-end-record.sh` invokes
+  `record session-end --cc-session-id ... [--end-reason ...]` so
+  `sessions.ended_at` and `sessions.end_reason` get populated
+- **PreCompact (β)** -- `pre-compact-record.sh` invokes
+  `record turn` with a `HookFirePayload` so the compaction event
+  shows up in the turn log. β only records the firing; RC's
+  interpretive hooks add a prompt-injection nudge on top
 
 ### Skills & Commands
 

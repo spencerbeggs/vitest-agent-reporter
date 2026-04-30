@@ -418,7 +418,133 @@ function boundary, D11 TDD phase-transition evidence binding).
 
 ---
 
-**Document Status:** Current. Covers Phase 1 through Phase 7
-(2.0.0-α). Implementation complete on this branch; subsequent
-phases (hooks, record CLI, MCP tool surface, TDD orchestrator
-subagent) will be appended here as they ship.
+## Phase 8: 2.0.0-β Substrate Wiring -- COMPLETE
+
+The 2.0.0-β release activates the schema substrate landed in α
+by wiring the reporter, the new `record` CLI, plugin hook scripts,
+and read-only MCP tools onto the 15 new tables. β is purely
+**substrate-wiring**: it consumes α's primitives (failure
+signatures, turn payload schemas, evidence-binding validator) and
+makes them observable via real I/O. No new architectural
+decisions are introduced -- the choices are downstream of α's
+D9/D10/D11.
+
+- **TypeScript-aware function boundary**:
+  `findFunctionBoundary` now parses TypeScript via the
+  `acorn-typescript` plugin (`tsPlugin` named import) so reporter
+  callers source-mapped back to `.ts` files no longer fall
+  through to the 10-line bucket. Closes α D10's deferred work --
+  the granularity gap shifts from "always 10-line for TS" to
+  "function-stable for TS"
+- **Reporter wiring for failure signatures**: new
+  `packages/reporter/src/utils/process-failure.ts` walks each
+  Vitest stack frame, source-maps the top non-framework frame,
+  runs `findFunctionBoundary`, calls `computeFailureSignature`,
+  and returns the parsed frames + `signatureHash` for
+  persistence. `AgentReporter.onTestRunEnd` now calls
+  `processFailure` per error, upserts `failure_signatures` via
+  the new `writeFailureSignature` (idempotent, increments
+  `occurrence_count` on conflict), then writes
+  `test_errors.signature_hash` and the `stack_frames`
+  source-mapped/function-boundary line columns
+- **New `DataStore` methods**: `writeFailureSignature(input:
+  FailureSignatureWriteInput)` (ON CONFLICT idempotent upsert
+  on the `signature_hash` PK), `endSession(ccSessionId,
+  endedAt, endReason)` (updates `sessions.ended_at` and
+  `sessions.end_reason` for the SessionEnd hook), and
+  auto-assignment of `turn_no` in `writeTurn` when omitted (the
+  live layer computes `MAX(turn_no)+1` per session). New input
+  shapes: `StackFrameInput` and `FailureSignatureWriteInput`
+  (the latter name disambiguates from
+  `utils/failure-signature.ts`'s compute-time
+  `FailureSignatureInput`). `TestErrorInput` gained optional
+  `signatureHash` and `frames` fields
+- **New `DataReader` methods**: `getSessionByCcId(ccSessionId)`
+  (used by the `record` CLI to resolve sessions from Claude Code
+  IDs), `listSessions(options)` (filter by project/agentKind,
+  default limit 50), `getFailureSignatureByHash(hash)` returning
+  `FailureSignatureDetail` (signature row + up-to-10 recent
+  errors), `getTddSessionById(id)` returning `TddSessionDetail`
+  rolling up `tdd_sessions` + `tdd_phases` + `tdd_artifacts`,
+  and `listHypotheses(options)` (filter by sessionId/outcome
+  where `outcome=open` means `validation_outcome IS NULL`,
+  default limit 50). New detail types: `FailureSignatureDetail`,
+  `TddSessionDetail`, `TddPhaseDetail`, `TddArtifactDetail`,
+  `HypothesisDetail`
+- **`record` CLI subcommand**: new
+  `packages/cli/src/commands/record.ts` with three subcommands
+  (`record turn --cc-session-id ... <payload-json>`,
+  `record session-start --cc-session-id ... --project ... --cwd
+  ...`, `record session-end --cc-session-id ...
+  [--end-reason ...]`). Lib functions
+  (`packages/cli/src/lib/record-turn.ts`,
+  `record-session.ts`): `parseAndValidateTurnPayload` validates
+  against the α `TurnPayload` Effect Schema discriminated union
+  before persistence; `recordTurnEffect` resolves the session
+  via `getSessionByCcId` and writes the turn;
+  `recordSessionStart` and `recordSessionEnd` wrap
+  `writeSession`/`endSession`. Wired into the root command in
+  `packages/cli/src/bin.ts`
+- **Six new plugin hook scripts** (in `plugin/hooks/`):
+  `session-start-record.sh` (parallel to existing context
+  injection at SessionStart), `user-prompt-submit-record.sh`
+  (new UserPromptSubmit registration -- emits `user_prompt`
+  turn), `pre-tool-use-record.sh` (parallel to existing MCP
+  allowlist matcher -- emits `tool_call` turn),
+  `post-tool-use-record.sh` (parallel to existing Bash
+  test-detection matcher -- emits `tool_result` turn, plus a
+  second `file_edit` turn for Edit/Write/MultiEdit),
+  `session-end-record.sh` (new SessionEnd registration -- calls
+  `record session-end`), and `pre-compact-record.sh` (new
+  PreCompact registration -- emits `hook_fire` turn; the
+  prompt-injection nudge graduates to RC's interpretive hooks).
+  All six wired into `plugin/hooks/hooks.json`
+- **Seven new read-only MCP tools** in `packages/mcp/src/tools/`:
+  `session_list`, `session_get`, `turn_search`,
+  `failure_signature_get`, `tdd_session_get`, `hypothesis_list`,
+  `acceptance_metrics`. Each is wrapped with a zod input schema
+  (the MCP SDK side); registered in `router.ts` and
+  `server.ts`; auto-allowed via
+  `plugin/hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt`;
+  listed in `tools/help.ts` under a new "Sessions / Turns / TDD
+  reads (β)" section
+
+**Breaking changes from Phase 7:** none. β is additive -- it adds
+read paths and write paths for tables that already existed in α's
+schema. The α drop-and-recreate already happened; β does not
+re-run it.
+
+**Out of scope on this branch (deferred to RC/final):**
+
+- TDD orchestrator subagent (Workstream 2)
+- Write-side TDD lifecycle MCP tools (`tdd_session_start`,
+  `tdd_phase_transition_request`, `tdd_session_end`,
+  `tdd_artifact_record`)
+- Hypothesis writes (`hypothesis_record`, `hypothesis_validate`)
+- Interpretive hook prompt-injection (Stop / SessionEnd /
+  PreCompact / UserPromptSubmit content nudges -- β only records
+  turn data, RC adds the interpretive nudges)
+- tRPC idempotency middleware
+- W3 orientation triage report
+- W4 std-osc8 hyperlinks, CI annotation formatter, `cache prune`
+  CLI, `wrapup` CLI
+- `commit_changes` MCP tool (no rows to read until RC's
+  `record run_workspace_changes` lands)
+- Bun-rewrite hooks
+- E2E spawnSync test against the built bin (Task 30 of the β
+  plan was deferred -- documented in decisions.md)
+
+**Dependencies added (in shared only):** `acorn-typescript
+^1.4.13` (TS plugin for acorn).
+
+See [decisions.md](./decisions.md) for the supporting notes (the
+`FailureSignatureWriteInput` / `FailureSignatureInput` naming
+disambiguation and the deferred e2e test).
+
+---
+
+**Document Status:** Current. Covers Phase 1 through Phase 8
+(2.0.0-β). Implementation complete on this branch; subsequent
+phases (TDD orchestrator subagent, write-side TDD/hypothesis
+tools, interpretive hooks, W3/W4 polish) will be appended here
+as they ship.

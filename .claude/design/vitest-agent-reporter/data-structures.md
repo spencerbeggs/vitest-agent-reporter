@@ -75,19 +75,27 @@ packages/
     src/
       bin.ts, index.ts
       commands/    -- status, overview, coverage, history, trends,
-                      cache, doctor (each --format aware)
-      lib/         -- format-* (testable pure formatting logic)
+                      cache, doctor (each --format aware), and
+                      (β) record (with turn / session-start /
+                      session-end subcommands)
+      lib/         -- format-* (testable pure formatting logic);
+                      (β) record-turn, record-session
       layers/      -- CliLive(dbPath, logLevel?, logFile?)
 
   mcp/       -- vitest-agent-reporter-mcp (bin: vitest-agent-reporter-mcp)
     src/
       bin.ts, index.ts, context.ts, router.ts, server.ts
       layers/      -- McpLive(dbPath, logLevel?, logFile?)
-      tools/       -- 24 tool implementations (help, status, overview,
-                      coverage, history, trends, errors, test-for-file,
-                      test-get, test-list, file-coverage, run-tests,
+      tools/       -- 31 tool implementations: 24 from Phase 5/6
+                      (help, status, overview, coverage, history,
+                      trends, errors, test-for-file, test-get,
+                      test-list, file-coverage, run-tests,
                       cache-health, configure, notes, project-list,
-                      module-list, suite-list, settings-list)
+                      module-list, suite-list, settings-list); plus
+                      7 read-only β tools (session-list,
+                      session-get, turn-search,
+                      failure-signature-get, tdd-session-get,
+                      hypothesis-list, acceptance-metrics)
 
 examples/
   basic/     -- minimal example app (5th Vitest project)
@@ -98,9 +106,14 @@ plugin/      -- file-based Claude Code plugin (NOT a pnpm workspace)
                                   Forwards projectDir via
                                   VITEST_AGENT_REPORTER_PROJECT_DIR
   hooks/       -- hooks.json + session-start.sh +
-                  pre-tool-use-mcp.sh (auto-allows the 24 MCP tools
+                  pre-tool-use-mcp.sh (auto-allows all 31 MCP tools
                   enumerated in lib/safe-mcp-vitest-agent-reporter-
-                  ops.txt) + post-test-run.sh
+                  ops.txt) + post-test-run.sh; (β) six additional
+                  *-record.sh scripts (session-start-record,
+                  user-prompt-submit-record, pre-tool-use-record,
+                  post-tool-use-record, session-end-record,
+                  pre-compact-record) that drive the new `record`
+                  CLI subcommand
   skills/      -- tdd, debugging, configuration, coverage-improvement
   commands/    -- setup.md, configure.md
 ```
@@ -490,10 +503,43 @@ Input and output types (`TestRunInput`, `ModuleInput`, `TestCaseInput`,
 `packages/shared/src/services/DataReader.ts`. The 2.0.0-α schema branch
 adds `SessionInput`, `TurnInput` (DataStore) and `SessionDetail`,
 `TurnSummary`, `TurnSearchOptions`, `AcceptanceMetrics` (DataReader).
+The 2.0.0-β substrate-wiring branch further adds:
+
+- DataStore: `StackFrameInput`, `FailureSignatureWriteInput`, plus
+  optional `signatureHash` and `frames` fields on `TestErrorInput`.
+  `TurnInput.turnNo` is now optional (auto-assigned in the live
+  layer when omitted)
+- DataReader: `SessionSummary`, `FailureSignatureDetail`,
+  `TddSessionDetail`, `TddPhaseDetail`, `TddArtifactDetail`,
+  `HypothesisSummary`, `HypothesisDetail`, plus
+  `ListSessionsOptions` and `ListHypothesesOptions`
+
 The Common schema literals (`Environment`, `Executor`, `OutputFormat`,
 `DetailLevel`) live in `packages/shared/src/schemas/Common.ts`. Effect
 Schema is the source of truth -- TypeScript types derive via
 `typeof Schema.Type`.
+
+**Naming note (β):** there are two `FailureSignature*Input` types
+that look similar but live in different layers and serve different
+purposes:
+
+- `FailureSignatureInput` (in
+  `packages/shared/src/utils/failure-signature.ts`) is the
+  **compute-time** input to `computeFailureSignature` -- the
+  un-hashed `error_name`, `assertion_message`,
+  `top_frame_function_name`, `top_frame_function_boundary_line`,
+  and optional `top_frame_raw_line` that get hashed *into* the
+  signature. Defined in α
+- `FailureSignatureWriteInput` (in
+  `packages/shared/src/services/DataStore.ts`) is the
+  **persistence-time** input to `DataStore.writeFailureSignature`
+  -- the already-computed `signatureHash` plus the metadata to
+  store alongside it (`firstSeenRunId`, `firstSeenAt`). Added in β
+
+The `*WriteInput` suffix mirrors the naming convention used for
+the other DataStore inputs (`TestRunInput`, `ModuleInput`,
+`TestCaseInput`, etc.) and disambiguates the two "FailureSignature"
+inputs cleanly without overloading either name.
 
 The MCP server's tRPC `McpContext` (carrying a `ManagedRuntime` over
 `DataReader | DataStore | ProjectDiscovery | OutputRenderer`) is
@@ -607,6 +653,132 @@ interface FailureSignatureInput {
 //   line coord: "fb:<boundary>" if known,
 //               else "raw:<floor(line/10)*10>" 10-line bucket,
 //               else "raw:?"
+```
+
+### β DataStore Input Types (2.0.0-β)
+
+`packages/shared/src/services/DataStore.ts`:
+
+```typescript
+interface StackFrameInput {
+  function_name: string;
+  file_path: string;
+  raw_line: number;
+  raw_column?: number;
+  source_mapped_line?: number;
+  function_boundary_line?: number;
+}
+
+interface FailureSignatureWriteInput {
+  signatureHash: string;       // 16-char sha256 from
+                               // computeFailureSignature
+  firstSeenRunId: number;
+  firstSeenAt: string;         // ISO 8601
+}
+
+// β extension to TestErrorInput
+interface TestErrorInput {
+  // ...existing fields...
+  signatureHash?: string;      // β: FK target on test_errors
+  frames?: ReadonlyArray<StackFrameInput>; // β: per-frame rows
+}
+
+// β extension to TurnInput
+interface TurnInput {
+  sessionId: number;
+  type: TurnType;
+  payload: string;             // pre-stringified TurnPayload JSON
+  turnNo?: number;             // β: optional; auto-assigned via
+                               // MAX(turn_no)+1 per session if
+                               // omitted
+  // ...existing fields...
+}
+```
+
+### β DataReader Output Types (2.0.0-β)
+
+`packages/shared/src/services/DataReader.ts`:
+
+```typescript
+interface SessionSummary {
+  id: number;
+  cc_session_id: string;
+  agent_kind: "main" | "subagent";
+  parent_session_id: number | null;
+  project: string;
+  sub_project: string | null;
+  cwd: string;
+  started_at: string;
+  ended_at: string | null;
+  end_reason: string | null;
+}
+
+interface ListSessionsOptions {
+  project?: string;
+  agentKind?: "main" | "subagent";
+  limit?: number;              // default 50
+}
+
+interface FailureSignatureDetail {
+  signature_hash: string;
+  first_seen_run_id: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  occurrence_count: number;
+  recent_errors: ReadonlyArray<TestError>; // up to 10 most recent
+}
+
+interface TddSessionDetail {
+  // tdd_sessions row...
+  phases: ReadonlyArray<TddPhaseDetail>;
+}
+
+interface TddPhaseDetail {
+  // tdd_phases row...
+  artifacts: ReadonlyArray<TddArtifactDetail>;
+}
+
+interface TddArtifactDetail {
+  // tdd_artifacts row, with the FK columns flattened
+}
+
+interface HypothesisSummary {
+  id: number;
+  session_id: number;
+  content: string;
+  cited_test_error_id: number | null;
+  cited_stack_frame_id: number | null;
+  validation_outcome: "confirmed" | "refuted" | "abandoned" | null;
+  created_at: string;
+}
+
+interface HypothesisDetail extends HypothesisSummary {
+  // resolves the cited references for display
+  cited_test_error?: TestError;
+}
+
+interface ListHypothesesOptions {
+  sessionId?: number;
+  outcome?: "confirmed" | "refuted" | "abandoned" | "open";
+                               // "open" matches IS NULL
+  limit?: number;              // default 50
+}
+```
+
+### β Reporter Failure-Processing Output (2.0.0-β)
+
+`packages/reporter/src/utils/process-failure.ts`:
+
+```typescript
+interface ProcessFailureResult {
+  frames: ReadonlyArray<StackFrameInput>;
+  signatureHash: string;
+}
+
+// processFailure(error, options) -> Promise<ProcessFailureResult>
+// Walks Vitest stack frames, source-maps the top non-framework
+// frame, runs findFunctionBoundary on the resolved source, calls
+// computeFailureSignature with the parsed pieces.
 ```
 
 ---
@@ -765,7 +937,16 @@ async onTestRunEnd(testModules, unhandledErrors, reason)
   |     +-- DataStore.writeModules(runId, modules) -> moduleIds
   |     +-- DataStore.writeSuites(moduleId, suites)
   |     +-- DataStore.writeTestCases(moduleId, tests) -> testCaseIds
+  |     +-- (β) For each error in the report:
+  |     |       processFailure(error, options) ->
+  |     |         { frames: StackFrameInput[], signatureHash }
+  |     |       DataStore.writeFailureSignature(
+  |     |         { signatureHash, firstSeenRunId: runId,
+  |     |           firstSeenAt: now })
   |     +-- DataStore.writeErrors(runId, errors)
+  |         (β: errors carry signatureHash + frames -> live layer
+  |          writes test_errors.signature_hash and per-frame
+  |          stack_frames.source_mapped_line/function_boundary_line)
   |     +-- DataStore.writeCoverage(runId, coverage)
   |     +-- DataStore.writeHistory(...) per test
   |     +-- DataStore.writeSourceMap() per module (convention-based)
@@ -805,12 +986,27 @@ async onTestRunEnd(testModules, unhandledErrors, reason)
   `PathResolutionLive(projectDir) + NodeContext.layer`.
 - Provide `CliLive(dbPath, logLevel, logFile)` to the `@effect/cli`
   `Command.run` effect; execute via `NodeRuntime.runMain`.
-- Each subcommand (`status`, `overview`, `coverage`, `history`,
-  `trends`, `cache`, `doctor`) is a thin wrapper over a `lib/format-*`
-  function: query `DataReader` (and `ProjectDiscovery` for `overview`),
-  render via `OutputRenderer`, write to stdout.
-- `cache path` prints the deterministic XDG path. `cache clean` removes
-  the data directory.
+- Each read-side subcommand (`status`, `overview`, `coverage`,
+  `history`, `trends`, `cache`, `doctor`) is a thin wrapper over a
+  `lib/format-*` function: query `DataReader` (and
+  `ProjectDiscovery` for `overview`), render via `OutputRenderer`,
+  write to stdout.
+- `cache path` prints the deterministic XDG path. `cache clean`
+  removes the data directory.
+- **(β) `record` subcommand:**
+  - `record turn --cc-session-id <id> <payload-json>`:
+    `parseAndValidateTurnPayload` (in `lib/record-turn.ts`)
+    decodes the payload via `Schema.decodeUnknown(TurnPayload)`,
+    `recordTurnEffect` resolves the session via
+    `DataReader.getSessionByCcId`, then writes the turn via
+    `DataStore.writeTurn` (omitting `turnNo` to take β's
+    auto-assignment)
+  - `record session-start`: invokes
+    `recordSessionStart(input)` -> `DataStore.writeSession`
+  - `record session-end`: invokes
+    `recordSessionEnd(input)` -> `DataStore.endSession`
+  - All three use `CliLive` (which now includes `DataStoreLive`
+    in addition to `DataReaderLive`).
 
 ### Flow 4: MCP Server (`packages/mcp/src/bin.ts`)
 
@@ -840,6 +1036,43 @@ async onTestRunEnd(testModules, unhandledErrors, reason)
   bin sees the right project root (Flow 4).
 - Forward exit code; re-raise termination signals; print PM-specific
   install instructions on non-zero exit.
+
+### Flow 6: Plugin record hooks -> CLI -> DataStore (β)
+
+The β `*-record.sh` hook scripts each call the user's installed
+`vitest-agent-reporter` bin (the CLI) via the same PM detection
+pattern as the MCP loader (Flow 5).
+
+- **SessionStart -> `session-start-record.sh`:** reads the
+  Claude Code SessionStart envelope from stdin, extracts
+  `cc_session_id` / project / cwd, calls
+  `<pm-exec> vitest-agent-reporter record session-start
+  --cc-session-id ... --project ... --cwd ...`. The CLI runs
+  `recordSessionStart` -> `DataStore.writeSession`.
+- **UserPromptSubmit -> `user-prompt-submit-record.sh`:** builds
+  a `UserPromptPayload` JSON, calls
+  `<pm-exec> vitest-agent-reporter record turn --cc-session-id
+  ... <payload>`. The CLI validates the payload against
+  `TurnPayload` (Effect Schema decode), resolves the session via
+  `getSessionByCcId`, then writes the turn (auto-assigning
+  `turn_no` in the live layer).
+- **PreToolUse -> `pre-tool-use-record.sh`:** parallel matcher
+  to `pre-tool-use-mcp.sh` (the existing MCP allowlist hook).
+  Builds a `ToolCallPayload` and calls `record turn`.
+- **PostToolUse -> `post-tool-use-record.sh`:** runs on every
+  tool result. Builds a `ToolResultPayload` and calls `record
+  turn`. For `Edit`/`Write`/`MultiEdit` tools it additionally
+  builds a second `FileEditPayload` (with diff and added/removed
+  line counts) and calls `record turn` again.
+- **SessionEnd -> `session-end-record.sh`:** calls
+  `<pm-exec> vitest-agent-reporter record session-end
+  --cc-session-id ... [--end-reason ...]`. The CLI runs
+  `recordSessionEnd` -> `DataStore.endSession`.
+- **PreCompact -> `pre-compact-record.sh`:** builds a
+  `HookFirePayload` (carrying `hook_kind: "PreCompact"`) and
+  calls `record turn`. β only captures the firing event in the
+  turn log; RC's interpretive hooks add a prompt-injection nudge
+  on top.
 
 ---
 
@@ -890,7 +1123,9 @@ GFM content is appended (not overwritten) to support multiple steps.
 ### Integration 4: Consumer LLM Agents
 
 **MCP pattern (preferred):** Agents connect via MCP stdio transport and
-use the 24 tools for structured data access.
+use the 31 tools for structured data access (24 from Phase 5/6 plus
+7 read-only β tools surfacing α's session/turn/TDD/hypothesis/
+failure-signature substrate).
 
 **CLI pattern:** Run `vitest-agent-reporter status` for quick overview,
 `vitest-agent-reporter overview` for test landscape, or
@@ -914,6 +1149,10 @@ In `vitest-agent-reporter-shared`:
 - `xdg-effect ^1.0.1` (Phase 6) -- XDG path resolution
 - `config-file-effect ^0.2.0` (Phase 6) -- TOML config loading
 - `workspaces-effect ^0.5.1` (Phase 6) -- workspace name discovery
+- `acorn ^8.16.0` (Phase 7 / α) -- AST parser for
+  `findFunctionBoundary`
+- `acorn-typescript ^1.4.13` (Phase 8 / β) -- TS plugin for acorn,
+  closes α D10's deferred TS support
 
 In `vitest-agent-reporter`: shared + the Effect/SQL stack
 (transitively via shared) + Vitest peer.
@@ -949,7 +1188,7 @@ vitest-agent-reporter-mcp` registration approach is gone (it could
 fall back to a registry download and exceed Claude Code's MCP
 startup window).
 
-### Integration 7: Claude Code Plugin (Phase 5d, loader rewritten in Phase 6)
+### Integration 7: Claude Code Plugin (Phase 5d, loader rewritten in Phase 6, β record hooks)
 
 **Plugin format:** File-based plugin at `plugin/` directory
 
@@ -964,12 +1203,31 @@ Decision 30 for details.
 
 **Hooks:**
 
-- `SessionStart` -> `hooks/session-start.sh` (context injection)
+- `SessionStart` -> `hooks/session-start.sh` (context injection).
+  **(β)** Parallel `hooks/session-start-record.sh` invokes the
+  CLI `record session-start` to write a `sessions` row
+- `UserPromptSubmit` (β) -> `hooks/user-prompt-submit-record.sh`
+  invokes `record turn` with a `UserPromptPayload`
 - `PreToolUse` matching `mcp__vitest-agent-reporter__.*` ->
-  `hooks/pre-tool-use-mcp.sh` (auto-allow MCP tools whose operation
-  suffix is enumerated in `hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt`;
-  unknown ops fall through to the standard permission prompt)
-- `PostToolUse` on `Bash` -> `hooks/post-test-run.sh` (test detection)
+  `hooks/pre-tool-use-mcp.sh` (auto-allow MCP tools whose
+  operation suffix is enumerated in
+  `hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt`; unknown ops
+  fall through to the standard permission prompt). **(β)** The
+  allowlist now enumerates all 31 tools (24 + 7 β additions).
+  **(β)** Parallel `hooks/pre-tool-use-record.sh` invokes
+  `record turn` with a `ToolCallPayload`
+- `PostToolUse` on `Bash` -> `hooks/post-test-run.sh` (test
+  detection). **(β)** Parallel
+  `hooks/post-tool-use-record.sh` runs on every tool result and
+  invokes `record turn` with a `ToolResultPayload` (plus a
+  second `record turn` with a `FileEditPayload` for
+  `Edit`/`Write`/`MultiEdit`)
+- `SessionEnd` (β) -> `hooks/session-end-record.sh` invokes the
+  CLI `record session-end` to update `sessions.ended_at` /
+  `sessions.end_reason`
+- `PreCompact` (β) -> `hooks/pre-compact-record.sh` invokes
+  `record turn` with a `HookFirePayload`. β only records the
+  firing event; RC adds the interpretive prompt-injection nudge
 
 **Skills:** TDD, debugging, configuration, coverage-improvement (markdown files)
 
