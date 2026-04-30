@@ -34,6 +34,7 @@ import { LoggerLive } from "../layers/LoggerLive.js";
 import migration0001 from "../migrations/0001_initial.js";
 import migration0002 from "../migrations/0002_comprehensive.js";
 import migration0003 from "../migrations/0003_idempotent_responses.js";
+import migration0004 from "../migrations/0004_test_cases_created_turn_id.js";
 
 const GLOBAL_KEY = Symbol.for("vitest-agent-reporter/migration-promises");
 
@@ -67,6 +68,7 @@ export function ensureMigrated(dbPath: string, logLevel?: LogLevel.LogLevel, log
 			"0001_initial": migration0001,
 			"0002_comprehensive": migration0002,
 			"0003_idempotent_responses": migration0003,
+			"0004_test_cases_created_turn_id": migration0004,
 		}),
 	}).pipe(Layer.provide(Layer.merge(SqliteLayer, PlatformLayer)));
 

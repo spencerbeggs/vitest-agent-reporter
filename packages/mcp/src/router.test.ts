@@ -434,4 +434,212 @@ describe("MCP Router", () => {
 			expect(result).toContain("failure_signature_get");
 		});
 	});
+
+	describe("tdd_session_start tool", () => {
+		it("inserts on first call and replays on second", async () => {
+			// Seed a session so the FK resolves.
+			const sessionId = await testRuntime.runPromise(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					return yield* store.writeSession({
+						cc_session_id: "cc-tdd-start-test",
+						project: "default",
+						cwd: process.cwd(),
+						agent_kind: "main",
+						started_at: new Date().toISOString(),
+					});
+				}),
+			);
+
+			const caller = createTestCaller();
+			const r1 = await caller.tdd_session_start({ sessionId, goal: "add login" });
+			const r2 = await caller.tdd_session_start({ sessionId, goal: "add login" });
+			expect((r1 as { id: number }).id).toBe((r2 as { id: number }).id);
+			expect((r2 as { _idempotentReplay?: boolean })._idempotentReplay).toBe(true);
+		});
+	});
+
+	describe("tdd_session_end tool", () => {
+		it("ends a TDD session with the given outcome and replays on duplicate", async () => {
+			// Seed a session so the FK resolves, then start a TDD session under it.
+			const sessionId = await testRuntime.runPromise(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					return yield* store.writeSession({
+						cc_session_id: "cc-tdd-end-test",
+						project: "default",
+						cwd: process.cwd(),
+						agent_kind: "main",
+						started_at: new Date().toISOString(),
+					});
+				}),
+			);
+
+			const caller = createTestCaller();
+			const created = await caller.tdd_session_start({ sessionId, goal: "ending-test" });
+			const r1 = await caller.tdd_session_end({
+				tddSessionId: (created as { id: number }).id,
+				outcome: "succeeded",
+			});
+			const r2 = await caller.tdd_session_end({
+				tddSessionId: (created as { id: number }).id,
+				outcome: "succeeded",
+			});
+			expect((r1 as { outcome: string }).outcome).toBe("succeeded");
+			expect((r2 as { _idempotentReplay?: boolean })._idempotentReplay).toBe(true);
+		});
+	});
+
+	describe("commit_changes tool", () => {
+		it("returns 'No commits recorded' on empty DB", async () => {
+			const caller = createTestCaller();
+			const r = await caller.commit_changes({});
+			expect(r).toMatch(/No commits recorded/);
+		});
+	});
+
+	describe("tdd_session_resume tool", () => {
+		it("renders a markdown digest for an existing TDD session", async () => {
+			const sessionId = await testRuntime.runPromise(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					return yield* store.writeSession({
+						cc_session_id: "cc-tdd-resume-test",
+						project: "default",
+						cwd: process.cwd(),
+						agent_kind: "main",
+						started_at: new Date().toISOString(),
+					});
+				}),
+			);
+			const caller = createTestCaller();
+			const tdd = await caller.tdd_session_start({ sessionId, goal: "resume-test" });
+			const tddId = (tdd as { id: number }).id;
+			const out = await caller.tdd_session_resume({ id: tddId });
+			expect(out).toContain(`TDD session #${tddId}`);
+			expect(out).toContain("resume-test");
+		});
+
+		it("returns 'No TDD session' for unknown id", async () => {
+			const caller = createTestCaller();
+			const out = await caller.tdd_session_resume({ id: 99999 });
+			expect(out).toMatch(/No TDD session/);
+		});
+	});
+
+	describe("tdd_phase_transition_request tool", () => {
+		async function seedTddSessionForTransition(ccSessionId: string, goal: string): Promise<number> {
+			const sessionId = await testRuntime.runPromise(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					return yield* store.writeSession({
+						cc_session_id: ccSessionId,
+						project: "default",
+						cwd: process.cwd(),
+						agent_kind: "main",
+						started_at: new Date().toISOString(),
+					});
+				}),
+			);
+			const caller = createTestCaller();
+			const tdd = await caller.tdd_session_start({ sessionId, goal });
+			return (tdd as { id: number }).id;
+		}
+
+		it("rejects with missing_artifact_evidence when cited artifact does not exist", async () => {
+			const tddId = await seedTddSessionForTransition("cc-tdd-trans-missing", "g");
+			const caller = createTestCaller();
+			const r = (await caller.tdd_phase_transition_request({
+				tddSessionId: tddId,
+				requestedPhase: "green",
+				citedArtifactId: 99999,
+			})) as { accepted: boolean; denialReason?: string };
+			expect(r.accepted).toBe(false);
+			if (r.accepted === false) {
+				expect(r.denialReason).toBe("missing_artifact_evidence");
+			}
+		});
+
+		it("accepts spike→red unconditionally (entry-point transition)", async () => {
+			const tddId = await seedTddSessionForTransition("cc-tdd-trans-accept", "g2");
+
+			// Open a "spike" phase to anchor the cited artifact, then record a
+			// test_written artifact whose row is what the validator will read.
+			const { artifactId } = await testRuntime.runPromise(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const phase = yield* store.writeTddPhase({
+						tddSessionId: tddId,
+						phase: "spike",
+						startedAt: new Date().toISOString(),
+					});
+					const artifactId = yield* store.writeTddArtifact({
+						phaseId: phase.id,
+						artifactKind: "test_written",
+						recordedAt: new Date().toISOString(),
+					});
+					return { artifactId };
+				}),
+			);
+
+			const caller = createTestCaller();
+			const r = (await caller.tdd_phase_transition_request({
+				tddSessionId: tddId,
+				requestedPhase: "red",
+				citedArtifactId: artifactId,
+			})) as { accepted: boolean };
+			expect(r.accepted).toBe(true);
+		});
+	});
+
+	describe("decompose_goal_into_behaviors tool", () => {
+		async function seedTddSession(ccSessionId: string, goal: string): Promise<number> {
+			const sessionId = await testRuntime.runPromise(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					return yield* store.writeSession({
+						cc_session_id: ccSessionId,
+						project: "default",
+						cwd: process.cwd(),
+						agent_kind: "main",
+						started_at: new Date().toISOString(),
+					});
+				}),
+			);
+			const caller = createTestCaller();
+			const tdd = await caller.tdd_session_start({ sessionId, goal });
+			return (tdd as { id: number }).id;
+		}
+
+		it("splits 'A and B' into two behaviors with sequential ordinals", async () => {
+			const tddId = await seedTddSession("cc-decompose-split", "A and B");
+			const caller = createTestCaller();
+			const r = (await caller.decompose_goal_into_behaviors({
+				tddSessionId: tddId,
+				goal: "rejects empty token and accepts valid token",
+			})) as { behaviors: Array<{ id: number; ordinal: number; behavior: string }> };
+			expect(r.behaviors).toHaveLength(2);
+			expect(r.behaviors[0]?.ordinal).toBe(0);
+			expect(r.behaviors[0]?.behavior).toBe("rejects empty token");
+			expect(r.behaviors[1]?.ordinal).toBe(1);
+		});
+
+		it("replays on duplicate call with the same key", async () => {
+			const tddId = await seedTddSession("cc-decompose-replay", "G");
+			const caller = createTestCaller();
+			const r1 = (await caller.decompose_goal_into_behaviors({
+				tddSessionId: tddId,
+				goal: "x and y",
+			})) as { behaviors: Array<{ id: number }> };
+			const r2 = (await caller.decompose_goal_into_behaviors({
+				tddSessionId: tddId,
+				goal: "x and y",
+			})) as {
+				behaviors: Array<{ id: number }>;
+				_idempotentReplay?: boolean;
+			};
+			expect(r1.behaviors[0]?.id).toBe(r2.behaviors[0]?.id);
+			expect(r2._idempotentReplay).toBe(true);
+		});
+	});
 });

@@ -3,6 +3,13 @@ import type { OutputFormat } from "../schemas/Common.js";
 import { FormatSelector } from "../services/FormatSelector.js";
 
 export const FormatSelectorLive = Layer.succeed(FormatSelector, {
-	select: (executor, explicitFormat) =>
-		Effect.succeed<OutputFormat>(explicitFormat ?? (executor === "human" ? "silent" : "markdown")),
+	select: (executor, explicitFormat, environment) =>
+		Effect.succeed<OutputFormat>(
+			explicitFormat ??
+				(environment === "ci-github" && executor === "ci"
+					? "ci-annotations"
+					: executor === "human"
+						? "silent"
+						: "markdown"),
+		),
 });

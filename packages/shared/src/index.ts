@@ -15,6 +15,7 @@ export * from "./errors/DiscoveryError.js";
 export * from "./errors/PathResolutionError.js";
 
 // Formatters
+export * from "./formatters/ci-annotations.js";
 export * from "./formatters/gfm.js";
 export * from "./formatters/json.js";
 export * from "./formatters/markdown.js";
@@ -48,6 +49,7 @@ export { formatWrapupEffect } from "./lib/format-wrapup.js";
 export { default as migration0001 } from "./migrations/0001_initial.js";
 export { default as migration0002 } from "./migrations/0002_comprehensive.js";
 export { default as migration0003 } from "./migrations/0003_idempotent_responses.js";
+export { default as migration0004 } from "./migrations/0004_test_cases_created_turn_id.js";
 // Schemas
 export * from "./schemas/AgentReport.js";
 export * from "./schemas/Baselines.js";
@@ -87,6 +89,7 @@ export * from "./utils/format-console.js";
 export * from "./utils/format-fatal-error.js";
 export * from "./utils/format-gfm.js";
 export * from "./utils/function-boundary.js";
+export * from "./utils/hyperlink.js";
 export * from "./utils/normalize-workspace-key.js";
 export * from "./utils/resolve-data-path.js";
 export * from "./utils/resolve-workspace-key.js";

@@ -105,7 +105,7 @@ interface ResolvedOptions {
 	includeBareZero: boolean;
 	githubActions: boolean | undefined;
 	githubSummaryFile: string | undefined;
-	format?: "markdown" | "json" | "vitest-bypass" | "silent";
+	format?: "markdown" | "json" | "vitest-bypass" | "silent" | "ci-annotations";
 	detail?: "minimal" | "neutral" | "standard" | "verbose";
 	mode?: "auto" | "agent" | "silent";
 	logLevel?: LogLevel.LogLevel;
@@ -794,7 +794,7 @@ export class AgentReporter {
 
 			const env = yield* detector.detect();
 			const executor = yield* executorResolver.resolve(env, opts.mode ?? "auto");
-			const format = yield* formatSelector.select(executor, opts.format);
+			const format = yield* formatSelector.select(executor, opts.format, env);
 			const health = {
 				hasFailures: reports.some((r) => r.summary.failed > 0 || r.unhandledErrors.length > 0),
 				belowTargets: reports.some((r) => {

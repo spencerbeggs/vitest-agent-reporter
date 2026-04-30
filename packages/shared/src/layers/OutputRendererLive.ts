@@ -1,4 +1,5 @@
 import { Effect, Layer } from "effect";
+import { ciAnnotationsFormatter } from "../formatters/ci-annotations.js";
 import { GfmFormatter } from "../formatters/gfm.js";
 import { JsonFormatter } from "../formatters/json.js";
 import { MarkdownFormatter } from "../formatters/markdown.js";
@@ -12,6 +13,7 @@ const formatters = new Map<string, Formatter>([
 	["json", JsonFormatter],
 	["silent", SilentFormatter],
 	["vitest-bypass", SilentFormatter],
+	["ci-annotations", ciAnnotationsFormatter],
 ]);
 
 export const OutputRendererLive = Layer.succeed(OutputRenderer, {

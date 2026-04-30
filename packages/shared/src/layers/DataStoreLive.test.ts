@@ -6,6 +6,7 @@ import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 import migration0001 from "../migrations/0001_initial.js";
 import migration0002 from "../migrations/0002_comprehensive.js";
+import migration0004 from "../migrations/0004_test_cases_created_turn_id.js";
 import { DataStore } from "../services/DataStore.js";
 import { DataStoreLive } from "./DataStoreLive.js";
 
@@ -16,6 +17,7 @@ const MigratorLayer = SqliteMigrator.layer({
 	loader: SqliteMigrator.fromRecord({
 		"0001_initial": migration0001,
 		"0002_comprehensive": migration0002,
+		"0004_test_cases_created_turn_id": migration0004,
 	}),
 }).pipe(Layer.provide(Layer.merge(SqliteLayer, PlatformLayer)));
 
@@ -995,6 +997,267 @@ describe("DataStoreLive", () => {
 				}),
 			);
 			expect(result).toBe(3);
+		});
+	});
+
+	describe("writeTddSession", () => {
+		it("inserts a tdd_sessions row and returns the id", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-tdd-1",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						agent_type: "tdd-orchestrator",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+
+					const tddId = yield* ds.writeTddSession({
+						sessionId,
+						goal: "add login validation",
+						startedAt: "2026-04-29T00:00:01Z",
+					});
+
+					const rows = yield* sql<{ goal: string; session_id: number }>`
+						SELECT goal, session_id FROM tdd_sessions WHERE id = ${tddId}
+					`;
+					return rows;
+				}),
+			);
+			expect(result).toHaveLength(1);
+			expect(result[0].goal).toBe("add login validation");
+		});
+
+		it("rejects duplicate (sessionId, goal) via the UNIQUE constraint", async () => {
+			const exit = await Effect.runPromiseExit(
+				Effect.provide(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						const sessionId = yield* ds.writeSession({
+							cc_session_id: "cc-tdd-2",
+							project: "demo",
+							cwd: "/tmp/demo",
+							agent_kind: "subagent",
+							started_at: "2026-04-29T00:00:00Z",
+						});
+						yield* ds.writeTddSession({ sessionId, goal: "g", startedAt: "2026-04-29T00:00:01Z" });
+						yield* ds.writeTddSession({ sessionId, goal: "g", startedAt: "2026-04-29T00:00:02Z" });
+					}),
+					TestLayer,
+				),
+			);
+			expect(exit._tag).toBe("Failure");
+		});
+	});
+
+	describe("endTddSession", () => {
+		it("updates ended_at, outcome, summary_note_id", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sql = yield* SqlClient;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-tdd-end",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({
+						sessionId,
+						goal: "g",
+						startedAt: "2026-04-29T00:00:01Z",
+					});
+					yield* ds.endTddSession({
+						id: tddId,
+						endedAt: "2026-04-29T00:01:00Z",
+						outcome: "succeeded",
+					});
+					const rows = yield* sql<{ outcome: string; ended_at: string }>`
+						SELECT outcome, ended_at FROM tdd_sessions WHERE id = ${tddId}
+					`;
+					return rows;
+				}),
+			);
+			expect(result[0].outcome).toBe("succeeded");
+			expect(result[0].ended_at).toBe("2026-04-29T00:01:00Z");
+		});
+	});
+
+	describe("writeTddSessionBehaviors", () => {
+		it("inserts each behavior with sequential ordinals starting at 0", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-decomp",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({
+						sessionId,
+						goal: "add OAuth flow",
+						startedAt: "2026-04-29T00:00:01Z",
+					});
+
+					return yield* ds.writeTddSessionBehaviors({
+						parentTddSessionId: tddId,
+						behaviors: [
+							{ behavior: "rejects empty token", suggestedTestName: "rejects empty token" },
+							{
+								behavior: "accepts valid token",
+								suggestedTestName: "accepts valid token",
+								dependsOnBehaviorIds: [],
+							},
+						],
+					});
+				}),
+			);
+			expect(result).toHaveLength(2);
+			expect(result[0].ordinal).toBe(0);
+			expect(result[1].ordinal).toBe(1);
+			expect(result[0].behavior).toBe("rejects empty token");
+		});
+	});
+
+	describe("writeTddPhase", () => {
+		it("opens a new phase and closes the prior one", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-phase",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({
+						sessionId,
+						goal: "g",
+						startedAt: "2026-04-29T00:00:01Z",
+					});
+
+					const r1 = yield* ds.writeTddPhase({
+						tddSessionId: tddId,
+						phase: "red",
+						startedAt: "2026-04-29T00:00:02Z",
+					});
+					const r2 = yield* ds.writeTddPhase({
+						tddSessionId: tddId,
+						phase: "green",
+						startedAt: "2026-04-29T00:00:10Z",
+						transitionReason: "test failed",
+					});
+
+					const closed = yield* sql<{ ended_at: string | null }>`
+						SELECT ended_at FROM tdd_phases WHERE id = ${r1.id}
+					`;
+					return { r1, r2, closed };
+				}),
+			);
+			expect(result.r1.previousPhaseId).toBeNull();
+			expect(result.r2.previousPhaseId).toBe(result.r1.id);
+			expect(result.closed[0].ended_at).toBe("2026-04-29T00:00:10Z");
+		});
+	});
+
+	describe("writeTddArtifact", () => {
+		it("inserts a tdd_artifacts row and returns the id", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-art",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({
+						sessionId,
+						goal: "g",
+						startedAt: "2026-04-29T00:00:01Z",
+					});
+					const phase = yield* ds.writeTddPhase({
+						tddSessionId: tddId,
+						phase: "red",
+						startedAt: "2026-04-29T00:00:02Z",
+					});
+
+					const id = yield* ds.writeTddArtifact({
+						phaseId: phase.id,
+						artifactKind: "test_written",
+						recordedAt: "2026-04-29T00:00:03Z",
+					});
+
+					const rows = yield* sql<{ artifact_kind: string }>`
+						SELECT artifact_kind FROM tdd_artifacts WHERE id = ${id}
+					`;
+					return rows;
+				}),
+			);
+			expect(result[0].artifact_kind).toBe("test_written");
+		});
+	});
+
+	describe("writeCommit + writeRunChangedFiles", () => {
+		it("inserts a commit and a set of changed files", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					yield* ds.writeCommit({
+						sha: "abc1234",
+						parentSha: "0000000",
+						message: "feat: add foo",
+						author: "Test User <test@example.com>",
+						committedAt: "2026-04-29T00:00:00Z",
+						branch: "main",
+					});
+
+					yield* ds.writeSettings("commit-hash", settingsInput, {});
+					const runId = yield* ds.writeRun({
+						...runInput,
+						invocationId: "inv-commit",
+						settingsHash: "commit-hash",
+						project: "demo",
+						timestamp: "2026-04-29T00:00:01Z",
+						duration: 1,
+						total: 0,
+						passed: 0,
+						failed: 0,
+						skipped: 0,
+						reason: "passed" as const,
+					});
+					yield* ds.writeRunChangedFiles({
+						runId,
+						files: [
+							{ filePath: "/abs/src/foo.ts", changeKind: "modified", commitSha: "abc1234" },
+							{ filePath: "/abs/src/bar.ts", changeKind: "added", commitSha: "abc1234" },
+						],
+					});
+
+					const commit = yield* sql<{ sha: string }>`SELECT sha FROM commits WHERE sha = 'abc1234'`;
+					const files = yield* sql<{
+						change_kind: string;
+					}>`SELECT change_kind FROM run_changed_files WHERE run_id = ${runId}`;
+					return { commit, files };
+				}),
+			);
+			expect(result.commit).toHaveLength(1);
+			expect(result.files).toHaveLength(2);
 		});
 	});
 });

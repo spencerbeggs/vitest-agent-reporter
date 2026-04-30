@@ -9,6 +9,9 @@ import type { HistoryRecord } from "../schemas/History.js";
 import type { TrendRecord } from "../schemas/Trends.js";
 import type {
 	AcceptanceMetrics,
+	CitedArtifactRow,
+	CommitChangesEntry,
+	CurrentTddPhase,
 	FailureSignatureDetail,
 	FlakyTest,
 	HypothesisDetail,
@@ -21,12 +24,14 @@ import type {
 	SettingsRow,
 	SuiteListEntry,
 	TddSessionDetail,
+	TddSessionSummary,
 	TestError,
 	TestListEntry,
 	TurnSearchOptions,
 	TurnSummary,
 } from "../services/DataReader.js";
 import { DataReader } from "../services/DataReader.js";
+import type { ArtifactKind, ChangeKind, Phase } from "../services/DataStore.js";
 
 export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.effect(
 	DataReader,
@@ -1630,6 +1635,176 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				),
 			);
 
+		const getCurrentTddPhase = (tddSessionId: number): Effect.Effect<Option.Option<CurrentTddPhase>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("getCurrentTddPhase").pipe(Effect.annotateLogs({ tddSessionId }));
+				const rows = yield* sql<{
+					id: number;
+					phase: string;
+					started_at: string;
+					behavior_id: number | null;
+				}>`
+					SELECT id, phase, started_at, behavior_id FROM tdd_phases
+					WHERE tdd_session_id = ${tddSessionId} AND ended_at IS NULL
+					ORDER BY started_at DESC LIMIT 1
+				`;
+				if (rows.length === 0) return Option.none<CurrentTddPhase>();
+				return Option.some<CurrentTddPhase>({
+					id: rows[0].id,
+					phase: rows[0].phase as Phase,
+					startedAt: rows[0].started_at,
+					behaviorId: rows[0].behavior_id,
+				});
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "tdd_phases", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const getTddArtifactWithContext = (
+			artifactId: number,
+		): Effect.Effect<Option.Option<CitedArtifactRow>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("getTddArtifactWithContext").pipe(Effect.annotateLogs({ artifactId }));
+				const rows = yield* sql<{
+					id: number;
+					phase_id: number;
+					artifact_kind: string;
+					test_case_id: number | null;
+					test_case_created_turn_at: string | null;
+					test_case_authored_in_session: number;
+					test_run_id: number | null;
+					test_first_failure_run_id: number | null;
+					behavior_id: number | null;
+				}>`
+					SELECT
+						a.id,
+						a.phase_id,
+						a.artifact_kind,
+						a.test_case_id,
+						ttc.occurred_at AS test_case_created_turn_at,
+						CASE
+							WHEN ttc.session_id = sess.id THEN 1
+							ELSE 0
+						END AS test_case_authored_in_session,
+						a.test_run_id,
+						a.test_first_failure_run_id,
+						p.behavior_id
+					FROM tdd_artifacts a
+					JOIN tdd_phases p ON p.id = a.phase_id
+					JOIN tdd_sessions ts ON ts.id = p.tdd_session_id
+					JOIN sessions sess ON sess.id = ts.session_id
+					LEFT JOIN test_cases tc ON tc.id = a.test_case_id
+					LEFT JOIN turns ttc ON ttc.id = tc.created_turn_id
+					WHERE a.id = ${artifactId}
+				`;
+				if (rows.length === 0) return Option.none<CitedArtifactRow>();
+				const r = rows[0];
+				return Option.some<CitedArtifactRow>({
+					id: r.id,
+					phase_id: r.phase_id,
+					artifact_kind: r.artifact_kind as ArtifactKind,
+					test_case_id: r.test_case_id,
+					test_case_created_turn_at: r.test_case_created_turn_at,
+					test_case_authored_in_session: r.test_case_authored_in_session === 1,
+					test_run_id: r.test_run_id,
+					test_first_failure_run_id: r.test_first_failure_run_id,
+					behavior_id: r.behavior_id,
+				});
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "tdd_artifacts", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const getCommitChanges = (sha?: string): Effect.Effect<ReadonlyArray<CommitChangesEntry>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("getCommitChanges").pipe(Effect.annotateLogs({ sha: sha ?? "ALL" }));
+
+				const commitRows =
+					sha !== undefined
+						? yield* sql<{
+								sha: string;
+								parent_sha: string | null;
+								message: string | null;
+								author: string | null;
+								committed_at: string | null;
+								branch: string | null;
+							}>`SELECT sha, parent_sha, message, author, committed_at, branch FROM commits WHERE sha = ${sha}`
+						: yield* sql<{
+								sha: string;
+								parent_sha: string | null;
+								message: string | null;
+								author: string | null;
+								committed_at: string | null;
+								branch: string | null;
+							}>`
+							SELECT sha, parent_sha, message, author, committed_at, branch FROM commits
+							ORDER BY committed_at DESC NULLS LAST LIMIT 20
+						`;
+
+				const out: CommitChangesEntry[] = [];
+				for (const c of commitRows) {
+					const fileRows = yield* sql<{ path: string; change_kind: string }>`
+						SELECT f.path, rcf.change_kind
+						FROM run_changed_files rcf
+						JOIN files f ON f.id = rcf.file_id
+						WHERE rcf.commit_sha = ${c.sha}
+					`;
+					out.push({
+						sha: c.sha,
+						parentSha: c.parent_sha,
+						message: c.message,
+						author: c.author,
+						committedAt: c.committed_at,
+						branch: c.branch,
+						files: fileRows.map((r) => ({
+							filePath: r.path,
+							changeKind: r.change_kind as ChangeKind,
+						})),
+					});
+				}
+				return out;
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "commits", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const listTddSessionsForSession = (
+			sessionId: number,
+		): Effect.Effect<ReadonlyArray<TddSessionSummary>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("listTddSessionsForSession").pipe(Effect.annotateLogs({ sessionId }));
+				const rows = yield* sql<{
+					id: number;
+					session_id: number;
+					goal: string;
+					started_at: string;
+					ended_at: string | null;
+					outcome: string | null;
+				}>`
+					SELECT id, session_id, goal, started_at, ended_at, outcome FROM tdd_sessions
+					WHERE session_id = ${sessionId} ORDER BY started_at DESC
+				`;
+				return rows.map((r) => ({
+					id: r.id,
+					sessionId: r.session_id,
+					goal: r.goal,
+					startedAt: r.started_at,
+					endedAt: r.ended_at,
+					outcome: r.outcome as TddSessionSummary["outcome"],
+				}));
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "tdd_sessions", reason: extractSqlReason(e) }),
+				),
+			);
+
 		const listHypotheses = (options: {
 			readonly sessionId?: number;
 			readonly outcome?: "confirmed" | "refuted" | "abandoned" | "open";
@@ -1733,6 +1908,10 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 			computeAcceptanceMetrics,
 			getFailureSignatureByHash,
 			getTddSessionById,
+			getCurrentTddPhase,
+			getTddArtifactWithContext,
+			getCommitChanges,
+			listTddSessionsForSession,
 			listHypotheses,
 			findIdempotentResponse,
 		};

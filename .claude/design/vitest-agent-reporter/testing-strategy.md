@@ -5,6 +5,7 @@ category: testing
 created: 2026-04-29
 updated: 2026-04-30
 last-synced: 2026-04-30
+post-final-sync: 2026-04-30
 completeness: 90
 related:
   - vitest-agent-reporter/architecture.md
@@ -33,12 +34,12 @@ explicit `include` globs per project.
 
 | Project | Tests |
 | --- | --- |
-| `vitest-agent-reporter-shared` | 498 |
+| `vitest-agent-reporter-shared` | 544 |
 | `vitest-agent-reporter` | 103 |
-| `vitest-agent-reporter-cli` | 48 |
-| `vitest-agent-reporter-mcp` | 40 |
+| `vitest-agent-reporter-cli` | 54 |
+| `vitest-agent-reporter-mcp` | 64 |
 | `example-basic` | 8 |
-| **Total** | **697** |
+| **Total** | **773** |
 
 The shared count grew by 59 on the 2.0.0-α schema branch:
 `0002_comprehensive` migration verification, the seven turn
@@ -91,8 +92,38 @@ the additions are:
   test for the idempotency middleware that drives
   `idempotentProcedure` with both cache-miss and cache-hit
   paths and verifies the swallow-on-persist-failure behavior
-- The total moves above 697; refer to the running CI count for
-  the current number rather than hard-coding it here
+
+The 2.0.0 final / TDD-orchestrator branch adds **76 more
+tests** across packages, bringing the total from 697 to **773**.
+The new tests follow the same patterns as α/β/RC; no new
+pattern names to document.
+
+- shared (+46): `0004_test_cases_created_turn_id` migration
+  round-trip, the 7 new DataStore methods (`writeTddSession`,
+  `endTddSession`, `writeTddSessionBehaviors`, `writeTddPhase`
+  -- including the same-transaction prior-phase-close
+  semantics, `writeTddArtifact`, `writeCommit` idempotency on
+  `sha`, `writeRunChangedFiles`), the 4 new DataReader
+  methods (`getCurrentTddPhase`,
+  `getTddArtifactWithContext` D2-context join,
+  `getCommitChanges` with-and-without sha,
+  `listTddSessionsForSession`), and the new `ci-annotations`
+  formatter's GitHub Actions escape rules + the `osc8`
+  utility's gating behavior
+- mcp (+24): the 6 new tools (`tdd_session_start`,
+  `tdd_session_end`, `tdd_session_resume`,
+  `decompose_goal_into_behaviors`,
+  `tdd_phase_transition_request`, `commit_changes`) via the
+  existing `createCallerFactory` pattern (Pattern 2), plus
+  expanded coverage of the 4-of-5 mutations registered for
+  idempotency replay versus the deliberately-non-replayed
+  `tdd_phase_transition_request`
+- cli (+6): `record tdd-artifact` and
+  `record run-workspace-changes` lib functions, including the
+  Effect Schema decode of the `RunChangedFile[]` JSON
+  argument
+- reporter (+0): no reporter changes on this branch
+- example-basic (+0): no example changes on this branch
 
 All four coverage metrics (statements, branches, functions, lines)
 are above 80%. The root `vitest.config.ts` `coverage.exclude` list
@@ -269,6 +300,6 @@ disk-backed DBs to avoid concurrent-test isolation issues.
 
 ---
 
-**Document Status:** Current. Reflects the post-2.0.0-RC
-four-package test layout. For when each pattern was introduced,
-see [phase-history.md](./phase-history.md).
+**Document Status:** Current. Reflects the post-2.0.0 final /
+TDD-orchestrator four-package test layout. For when each pattern
+was introduced, see [phase-history.md](./phase-history.md).

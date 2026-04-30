@@ -61,6 +61,57 @@ export const idempotencyKeys: ReadonlyArray<IdempotencyKeySpec> = [
 			return null;
 		},
 	},
+	{
+		procedurePath: "tdd_session_start",
+		deriveKey: (input) => {
+			if (
+				input !== null &&
+				typeof input === "object" &&
+				"sessionId" in input &&
+				"goal" in input &&
+				typeof (input as Record<string, unknown>).sessionId === "number" &&
+				typeof (input as Record<string, unknown>).goal === "string"
+			) {
+				const i = input as { sessionId: number; goal: string };
+				return `${i.sessionId}:${i.goal}`;
+			}
+			return null;
+		},
+	},
+	{
+		procedurePath: "tdd_session_end",
+		deriveKey: (input) => {
+			if (
+				input !== null &&
+				typeof input === "object" &&
+				"tddSessionId" in input &&
+				"outcome" in input &&
+				typeof (input as Record<string, unknown>).tddSessionId === "number" &&
+				typeof (input as Record<string, unknown>).outcome === "string"
+			) {
+				const i = input as { tddSessionId: number; outcome: string };
+				return `${i.tddSessionId}:${i.outcome}`;
+			}
+			return null;
+		},
+	},
+	{
+		procedurePath: "decompose_goal_into_behaviors",
+		deriveKey: (input) => {
+			if (
+				input !== null &&
+				typeof input === "object" &&
+				"tddSessionId" in input &&
+				"goal" in input &&
+				typeof (input as Record<string, unknown>).tddSessionId === "number" &&
+				typeof (input as Record<string, unknown>).goal === "string"
+			) {
+				const i = input as { tddSessionId: number; goal: string };
+				return `${i.tddSessionId}:${i.goal}`;
+			}
+			return null;
+		},
+	},
 ];
 
 // ---------------------------------------------------------------------------

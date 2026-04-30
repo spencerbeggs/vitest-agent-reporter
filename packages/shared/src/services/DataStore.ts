@@ -3,6 +3,9 @@ import { Context } from "effect";
 import type { DataStoreError } from "../errors/DataStoreError.js";
 import type { CoverageBaselines } from "../schemas/Baselines.js";
 import type { TrendEntry } from "../schemas/Trends.js";
+import type { ArtifactKind, Phase } from "../utils/validate-phase-transition.js";
+
+export type { ArtifactKind, Phase };
 
 export interface SettingsInput {
 	readonly vitest_version: string;
@@ -86,6 +89,11 @@ export interface TestCaseInput {
 	readonly locationLine?: number;
 	readonly locationColumn?: number;
 	readonly tags?: readonly string[];
+	/**
+	 * FK to `turns(id)`. Set by the reporter when the test case row was
+	 * authored within a recorded turn (D2 binding rule 1).
+	 */
+	readonly created_turn_id?: number;
 }
 
 export interface StackFrameInput {
@@ -201,6 +209,85 @@ export interface IdempotentResponseInput {
 	readonly createdAt: string;
 }
 
+export interface TddSessionInput {
+	readonly sessionId: number;
+	readonly goal: string;
+	readonly startedAt: string;
+	readonly parentTddSessionId?: number;
+}
+
+export interface EndTddSessionInput {
+	readonly id: number;
+	readonly endedAt: string;
+	readonly outcome: "succeeded" | "blocked" | "abandoned";
+	readonly summaryNoteId?: number;
+}
+
+export interface TddBehaviorInput {
+	readonly behavior: string;
+	readonly suggestedTestName: string;
+	readonly dependsOnBehaviorIds?: ReadonlyArray<number>;
+}
+
+export interface WriteTddBehaviorsInput {
+	readonly parentTddSessionId: number;
+	readonly behaviors: ReadonlyArray<TddBehaviorInput>;
+}
+
+export interface TddBehaviorOutput {
+	readonly id: number;
+	readonly ordinal: number;
+	readonly behavior: string;
+	readonly suggestedTestName: string;
+}
+
+export interface WriteTddPhaseInput {
+	readonly tddSessionId: number;
+	readonly behaviorId?: number;
+	readonly phase: Phase;
+	readonly startedAt: string;
+	readonly transitionReason?: string;
+	readonly parentPhaseId?: number;
+}
+
+export interface WriteTddPhaseOutput {
+	readonly id: number;
+	readonly previousPhaseId: number | null;
+}
+
+export interface WriteTddArtifactInput {
+	readonly phaseId: number;
+	readonly artifactKind: ArtifactKind;
+	readonly fileId?: number;
+	readonly testCaseId?: number;
+	readonly testRunId?: number;
+	readonly testFirstFailureRunId?: number;
+	readonly diffExcerpt?: string;
+	readonly recordedAt: string;
+}
+
+export interface WriteCommitInput {
+	readonly sha: string;
+	readonly parentSha?: string;
+	readonly message?: string;
+	readonly author?: string;
+	readonly committedAt?: string;
+	readonly branch?: string;
+}
+
+export type ChangeKind = "added" | "modified" | "deleted" | "renamed" | "untracked-modified";
+
+export interface RunChangedFile {
+	readonly filePath: string;
+	readonly changeKind: ChangeKind;
+	readonly commitSha?: string;
+}
+
+export interface WriteRunChangedFilesInput {
+	readonly runId: number;
+	readonly files: ReadonlyArray<RunChangedFile>;
+}
+
 export class DataStore extends Context.Tag("vitest-agent-reporter/DataStore")<
 	DataStore,
 	{
@@ -265,6 +352,15 @@ export class DataStore extends Context.Tag("vitest-agent-reporter/DataStore")<
 		) => Effect.Effect<void, DataStoreError>;
 		readonly writeHypothesis: (input: HypothesisInput) => Effect.Effect<number, DataStoreError>;
 		readonly validateHypothesis: (input: ValidateHypothesisInput) => Effect.Effect<void, DataStoreError>;
+		readonly writeTddSession: (input: TddSessionInput) => Effect.Effect<number, DataStoreError>;
+		readonly endTddSession: (input: EndTddSessionInput) => Effect.Effect<void, DataStoreError>;
+		readonly writeTddSessionBehaviors: (
+			input: WriteTddBehaviorsInput,
+		) => Effect.Effect<ReadonlyArray<TddBehaviorOutput>, DataStoreError>;
+		readonly writeTddPhase: (input: WriteTddPhaseInput) => Effect.Effect<WriteTddPhaseOutput, DataStoreError>;
+		readonly writeTddArtifact: (input: WriteTddArtifactInput) => Effect.Effect<number, DataStoreError>;
+		readonly writeCommit: (input: WriteCommitInput) => Effect.Effect<void, DataStoreError>;
+		readonly writeRunChangedFiles: (input: WriteRunChangedFilesInput) => Effect.Effect<void, DataStoreError>;
 		readonly recordIdempotentResponse: (input: IdempotentResponseInput) => Effect.Effect<void, DataStoreError>;
 		readonly pruneSessions: (
 			keepRecent: number,

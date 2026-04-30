@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import migration0001 from "../migrations/0001_initial.js";
 import migration0002 from "../migrations/0002_comprehensive.js";
 import migration0003 from "../migrations/0003_idempotent_responses.js";
+import migration0004 from "../migrations/0004_test_cases_created_turn_id.js";
 import { DataReader } from "../services/DataReader.js";
 import { DataStore } from "../services/DataStore.js";
 import { DataReaderLive } from "./DataReaderLive.js";
@@ -20,6 +21,7 @@ const MigratorLayer = SqliteMigrator.layer({
 		"0001_initial": migration0001,
 		"0002_comprehensive": migration0002,
 		"0003_idempotent_responses": migration0003,
+		"0004_test_cases_created_turn_id": migration0004,
 	}),
 }).pipe(Layer.provide(Layer.merge(SqliteLayer, PlatformLayer)));
 
@@ -1322,6 +1324,191 @@ describe("DataReaderLive", () => {
 				const parsed = JSON.parse(result.value);
 				expect(parsed.second).toBeUndefined();
 			}
+		});
+	});
+
+	describe("getCurrentTddPhase", () => {
+		it("returns the most-recent open phase for a TDD session", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const reader = yield* DataReader;
+
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-cur",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({
+						sessionId,
+						goal: "g",
+						startedAt: "2026-04-29T00:00:01Z",
+					});
+					yield* ds.writeTddPhase({
+						tddSessionId: tddId,
+						phase: "red",
+						startedAt: "2026-04-29T00:00:02Z",
+					});
+					yield* ds.writeTddPhase({
+						tddSessionId: tddId,
+						phase: "green",
+						startedAt: "2026-04-29T00:00:10Z",
+					});
+
+					return yield* reader.getCurrentTddPhase(tddId);
+				}),
+			);
+			expect(Option.isSome(result)).toBe(true);
+			if (Option.isSome(result)) {
+				expect(result.value.phase).toBe("green");
+			}
+		});
+
+		it("returns None when no phases exist", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const reader = yield* DataReader;
+					return yield* reader.getCurrentTddPhase(999);
+				}),
+			);
+			expect(Option.isNone(result)).toBe(true);
+		});
+	});
+
+	describe("getTddArtifactWithContext", () => {
+		it("returns the artifact joined with test_cases / turns context", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const reader = yield* DataReader;
+
+					// Seed: session + tdd session + phase + a test-case authored
+					// in this session (test_first_failure_run_id wired via test_run_id).
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-ctx",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const turnId = yield* ds.writeTurn({
+						session_id: sessionId,
+						type: "file_edit",
+						payload: JSON.stringify({
+							type: "file_edit",
+							file_path: "/abs/src/foo.test.ts",
+							edit_kind: "edit",
+						}),
+						occurred_at: "2026-04-29T00:00:00.500Z",
+					});
+					const tddId = yield* ds.writeTddSession({
+						sessionId,
+						goal: "g",
+						startedAt: "2026-04-29T00:00:01Z",
+					});
+					const phase = yield* ds.writeTddPhase({
+						tddSessionId: tddId,
+						phase: "red",
+						startedAt: "2026-04-29T00:00:02Z",
+					});
+					yield* ds.writeSettings("ctx-hash", settingsInput, {});
+					const runId = yield* ds.writeRun({
+						...runInput,
+						invocationId: "inv-ctx",
+						settingsHash: "ctx-hash",
+						project: "demo",
+						timestamp: "2026-04-29T00:00:03Z",
+						duration: 1,
+						total: 1,
+						passed: 0,
+						failed: 1,
+						skipped: 0,
+						reason: "failed" as const,
+					});
+					const fileId = yield* ds.ensureFile("/abs/src/foo.test.ts");
+					const moduleIds = yield* ds.writeModules(runId, [
+						{ fileId, relativeModuleId: "src/foo.test.ts", state: "failed" },
+					]);
+					const testCaseIds = yield* ds.writeTestCases(moduleIds[0], [
+						{
+							name: "rejects empty",
+							fullName: "Foo > rejects empty",
+							state: "failed",
+							created_turn_id: turnId,
+						},
+					]);
+
+					const artifactId = yield* ds.writeTddArtifact({
+						phaseId: phase.id,
+						artifactKind: "test_failed_run",
+						testCaseId: testCaseIds[0],
+						testRunId: runId,
+						testFirstFailureRunId: runId,
+						recordedAt: "2026-04-29T00:00:04Z",
+					});
+
+					return yield* reader.getTddArtifactWithContext(artifactId);
+				}),
+			);
+			expect(Option.isSome(result)).toBe(true);
+			if (Option.isSome(result)) {
+				expect(result.value.artifact_kind).toBe("test_failed_run");
+				expect(result.value.test_case_authored_in_session).toBe(true);
+				expect(result.value.test_first_failure_run_id).not.toBeNull();
+			}
+		});
+
+		it("returns None for an unknown artifact id", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const reader = yield* DataReader;
+					return yield* reader.getTddArtifactWithContext(99999);
+				}),
+			);
+			expect(Option.isNone(result)).toBe(true);
+		});
+	});
+
+	describe("getCommitChanges", () => {
+		it("returns commit detail with attached changed files", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const reader = yield* DataReader;
+					yield* ds.writeCommit({
+						sha: "deadbeef",
+						message: "feat: x",
+						author: "T",
+						committedAt: "2026-04-29T00:00:00Z",
+						branch: "main",
+					});
+					yield* ds.writeSettings("getcommit-hash", settingsInput, {});
+					const runId = yield* ds.writeRun({
+						...runInput,
+						invocationId: "inv-getcommit",
+						settingsHash: "getcommit-hash",
+						project: "demo",
+						timestamp: "2026-04-29T00:00:01Z",
+						duration: 1,
+						total: 0,
+						passed: 0,
+						failed: 0,
+						skipped: 0,
+						reason: "passed" as const,
+					});
+					yield* ds.writeRunChangedFiles({
+						runId,
+						files: [{ filePath: "/abs/src/x.ts", changeKind: "modified", commitSha: "deadbeef" }],
+					});
+					return yield* reader.getCommitChanges("deadbeef");
+				}),
+			);
+			expect(result).toHaveLength(1);
+			expect(result[0].sha).toBe("deadbeef");
+			expect(result[0].files).toHaveLength(1);
+			expect(result[0].files[0].filePath).toBe("/abs/src/x.ts");
 		});
 	});
 });

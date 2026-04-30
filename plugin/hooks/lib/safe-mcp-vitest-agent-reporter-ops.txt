@@ -57,3 +57,13 @@ wrapup_prompt
 # === RC: Hypothesis writes ===
 hypothesis_record
 hypothesis_validate
+
+# === final: TDD lifecycle (idempotent on key) ===
+tdd_session_start
+tdd_session_end
+tdd_session_resume
+decompose_goal_into_behaviors
+tdd_phase_transition_request
+
+# === final: Workspace history (read-only) ===
+commit_changes
