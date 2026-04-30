@@ -656,7 +656,7 @@ last drop-and-recreate.
     turn rows for older sessions (FK CASCADE handles
     `tool_invocations` + `file_edits`). Sessions rows
     themselves are retained. Returns
-    `{ prunedSessions, prunedTurns }`
+    `{ affectedSessions, prunedTurns }`
 
   New input shapes in DataStore.ts: `IdempotentResponseInput`,
   `HypothesisInput`, `ValidateHypothesisInput`

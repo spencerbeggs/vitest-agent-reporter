@@ -44,15 +44,24 @@ branch=$(cd "$cwd" && git rev-parse --abbrev-ref HEAD 2>/dev/null)
 project=$(jq -r '.name // "unknown"' < "$cwd/package.json" 2>/dev/null || echo "unknown")
 
 # Build the changed-files JSON. `git show --name-status HEAD` outputs lines
-# like "M\tpath/to/file" or "A\tpath".
+# like "M\tpath/to/file" for modifications and "R<score>\told\tnew" or
+# "C<score>\told\tnew" for renames and copies. For renames/copies the new
+# path is in column 2 (.[2]) — pulling .[1] would record the old path,
+# which no longer exists in the working tree.
 files_json=$(cd "$cwd" && git show --name-status --format= HEAD 2>/dev/null | jq -Rsn '
 	[inputs | split("\n")[] | select(length > 0) | split("\t")
-	 | { filePath: .[1],
+	 | { filePath: (
+	       if (.[0] | startswith("R")) or (.[0] | startswith("C"))
+	       then .[2]
+	       else .[1]
+	       end
+	     ),
 	     changeKind: (
 	       if   .[0] == "M" then "modified"
 	       elif .[0] == "A" then "added"
 	       elif .[0] == "D" then "deleted"
 	       elif (.[0] | startswith("R")) then "renamed"
+	       elif (.[0] | startswith("C")) then "added"
 	       else "modified" end
 	     )
 	   }

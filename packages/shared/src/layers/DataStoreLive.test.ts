@@ -945,7 +945,7 @@ describe("DataStoreLive", () => {
 					return { out, remainingTurnSessions };
 				}),
 			);
-			expect(result.out.prunedSessions).toBe(2);
+			expect(result.out.affectedSessions).toBe(2);
 			expect(result.out.prunedTurns).toBe(2);
 			// Sessions 1+2 (the two oldest) lose their turns; 3+4 keep them.
 			expect(result.remainingTurnSessions).toHaveLength(2);
@@ -965,7 +965,7 @@ describe("DataStoreLive", () => {
 					return yield* ds.pruneSessions(30);
 				}),
 			);
-			expect(result.prunedSessions).toBe(0);
+			expect(result.affectedSessions).toBe(0);
 			expect(result.prunedTurns).toBe(0);
 		});
 

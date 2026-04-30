@@ -46,8 +46,16 @@ describe("idempotency key derivation", () => {
 		const { deriveKey } = spec("tdd_session_start");
 
 		it("derives a stable key from (sessionId, goal)", () => {
-			expect(deriveKey({ sessionId: 7, goal: "add foo" })).toBe("7:add foo");
+			expect(deriveKey({ sessionId: 7, goal: "add foo" })).toBe("sid:7:add foo");
 			expect(deriveKey({ sessionId: 7, goal: "add foo" })).toBe(deriveKey({ sessionId: 7, goal: "add foo" }));
+		});
+
+		it("derives a stable key from (ccSessionId, goal) when sessionId is absent", () => {
+			expect(deriveKey({ ccSessionId: "cc-abc", goal: "add foo" })).toBe("cc:cc-abc:add foo");
+		});
+
+		it("prefixes the kind so cc-id and integer-id namespaces never collide", () => {
+			expect(deriveKey({ sessionId: 7, goal: "g" })).not.toBe(deriveKey({ ccSessionId: "7", goal: "g" }));
 		});
 
 		it("returns null for malformed input", () => {

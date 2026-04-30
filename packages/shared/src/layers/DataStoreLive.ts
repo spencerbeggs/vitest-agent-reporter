@@ -739,7 +739,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 
 		const pruneSessions = (
 			keepRecent: number,
-		): Effect.Effect<{ readonly prunedSessions: number; readonly prunedTurns: number }, DataStoreError> =>
+		): Effect.Effect<{ readonly affectedSessions: number; readonly prunedTurns: number }, DataStoreError> =>
 			Effect.gen(function* () {
 				yield* Effect.logDebug("pruneSessions").pipe(Effect.annotateLogs({ keepRecent }));
 
@@ -748,7 +748,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				const cutoffRows = yield* sql<{ started_at: string }>`
 					SELECT started_at FROM sessions ORDER BY started_at DESC LIMIT 1 OFFSET ${keepRecent}
 				`;
-				if (cutoffRows.length === 0) return { prunedSessions: 0, prunedTurns: 0 };
+				if (cutoffRows.length === 0) return { affectedSessions: 0, prunedTurns: 0 };
 				const cutoff = cutoffRows[0].started_at;
 
 				const turnCountRows = yield* sql<{ count: number }>`
@@ -757,10 +757,13 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				`;
 				const prunedTurns = turnCountRows[0]?.count ?? 0;
 
+				// `affectedSessions` is the number of sessions whose turn-log was
+				// dropped, NOT sessions deleted: sessions rows are retained so the
+				// summary remains queryable. Naming reflects that distinction.
 				const sessionCountRows = yield* sql<{ count: number }>`
 					SELECT COUNT(*) AS count FROM sessions WHERE started_at <= ${cutoff}
 				`;
-				const prunedSessions = sessionCountRows[0]?.count ?? 0;
+				const affectedSessions = sessionCountRows[0]?.count ?? 0;
 
 				// FK CASCADE on tool_invocations.turn_id and file_edits.turn_id
 				// drops the children when these turns rows go. The sessions rows
@@ -771,7 +774,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 					)
 				`;
 
-				return { prunedSessions, prunedTurns };
+				return { affectedSessions, prunedTurns };
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
 				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "turns", reason: extractSqlReason(e) })),

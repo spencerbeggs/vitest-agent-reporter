@@ -364,6 +364,6 @@ export class DataStore extends Context.Tag("vitest-agent-reporter/DataStore")<
 		readonly recordIdempotentResponse: (input: IdempotentResponseInput) => Effect.Effect<void, DataStoreError>;
 		readonly pruneSessions: (
 			keepRecent: number,
-		) => Effect.Effect<{ readonly prunedSessions: number; readonly prunedTurns: number }, DataStoreError>;
+		) => Effect.Effect<{ readonly affectedSessions: number; readonly prunedTurns: number }, DataStoreError>;
 	}
 >() {}
