@@ -20,6 +20,7 @@ import { coverageCommand } from "./commands/coverage.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { historyCommand } from "./commands/history.js";
 import { overviewCommand } from "./commands/overview.js";
+import { recordCommand } from "./commands/record.js";
 import { statusCommand } from "./commands/status.js";
 import { trendsCommand } from "./commands/trends.js";
 import { CliLive } from "./layers/CliLive.js";
@@ -33,6 +34,7 @@ const rootCommand = Command.make("vitest-agent-reporter").pipe(
 		trendsCommand,
 		cacheCommand,
 		doctorCommand,
+		recordCommand,
 	]),
 );
 
