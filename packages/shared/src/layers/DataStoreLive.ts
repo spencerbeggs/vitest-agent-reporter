@@ -4,6 +4,7 @@ import { DataStoreError, extractSqlReason } from "../errors/DataStoreError.js";
 import type { CoverageBaselines } from "../schemas/Baselines.js";
 import type { TrendEntry } from "../schemas/Trends.js";
 import type {
+	FailureSignatureInput,
 	FileCoverageInput,
 	ModuleInput,
 	NoteInput,
@@ -401,6 +402,19 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "turns", reason: extractSqlReason(e) })),
 			);
 
+		const writeFailureSignature = (input: FailureSignatureInput): Effect.Effect<void, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("writeFailureSignature").pipe(
+					Effect.annotateLogs({ signatureHash: input.signatureHash, runId: input.runId }),
+				);
+				yield* sql`INSERT INTO failure_signatures (signature_hash, first_seen_run_id, first_seen_at, occurrence_count) VALUES (${input.signatureHash}, ${input.runId}, ${input.seenAt}, 1) ON CONFLICT(signature_hash) DO UPDATE SET occurrence_count = occurrence_count + 1`;
+			}).pipe(
+				Effect.annotateLogs("service", "DataStore"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "failure_signatures", reason: extractSqlReason(e) }),
+				),
+			);
+
 		return {
 			ensureFile,
 			writeSettings,
@@ -419,6 +433,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 			deleteNote,
 			writeSession,
 			writeTurn,
+			writeFailureSignature,
 		};
 	}),
 );

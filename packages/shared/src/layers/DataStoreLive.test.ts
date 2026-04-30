@@ -273,8 +273,11 @@ describe("DataStoreLive", () => {
 					yield* store.writeSettings("sig-hash", settingsInput, {});
 					const runId = yield* store.writeRun({ ...runInput, settingsHash: "sig-hash" });
 
-					// Seed failure_signatures so the FK resolves; writeFailureSignature lands in Task 5.
-					yield* sql`INSERT INTO failure_signatures (signature_hash, first_seen_run_id, first_seen_at, occurrence_count) VALUES ('abcdef0123456789', ${runId}, '2026-04-29T00:00:00Z', 1)`;
+					yield* store.writeFailureSignature({
+						signatureHash: "abcdef0123456789",
+						runId,
+						seenAt: "2026-04-29T00:00:00Z",
+					});
 
 					yield* store.writeErrors(runId, [
 						{
@@ -290,6 +293,37 @@ describe("DataStoreLive", () => {
 					`;
 					expect(rows).toHaveLength(1);
 					expect(rows[0].signature_hash).toBe("abcdef0123456789");
+				}),
+			);
+		});
+	});
+
+	describe("writeFailureSignature", () => {
+		it("inserts on first call and increments occurrence_count on second", async () => {
+			await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					yield* store.writeSettings("fs-hash", settingsInput, {});
+					const runId = yield* store.writeRun({ ...runInput, settingsHash: "fs-hash" });
+
+					yield* store.writeFailureSignature({
+						signatureHash: "deadbeefcafe1234",
+						runId,
+						seenAt: "2026-04-29T00:00:00Z",
+					});
+					yield* store.writeFailureSignature({
+						signatureHash: "deadbeefcafe1234",
+						runId,
+						seenAt: "2026-04-29T00:00:01Z",
+					});
+
+					const rows = yield* sql<{ signature_hash: string; occurrence_count: number }>`
+						SELECT signature_hash, occurrence_count FROM failure_signatures WHERE signature_hash = 'deadbeefcafe1234'
+					`;
+					expect(rows).toHaveLength(1);
+					expect(rows[0].occurrence_count).toBe(2);
 				}),
 			);
 		});

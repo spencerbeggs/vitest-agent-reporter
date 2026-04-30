@@ -161,6 +161,12 @@ export interface TurnInput {
 	readonly occurred_at: string;
 }
 
+export interface FailureSignatureInput {
+	readonly signatureHash: string;
+	readonly runId: number;
+	readonly seenAt: string;
+}
+
 export class DataStore extends Context.Tag("vitest-agent-reporter/DataStore")<
 	DataStore,
 	{
@@ -217,5 +223,6 @@ export class DataStore extends Context.Tag("vitest-agent-reporter/DataStore")<
 		readonly deleteNote: (id: number) => Effect.Effect<void, DataStoreError>;
 		readonly writeSession: (input: SessionInput) => Effect.Effect<number, DataStoreError>;
 		readonly writeTurn: (input: TurnInput) => Effect.Effect<number, DataStoreError>;
+		readonly writeFailureSignature: (input: FailureSignatureInput) => Effect.Effect<void, DataStoreError>;
 	}
 >() {}
