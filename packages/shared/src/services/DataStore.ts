@@ -100,6 +100,7 @@ export interface TestErrorInput {
 	readonly expected?: string;
 	readonly stack?: string;
 	readonly causeErrorId?: number;
+	readonly signatureHash?: string;
 	readonly ordinal?: number;
 }
 
