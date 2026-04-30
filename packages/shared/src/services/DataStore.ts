@@ -179,6 +179,28 @@ export interface FailureSignatureWriteInput {
 	readonly seenAt: string;
 }
 
+export interface HypothesisInput {
+	readonly sessionId: number;
+	readonly content: string;
+	readonly createdTurnId?: number;
+	readonly citedTestErrorId?: number;
+	readonly citedStackFrameId?: number;
+}
+
+export interface ValidateHypothesisInput {
+	readonly id: number;
+	readonly outcome: "confirmed" | "refuted" | "abandoned";
+	readonly validatedTurnId?: number;
+	readonly validatedAt: string;
+}
+
+export interface IdempotentResponseInput {
+	readonly procedurePath: string;
+	readonly key: string;
+	readonly resultJson: string;
+	readonly createdAt: string;
+}
+
 export class DataStore extends Context.Tag("vitest-agent-reporter/DataStore")<
 	DataStore,
 	{
@@ -241,5 +263,11 @@ export class DataStore extends Context.Tag("vitest-agent-reporter/DataStore")<
 			endedAt: string,
 			endReason: string | null,
 		) => Effect.Effect<void, DataStoreError>;
+		readonly writeHypothesis: (input: HypothesisInput) => Effect.Effect<number, DataStoreError>;
+		readonly validateHypothesis: (input: ValidateHypothesisInput) => Effect.Effect<void, DataStoreError>;
+		readonly recordIdempotentResponse: (input: IdempotentResponseInput) => Effect.Effect<void, DataStoreError>;
+		readonly pruneSessions: (
+			keepRecent: number,
+		) => Effect.Effect<{ readonly prunedSessions: number; readonly prunedTurns: number }, DataStoreError>;
 	}
 >() {}

@@ -6,6 +6,7 @@ import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import migration0001 from "../migrations/0001_initial.js";
 import migration0002 from "../migrations/0002_comprehensive.js";
+import migration0003 from "../migrations/0003_idempotent_responses.js";
 import { DataReader } from "../services/DataReader.js";
 import { DataStore } from "../services/DataStore.js";
 import { DataReaderLive } from "./DataReaderLive.js";
@@ -18,6 +19,7 @@ const MigratorLayer = SqliteMigrator.layer({
 	loader: SqliteMigrator.fromRecord({
 		"0001_initial": migration0001,
 		"0002_comprehensive": migration0002,
+		"0003_idempotent_responses": migration0003,
 	}),
 }).pipe(Layer.provide(Layer.merge(SqliteLayer, PlatformLayer)));
 
@@ -1261,6 +1263,65 @@ describe("DataReaderLive", () => {
 			expect(result.phaseEvidenceIntegrity.total).toBe(0);
 			expect(result.phaseEvidenceIntegrity.ratio).toBe(0);
 			expect(result.antiPatternDetectionRate.cleanSessions).toBe(0);
+		});
+	});
+
+	describe("idempotent response cache", () => {
+		it("recordIdempotentResponse writes a row that findIdempotentResponse reads back", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const dr = yield* DataReader;
+					yield* ds.recordIdempotentResponse({
+						procedurePath: "hypothesis_record",
+						key: "session-1:content-foo",
+						resultJson: JSON.stringify({ id: 42 }),
+						createdAt: "2026-04-30T00:00:00Z",
+					});
+					return yield* dr.findIdempotentResponse("hypothesis_record", "session-1:content-foo");
+				}),
+			);
+			expect(Option.isSome(result)).toBe(true);
+			if (Option.isSome(result)) {
+				expect(JSON.parse(result.value)).toEqual({ id: 42 });
+			}
+		});
+
+		it("findIdempotentResponse returns None for an unknown key", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const dr = yield* DataReader;
+					return yield* dr.findIdempotentResponse("hypothesis_record", "no-such-key");
+				}),
+			);
+			expect(Option.isNone(result)).toBe(true);
+		});
+
+		it("recordIdempotentResponse on a duplicate key is a no-op (ON CONFLICT DO NOTHING)", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const dr = yield* DataReader;
+					yield* ds.recordIdempotentResponse({
+						procedurePath: "hypothesis_validate",
+						key: "1:confirmed",
+						resultJson: JSON.stringify({ id: 1, outcome: "confirmed" }),
+						createdAt: "2026-04-30T00:00:00Z",
+					});
+					yield* ds.recordIdempotentResponse({
+						procedurePath: "hypothesis_validate",
+						key: "1:confirmed",
+						resultJson: JSON.stringify({ id: 1, outcome: "confirmed", second: true }),
+						createdAt: "2026-04-30T00:01:00Z",
+					});
+					return yield* dr.findIdempotentResponse("hypothesis_validate", "1:confirmed");
+				}),
+			);
+			expect(Option.isSome(result)).toBe(true);
+			if (Option.isSome(result)) {
+				const parsed = JSON.parse(result.value);
+				expect(parsed.second).toBeUndefined();
+			}
 		});
 	});
 });

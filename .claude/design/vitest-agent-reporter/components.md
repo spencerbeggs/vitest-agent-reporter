@@ -3,10 +3,11 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-04-29
-last-synced: 2026-04-29
+updated: 2026-04-30
+last-synced: 2026-04-30
 post-phase5-sync: 2026-04-23
 post-2-0-sync: 2026-04-29
+post-rc-sync: 2026-04-30
 completeness: 95
 related:
   - vitest-agent-reporter/architecture.md
@@ -34,9 +35,11 @@ covers one package; load only the section you need:
 - **Shared package** -- the no-internal-deps base: schemas, services,
   layers, formatters, errors, migrations, utilities, XDG path stack
 - **CLI package** -- `vitest-agent-reporter` bin and `CliLive`
-- **MCP package** -- `vitest-agent-reporter-mcp` bin, tRPC router, 31
+- **MCP package** -- `vitest-agent-reporter-mcp` bin, tRPC router, 37
   tools (24 from Phase 5/6 plus 7 read-only β tools over the α
-  schema substrate), and `McpLive`
+  schema substrate plus 4 RC tools: `triage_brief`, `wrapup_prompt`,
+  `hypothesis_record`, `hypothesis_validate`), the new tRPC
+  idempotency middleware, and `McpLive`
 - **Claude Code plugin** -- file-based plugin with the MCP loader,
   hooks, skills, and commands
 
@@ -532,13 +535,20 @@ database.
 | `writeTurn(input: TurnInput)` (2.0.0-α; β auto-`turn_no`) | inserts a turn-log row under a session; returns `turnId`. Caller pre-stringifies the payload JSON (validated against `TurnPayload` by the `record` CLI). Type discriminator is one of `user_prompt`, `tool_call`, `tool_result`, `file_edit`, `hook_fire`, `note`, `hypothesis`. **β:** `turn_no` is now optional on `TurnInput`; the live layer computes `MAX(turn_no)+1` per session inside the same transaction when omitted |
 | `writeFailureSignature(input: FailureSignatureWriteInput)` (2.0.0-β) | idempotent upsert on `failure_signatures(signature_hash)`. New rows record `first_seen_run_id`, `first_seen_at`, and `occurrence_count = 1`; `ON CONFLICT(signature_hash) DO UPDATE` increments `occurrence_count` and refreshes `last_seen_at`. Called by the reporter for each error `signatureHash` returned by `processFailure` |
 | `endSession(ccSessionId, endedAt, endReason)` (2.0.0-β) | updates `sessions.ended_at` and `sessions.end_reason` for a Claude Code session ID. Called by the `record session-end` CLI subcommand (driven by the `session-end-record.sh` plugin hook) |
+| `recordIdempotentResponse(input: IdempotentResponseInput)` (2.0.0-RC) | `INSERT ... ON CONFLICT DO NOTHING` on `mcp_idempotent_responses(procedure_path, key)` so duplicate keys are no-ops. Backs the tRPC idempotency middleware's persist step. Persistence errors are swallowed by the middleware -- a transient DB failure must not surface as a tool error |
+| `writeHypothesis(input: HypothesisInput)` (2.0.0-RC) | inserts a `hypotheses` row carrying `sessionId`, `content`, optional cited evidence FKs (`citedTestErrorId`, `citedStackFrameId`, `createdTurnId`), and returns the new id. Called by the `hypothesis_record` MCP tool |
+| `validateHypothesis(input: ValidateHypothesisInput)` (2.0.0-RC) | updates `hypotheses.validation_outcome`, `validated_at`, `validated_turn_id` for an existing hypothesis id. Raises a `DataStoreError` when the hypothesis id is unknown so the MCP layer surfaces a meaningful error. Called by the `hypothesis_validate` MCP tool |
+| `pruneSessions(keepRecent: number)` (2.0.0-RC) | finds the cutoff at the `(keepRecent+1)`-th most recent session by `started_at` and deletes turn rows for older sessions. FK CASCADE handles `tool_invocations` and `file_edits`. Sessions rows themselves are retained (only the turn history is pruned). Returns `{ prunedSessions, prunedTurns }`. Called by the `cache prune --keep-recent` CLI subcommand |
 
 **Key input types:**
 
 `TestRunInput`, `ModuleInput`, `TestCaseInput`, `TestErrorInput`,
 `FileCoverageInput`, `SuiteInput`, `NoteInput`, **`SettingsInput`**,
 `SessionInput`, `TurnInput`, **`StackFrameInput`** (2.0.0-β),
-**`FailureSignatureWriteInput`** (2.0.0-β) -- all defined in
+**`FailureSignatureWriteInput`** (2.0.0-β),
+**`IdempotentResponseInput`** (2.0.0-RC),
+**`HypothesisInput`** (2.0.0-RC),
+**`ValidateHypothesisInput`** (2.0.0-RC) -- all defined in
 `DataStore.ts`. `SettingsInput` is owned by DataStore (rather than
 by `utils/capture-settings.ts` in the reporter package, which
 produces values matching this shape) to avoid a circular import
@@ -568,6 +578,28 @@ layer writes `test_errors.signature_hash` (the FK to
 row per frame to `stack_frames`, including the new
 `source_mapped_line` and `function_boundary_line` columns from
 α's `0002_comprehensive` migration.
+
+**RC input shapes:**
+
+- `IdempotentResponseInput` --
+  `{ procedurePath: string, key: string, resultJson: string,
+  createdAt: string }`. Persisted to `mcp_idempotent_responses`
+  via `recordIdempotentResponse`. The composite PK on
+  `(procedure_path, key)` is what makes the
+  `INSERT ... ON CONFLICT DO NOTHING` idempotent
+- `HypothesisInput` --
+  `{ sessionId: number, content: string, citedTestErrorId?:
+  number | null, citedStackFrameId?: number | null,
+  createdTurnId?: number | null, createdAt: string }`. Used by
+  `writeHypothesis`; the cited evidence FKs make hypotheses
+  link back to specific test errors and stack frames captured
+  by the reporter
+- `ValidateHypothesisInput` --
+  `{ id: number, outcome: "confirmed" | "refuted" |
+  "abandoned", validatedAt: string, validatedTurnId?:
+  number | null }`. Used by `validateHypothesis`. The
+  `outcome` discriminator mirrors α's `hypotheses.validation_outcome`
+  CHECK enum
 
 **`TestCaseInput.suiteId`:** the reporter populates `suiteId` from
 `testCase.parent.fullName` via the `suiteIdMap` it builds when
@@ -624,6 +656,7 @@ database. Shared between reporter, CLI, and MCP.
 | `getFailureSignatureByHash(hash)` (2.0.0-β) | `Option<FailureSignatureDetail>` -- the `failure_signatures` row plus the up-to-10 most recent `test_errors` rows joined via `signature_hash`. Backs the `failure_signature_get` MCP tool |
 | `getTddSessionById(id)` (2.0.0-β) | `Option<TddSessionDetail>` -- the `tdd_sessions` row plus its `tdd_phases` (with nested `tdd_artifacts` per phase). Pre-rolls the joins so the `tdd_session_get` MCP tool returns one tree |
 | `listHypotheses(options: { sessionId?, outcome?, limit? })` (2.0.0-β) | `HypothesisSummary[]` filtered by `sessionId` and validation outcome. `outcome="open"` matches `validation_outcome IS NULL`; other values match the literal CHECK enum (`confirmed`/`refuted`/`abandoned`). Default limit 50 |
+| `findIdempotentResponse(procedurePath, key)` (2.0.0-RC) | `Option<string>` -- the cached `result_json` for a given MCP procedure invocation, or `Option.none()` when no entry exists. Backs the tRPC idempotency middleware's cache check. The middleware's flow is `findIdempotentResponse -> next() -> recordIdempotentResponse` per Decision Phase 9 / RC notes |
 
 **`getManifest`:** resolves `cacheDir` (and the per-project
 placeholders) from SQLite's own metadata via `PRAGMA database_list`,
@@ -1189,6 +1222,25 @@ converts Vitest `TestModule` / `TestCase` objects into an
 Vitest types directly, keeping the builder independent of the Vitest
 runtime.
 
+### Shared Lib Generators (2.0.0-RC)
+
+**Location:** `packages/shared/src/lib/` (this directory is new in
+RC)
+
+A new sibling to `utils/`, `formatters/`, `services/`, `layers/`,
+and `migrations/`. The distinguishing feature: each `lib/` module
+is a **pure markdown generator** that runs with `E = never` (no
+error channel) and is consumed verbatim by both a CLI subcommand
+and an MCP tool. Where `formatters/` render `AgentReport` objects
+into the test-run console output, `lib/` generators render
+DataReader query results into agent-facing prompts (triage briefs,
+wrap-up nudges).
+
+| File | Purpose |
+| ---- | ------- |
+| `format-triage.ts` (2.0.0-RC) | Pure markdown generator powering the W3 orientation triage report. Reads `getRunsByProject()`, `listSessions()`, recent failure signatures from DataReader; emits a triage brief sized to `maxLines`. Options: `{ project?, maxLines?, since? }`. Uses `Effect.orElseSucceed` everywhere (not `Effect.either`) so the type signature carries `E = never` -- callers don't need to handle errors. Powers both the `triage` CLI subcommand and the `triage_brief` MCP tool. Also called by `session-start.sh` to emit `hookSpecificOutput.additionalContext` |
+| `format-wrapup.ts` (2.0.0-RC) | Pure markdown generator powering the W5 interpretive prompt-injection nudges. Five `kind` variants: `stop` (Stop hook nudge), `session_end` (SessionEnd hook nudge), `pre_compact` (PreCompact compaction nudge), `tdd_handoff` (TDD orchestrator handoff), `user_prompt_nudge` (UserPromptSubmit-time nudge). The text-match logic for "is this a failure prompt?" lives in this generator (not in the hook scripts) so all consumers see the same rules. Powers the `wrapup` CLI subcommand, the `wrapup_prompt` MCP tool, and the four interpretive hooks |
+
 ---
 
 ## CLI package (vitest-agent-reporter-cli)
@@ -1222,13 +1274,17 @@ so installing the reporter pulls the CLI along with it.
   `CliLive(dbPath, logLevel, logFile)` to the `@effect/cli`
   `Command.run` effect. Handles defects by printing
   `formatFatalError(cause)` to stderr. β registers the `record`
-  subcommand alongside the existing seven
+  subcommand alongside the existing seven; RC additionally
+  registers `triage` and `wrapup`
 - `packages/cli/src/index.ts` -- public `runCli()` re-export
-- `packages/cli/src/commands/{status,overview,coverage,history,trends,cache,doctor,record}.ts`
+- `packages/cli/src/commands/{status,overview,coverage,history,trends,cache,doctor,record,triage,wrapup}.ts`
   -- one file per subcommand, each a thin wrapper over the matching
   `lib/*.ts` function. β adds `record.ts` (top-level command that
   dispatches to `record-turn` / `record-session-start` /
-  `record-session-end` subcommands)
+  `record-session-end` subcommands). RC adds `triage.ts` and
+  `wrapup.ts` (each delegating to the `format-triage` /
+  `format-wrapup` shared lib generators) and adds the `prune`
+  action to `cache.ts`
 - `packages/cli/src/lib/format-{status,overview,coverage,history,trends,doctor}.ts`
   -- testable pure formatting logic for the read-side commands
 - `packages/cli/src/lib/record-turn.ts` (2.0.0-β) --
@@ -1258,6 +1314,12 @@ so installing the reporter pulls the CLI along with it.
 - `cache path` -- prints the deterministic XDG-derived path (via
   `resolveDataPath`) rather than scanning the filesystem
 - `cache clean` -- deletes entire cache directory (idempotent)
+- `cache prune --keep-recent <n>` (2.0.0-RC) -- W1 turn-history
+  retention. Calls `DataStore.pruneSessions(n)` to find the cutoff
+  at the `(n+1)`-th most recent session and deletes turn rows for
+  older sessions (FK CASCADE handles `tool_invocations` and
+  `file_edits`). Sessions rows themselves are retained -- only
+  the turn log is pruned. Idempotent
 - `doctor` -- cache health diagnostic
 - `record turn` (2.0.0-β) -- accepts
   `--cc-session-id <id> <payload-json>`, validates the payload
@@ -1273,6 +1335,21 @@ so installing the reporter pulls the CLI along with it.
   `--cc-session-id <id>` and optional `--end-reason`; updates
   `sessions.ended_at` / `sessions.end_reason`. Driven by the
   `session-end-record.sh` hook
+- `triage` (2.0.0-RC) -- emits the W3 orientation triage brief
+  via the shared `format-triage` generator. Accepts
+  `--format <markdown|json>`, `--project <name>`, and
+  `--max-lines <n>`. Driven by `session-start.sh`, which writes
+  the output back to Claude Code as
+  `hookSpecificOutput.additionalContext`. Also called manually
+  by users to inspect orientation context
+- `wrapup` (2.0.0-RC) -- emits the W5 wrap-up prompt via the
+  shared `format-wrapup` generator. Accepts
+  `--since <iso>`, `--cc-session-id <id>`, `--kind <variant>`
+  (one of `stop`/`session_end`/`pre_compact`/`tdd_handoff`/
+  `user_prompt_nudge`), `--user-prompt-hint <text>`, and
+  `--format <markdown|json>`. Driven by the four interpretive
+  hooks (`stop-record.sh`, `session-end-record.sh`,
+  `pre-compact-record.sh`, `user-prompt-submit-record.sh`)
 
 **Dependencies:**
 
@@ -1299,10 +1376,13 @@ Used by the CLI bin via `NodeRuntime.runMain`.
 
 ## MCP package (vitest-agent-reporter-mcp)
 
-Model Context Protocol server providing 31 tools for agent
+Model Context Protocol server providing 37 tools for agent
 integration (24 from Phase 5/6 plus 7 new read-only β tools over
-α's session/turn/TDD/hypothesis/failure-signature schema substrate).
-Uses `@modelcontextprotocol/sdk` with stdio transport and tRPC for
+α's session/turn/TDD/hypothesis/failure-signature schema substrate
+plus 4 RC tools: `triage_brief`, `wrapup_prompt`,
+`hypothesis_record`, `hypothesis_validate` -- the latter two
+routed through the new tRPC idempotency middleware). Uses
+`@modelcontextprotocol/sdk` with stdio transport and tRPC for
 routing.
 
 **npm name:** `vitest-agent-reporter-mcp`
@@ -1338,12 +1418,18 @@ coordination without bundling the dependency tree.
 - `index.ts` -- programmatic entry (callable by other tools)
 - `context.ts` -- tRPC context definition with `ManagedRuntime`
   carrying DataReader, DataStore, ProjectDiscovery, OutputRenderer
-  services
-- `router.ts` -- tRPC router aggregating all 31 tool procedures
-  (24 from Phase 5/6 plus 7 read-only β additions)
+  services. **(RC)** Now exports the underlying `t` instance
+  (`middleware`, `router`, `publicProcedure`) so the
+  idempotency middleware can share it rather than constructing a
+  parallel `t`
+- `router.ts` -- tRPC router aggregating all 37 tool procedures
+  (24 from Phase 5/6 plus 7 read-only β additions plus 4 RC
+  additions)
 - `server.ts` -- `startMcpServer()` registers all tools with the MCP
   SDK using zod input schemas (the SDK side; tRPC inputs are also
   zod, kept in sync between the two registrations)
+- `middleware/idempotency.ts` (2.0.0-RC) -- tRPC idempotency
+  middleware (covered below)
 - `layers/McpLive.ts` -- composition layer (covered below)
 
 **Dependencies:**
@@ -1356,17 +1442,19 @@ coordination without bundling the dependency tree.
   `plugin.json`, which spawns the bin through the user's package
   manager), and any MCP-compatible agent
 
-### tRPC Router & Tools (31 tools)
+### tRPC Router & Tools (37 tools)
 
 **Locations:**
 
 - `packages/mcp/src/router.ts`, `packages/mcp/src/context.ts`
 - `packages/mcp/src/tools/` -- one file per tool
+- `packages/mcp/src/middleware/idempotency.ts` (2.0.0-RC) --
+  see the **Idempotency middleware** subsection
 
-The tRPC router aggregates all 31 MCP tool procedures (24 from
-Phase 5/6 plus 7 read-only β additions). The context carries a
-`ManagedRuntime` for Effect service access, allowing tRPC
-procedures to call Effect services via
+The tRPC router aggregates all 37 MCP tool procedures (24 from
+Phase 5/6 plus 7 read-only β additions plus 4 RC additions). The
+context carries a `ManagedRuntime` for Effect service access,
+allowing tRPC procedures to call Effect services via
 `ctx.runtime.runPromise(effect)`.
 
 **Context interface:**
@@ -1411,13 +1499,43 @@ interface McpContext {
   `hypothesis_list`, `acceptance_metrics`. Each procedure validates
   input with a zod schema, calls the matching `DataReader` method
   via `ctx.runtime.runPromise`, and returns JSON. All seven are
-  read-only -- the write-side TDD lifecycle and hypothesis tools
-  (`tdd_session_start`, `tdd_phase_transition_request`,
-  `tdd_session_end`, `tdd_artifact_record`, `hypothesis_record`,
-  `hypothesis_validate`) are deferred to RC. Auto-allowed via
+  read-only. Auto-allowed via
   `plugin/hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt`. The
-  `help` tool (`tools/help.ts`) lists them under a new
+  `help` tool (`tools/help.ts`) lists them under a
   "Sessions / Turns / TDD reads (β)" section
+- **Triage / wrapup reads (RC)** (markdown output) --
+  `tools/triage-brief.ts` -> `triage_brief({ project?,
+  maxLines? })` and `tools/wrapup-prompt.ts` ->
+  `wrapup_prompt({ sessionId?, ccSessionId?, kind?,
+  userPromptHint? })`. Both delegate verbatim to the matching
+  shared `format-triage` / `format-wrapup` generators in
+  `packages/shared/src/lib/`, so the MCP and CLI surfaces share
+  exactly the same output. Read-only; no idempotency middleware
+  needed
+- **Hypothesis writes (RC)** (JSON output) --
+  `tools/hypothesis-record.ts` ->
+  `hypothesis_record({ sessionId, content, citedTestErrorId?,
+  citedStackFrameId?, createdTurnId? })` and
+  `tools/hypothesis-validate.ts` ->
+  `hypothesis_validate({ id, outcome, validatedAt,
+  validatedTurnId? })`. Both go through `idempotentProcedure`
+  (the new RC middleware), so duplicate calls from a flaky
+  agent retry replay the cached response with
+  `_idempotentReplay: true` rather than double-writing.
+  Backed by `DataStore.writeHypothesis` and
+  `DataStore.validateHypothesis` respectively. The
+  per-procedure key derivers in `idempotencyKeys` are
+  `${sessionId}:${content}` (record) and
+  `${id}:${outcome}` (validate). Auto-allowed via the
+  allowlist file. The `help` tool lists them under a new
+  "Hypothesis writes (RC)" section
+
+The 4 RC tools bring the total to 37. The `help` tool's count
+moves from 31 (β) to 37 (RC) and the help text is updated
+accordingly. The remaining write-side TDD lifecycle and
+hypothesis tools (`tdd_session_start`,
+`tdd_phase_transition_request`, `tdd_session_end`,
+`tdd_artifact_record`) stay deferred to post-RC.
 
 **Project handling in discovery tools:** `module_list`, `suite_list`,
 and `test_list` enumerate every project from
@@ -1425,6 +1543,61 @@ and `test_list` enumerate every project from
 grouping output under per-project `### project` headers. This is
 required because real multi-project Vitest configs use names like
 `unit` and `integration` -- there is no literal `"default"` project.
+
+### Idempotency middleware (2.0.0-RC)
+
+**Location:** `packages/mcp/src/middleware/idempotency.ts`
+
+**Purpose:** tRPC middleware that wraps a mutation procedure and
+makes duplicate calls a no-op at the database layer. An MCP agent
+that retries a write tool (network blip, restarted client, partial
+delivery) gets the cached result back instead of double-writing.
+
+**Flow:**
+
+1. Look up the input-derived key in
+   `DataReader.findIdempotentResponse(procedurePath, key)`
+2. If a cached `result_json` exists, parse it and return it as
+   the procedure result with `_idempotentReplay: true` attached
+   (so callers can distinguish replays for telemetry without
+   the MCP tool surface changing)
+3. Otherwise, call `next()` (the inner procedure), then persist
+   the result via `DataStore.recordIdempotentResponse(...)` --
+   `INSERT ... ON CONFLICT DO NOTHING` so a parallel insert race
+   resolves to a no-op
+4. Persistence errors are **swallowed** (best-effort) so a
+   transient DB failure during the write step does not surface
+   as a tool error to the agent. The cached row will simply
+   not exist on the next call, and the procedure will run
+   again -- worst case is two idempotent writes instead of
+   one cache hit, which is acceptable
+
+**Key concepts:**
+
+- `idempotentProcedure` -- a drop-in for `publicProcedure`
+  that has the middleware pre-applied. New mutation tools
+  that should be idempotent declare with `idempotentProcedure`
+  instead of `publicProcedure`
+- `idempotencyKeys` -- a registry mapping procedure paths to
+  per-procedure `derive(input) => string` functions. Currently
+  registers `hypothesis_record` (key:
+  `${input.sessionId}:${input.content}`) and
+  `hypothesis_validate` (key: `${input.id}:${input.outcome}`).
+  Adding a new idempotent tool means registering a derive
+  function alongside the procedure
+- The middleware uses the **same** tRPC instance as
+  `publicProcedure` rather than constructing a parallel `t`,
+  via the new `middleware` export from `context.ts`. Sharing
+  the instance keeps the context type aligned and avoids the
+  "two `t` objects, one per call site" trap
+
+**Dependencies:**
+
+- Depends on: `@trpc/server`, `DataStore`, `DataReader`,
+  `Effect.runtime`
+- Used by: `tools/hypothesis-record.ts`,
+  `tools/hypothesis-validate.ts`, plus future RC+ idempotent
+  mutations
 
 ### McpLive composition layer
 
@@ -1500,23 +1673,38 @@ decisions.md covers the loader rewrite; Decision 29 (the prior
 The script imports only `node:child_process`, `node:fs`, and
 `node:path` so it runs before the user has installed anything.
 
-### Hooks (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, SessionEnd, PreCompact)
+### Hooks (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop, SessionEnd, PreCompact)
 
 Hook configuration lives in `plugin/hooks/hooks.json`; scripts live
-under `plugin/hooks/`. The β release adds six `*-record.sh` scripts
-that drive the new `record` CLI subcommand to capture session/turn
-data, and registers two new event types (UserPromptSubmit,
-SessionEnd, PreCompact) that the plugin previously ignored.
+under `plugin/hooks/`. The β release added six `*-record.sh`
+scripts driving the `record` CLI subcommand and registered three
+new event types (UserPromptSubmit, SessionEnd, PreCompact). RC
+adds the `Stop` event registration, rewrites `session-start.sh` to
+fold in the β `session-start-record.sh` plus call the new
+`triage` CLI, and upgrades three β record-only hooks to record +
+interpretive prompt-injection nudges via the `wrapup` CLI.
 
-- **SessionStart** -- `session-start.sh` injects test context into
-  the session via bash. **(β)** Parallel `session-start-record.sh`
-  invokes `vitest-agent-reporter record session-start
-  --cc-session-id ... --project ... --cwd ...` to write a
-  `sessions` row
-- **UserPromptSubmit (β)** -- `user-prompt-submit-record.sh` reads
-  the prompt envelope and invokes `record turn` with a stringified
-  `UserPromptPayload` JSON (validated against `TurnPayload` by the
-  CLI before persistence)
+- **SessionStart** -- `session-start.sh` injects test context
+  into the session via bash. **(RC)** Rewritten to (a) call the
+  new `triage` CLI and emit
+  `hookSpecificOutput.additionalContext` with the triage
+  markdown (or generic context fallback if the triage is empty),
+  and (b) write the `sessions` row directly via
+  `vitest-agent-reporter record session-start
+  --triage-was-non-empty <bool> ...`. The β
+  `session-start-record.sh` script is **deleted** -- its
+  responsibility folds into `session-start.sh`. The duplicate
+  `SessionStart` entry in `hooks.json` is removed
+- **UserPromptSubmit (β; RC + nudge)** --
+  `user-prompt-submit-record.sh` reads the prompt envelope and
+  invokes `record turn` with a stringified `UserPromptPayload`
+  JSON (validated against `TurnPayload` by the CLI). **(RC)**
+  Upgraded from record-only to record + inject. After recording
+  the turn, calls `wrapup --kind=user_prompt_nudge
+  --user-prompt-hint <prompt>` and emits the result as
+  `hookSpecificOutput.additionalContext`. The text-match logic
+  for "is this a failure prompt?" lives in `format-wrapup`, not
+  the hook
 - **PreToolUse** -- `pre-tool-use-mcp.sh` matches
   `mcp__vitest-agent-reporter__.*`. Reads the PreToolUse envelope,
   strips the `mcp__vitest-agent-reporter__` prefix from `tool_name`,
@@ -1525,27 +1713,42 @@ SessionEnd, PreCompact) that the plugin previously ignored.
   `hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt`. Tools not in
   the allowlist fall through to the standard permission prompt.
   5-second hook timeout. **(β)** Parallel `pre-tool-use-record.sh`
-  invokes `record turn` with a `ToolCallPayload`
+  invokes `record turn` with a `ToolCallPayload`. **Stays
+  record-only on RC** -- it fires too often for prompt injection
+  to be tolerable
 - **Allowlist** -- `hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt`
-  enumerates all 31 MCP tools to auto-allow (one operation suffix
-  per line, with `#` comments for category headings: meta `help`;
-  11 read-only queries; 5 discovery tools; `run_tests`; 6 note CRUD
-  ops; **(β) 7 sessions/turns/TDD/hypothesis/metrics reads**). The
+  enumerates all 37 MCP tools to auto-allow (one operation
+  suffix per line, with `#` comments for category headings: meta
+  `help`; 11 read-only queries; 5 discovery tools; `run_tests`;
+  6 note CRUD ops; **(β) 7 sessions/turns/TDD/hypothesis/metrics
+  reads**; **(RC) 4 triage/wrapup/hypothesis tools**). The
   script strips blank lines and comments before exact matching
 - **PostToolUse** -- `post-test-run.sh` runs on the Bash tool;
-  detects test runs and triggers post-run actions. **(β)** Parallel
-  `post-tool-use-record.sh` runs on **every** tool result and
-  invokes `record turn` with a `ToolResultPayload`. For
-  `Edit`/`Write`/`MultiEdit` tools it additionally invokes a second
-  `record turn` with a `FileEditPayload` (lines added/removed,
-  diff)
-- **SessionEnd (β)** -- `session-end-record.sh` invokes
-  `record session-end --cc-session-id ... [--end-reason ...]` so
-  `sessions.ended_at` and `sessions.end_reason` get populated
-- **PreCompact (β)** -- `pre-compact-record.sh` invokes
-  `record turn` with a `HookFirePayload` so the compaction event
-  shows up in the turn log. β only records the firing; RC's
-  interpretive hooks add a prompt-injection nudge on top
+  detects test runs and triggers post-run actions. **(β)**
+  Parallel `post-tool-use-record.sh` runs on **every** tool
+  result and invokes `record turn` with a `ToolResultPayload`.
+  For `Edit`/`Write`/`MultiEdit` tools it additionally invokes
+  a second `record turn` with a `FileEditPayload` (lines
+  added/removed, diff). **Stays record-only on RC** -- same
+  reasoning as PreToolUse
+- **Stop (RC -- new event)** -- `stop-record.sh`. Registered as
+  the `Stop` hook in `hooks.json` for the first time on RC.
+  Records a `hook_fire` turn AND injects a wrap-up nudge via
+  `wrapup --kind=stop`. Output is emitted to Claude Code as
+  `hookSpecificOutput.additionalContext`
+- **SessionEnd (β; RC + nudge)** -- `session-end-record.sh`
+  invokes `record session-end --cc-session-id ...
+  [--end-reason ...]` so `sessions.ended_at` and
+  `sessions.end_reason` get populated. **(RC)** Upgraded from
+  record-only to record + inject. After recording, calls
+  `wrapup --kind=session_end` and emits the result as
+  `hookSpecificOutput.additionalContext`
+- **PreCompact (β; RC + nudge)** -- `pre-compact-record.sh`
+  invokes `record turn` with a `HookFirePayload` so the
+  compaction event shows up in the turn log. **(RC)** Upgraded
+  from record-only to record + inject. After recording, calls
+  `wrapup --kind=pre_compact` and emits the result as
+  `hookSpecificOutput.additionalContext`
 
 ### Skills & Commands
 

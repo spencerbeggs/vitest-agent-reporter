@@ -2,7 +2,7 @@ import { publicProcedure } from "../context.js";
 
 const HELP_TEXT = `# vitest-agent-reporter MCP Tools
 
-> 24 tools total.
+> 37 tools total.
 
 ## General
 
@@ -71,6 +71,20 @@ Scopes: \`run_tests({})\` all tests, \`run_tests({ project: "name" })\` by proje
 | \`tdd_session_get\` | \`id\` | TDD session with phases and artifacts rolled up |
 | \`hypothesis_list\` | \`sessionId?\`, \`outcome?\`, \`limit?\` | List recorded hypotheses (\`outcome=open\` for unvalidated) |
 | \`acceptance_metrics\` | _(none)_ | Four spec Annex A acceptance metrics |
+| \`triage_brief\` | \`project?\`, \`maxLines?\` | Orientation triage: failing tests, flaky tests, open TDD sessions, next actions |
+
+## Hypothesis writes (RC)
+
+| Tool | Parameters | Description |
+| ---- | ---------- | ----------- |
+| \`hypothesis_record\` | \`sessionId\`, \`content\`, \`createdTurnId?\`, \`citedTestErrorId?\`, \`citedStackFrameId?\` | Record an agent hypothesis; returns \`{ id }\` |
+| \`hypothesis_validate\` | \`id\`, \`outcome\`, \`validatedAt\`, \`validatedTurnId?\` | Record validation outcome for a hypothesis; returns \`{}\` |
+
+## Wrap-up prompts (RC)
+
+| Tool | Parameters | Description |
+| ---- | ---------- | ----------- |
+| \`wrapup_prompt\` | \`sessionId?\`, \`ccSessionId?\`, \`kind?\`, \`userPromptHint?\` | Tailored wrap-up prompt for a session (Stop / SessionEnd / PreCompact / TDD handoff / UserPromptSubmit nudge variants) |
 
 ## Parameter Key
 

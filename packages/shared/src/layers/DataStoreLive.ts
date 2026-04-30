@@ -6,6 +6,8 @@ import type { TrendEntry } from "../schemas/Trends.js";
 import type {
 	FailureSignatureWriteInput,
 	FileCoverageInput,
+	HypothesisInput,
+	IdempotentResponseInput,
 	ModuleInput,
 	NoteInput,
 	SessionInput,
@@ -15,6 +17,7 @@ import type {
 	TestErrorInput,
 	TestRunInput,
 	TurnInput,
+	ValidateHypothesisInput,
 } from "../services/DataStore.js";
 import { DataStore } from "../services/DataStore.js";
 
@@ -458,6 +461,102 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				),
 			);
 
+		const writeHypothesis = (input: HypothesisInput): Effect.Effect<number, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("writeHypothesis").pipe(Effect.annotateLogs({ sessionId: input.sessionId }));
+				yield* sql`INSERT INTO hypotheses (session_id, content, created_turn_id, cited_test_error_id, cited_stack_frame_id) VALUES (${input.sessionId}, ${input.content}, ${input.createdTurnId ?? null}, ${input.citedTestErrorId ?? null}, ${input.citedStackFrameId ?? null})`;
+				const rows = yield* sql<{ id: number }>`SELECT last_insert_rowid() as id`;
+				return rows[0].id;
+			}).pipe(
+				Effect.annotateLogs("service", "DataStore"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "hypotheses", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const validateHypothesis = (input: ValidateHypothesisInput): Effect.Effect<void, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("validateHypothesis").pipe(
+					Effect.annotateLogs({ id: input.id, outcome: input.outcome }),
+				);
+				yield* sql`UPDATE hypotheses SET validation_outcome = ${input.outcome}, validated_at = ${input.validatedAt}, validated_turn_id = ${input.validatedTurnId ?? null} WHERE id = ${input.id}`;
+				const rows = yield* sql<{ changes: number }>`SELECT changes() as changes`;
+				if (rows[0].changes === 0) {
+					return yield* Effect.fail(
+						new DataStoreError({
+							operation: "write",
+							table: "hypotheses",
+							reason: `unknown hypothesis id: ${input.id}`,
+						}),
+					);
+				}
+			}).pipe(
+				Effect.annotateLogs("service", "DataStore"),
+				Effect.mapError((e) =>
+					e instanceof DataStoreError
+						? e
+						: new DataStoreError({ operation: "write", table: "hypotheses", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const recordIdempotentResponse = (input: IdempotentResponseInput): Effect.Effect<void, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("recordIdempotentResponse").pipe(
+					Effect.annotateLogs({ procedurePath: input.procedurePath, key: input.key }),
+				);
+				yield* sql`INSERT INTO mcp_idempotent_responses (procedure_path, key, result_json, created_at) VALUES (${input.procedurePath}, ${input.key}, ${input.resultJson}, ${input.createdAt}) ON CONFLICT(procedure_path, key) DO NOTHING`;
+			}).pipe(
+				Effect.annotateLogs("service", "DataStore"),
+				Effect.mapError(
+					(e) =>
+						new DataStoreError({
+							operation: "write",
+							table: "mcp_idempotent_responses",
+							reason: extractSqlReason(e),
+						}),
+				),
+			);
+
+		const pruneSessions = (
+			keepRecent: number,
+		): Effect.Effect<{ readonly prunedSessions: number; readonly prunedTurns: number }, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("pruneSessions").pipe(Effect.annotateLogs({ keepRecent }));
+
+				// Find the cutoff timestamp: started_at of the (keepRecent+1)-th
+				// newest session. If fewer sessions exist, there is nothing to prune.
+				const cutoffRows = yield* sql<{ started_at: string }>`
+					SELECT started_at FROM sessions ORDER BY started_at DESC LIMIT 1 OFFSET ${keepRecent}
+				`;
+				if (cutoffRows.length === 0) return { prunedSessions: 0, prunedTurns: 0 };
+				const cutoff = cutoffRows[0].started_at;
+
+				const turnCountRows = yield* sql<{ count: number }>`
+					SELECT COUNT(*) AS count FROM turns
+					WHERE session_id IN (SELECT id FROM sessions WHERE started_at <= ${cutoff})
+				`;
+				const prunedTurns = turnCountRows[0]?.count ?? 0;
+
+				const sessionCountRows = yield* sql<{ count: number }>`
+					SELECT COUNT(*) AS count FROM sessions WHERE started_at <= ${cutoff}
+				`;
+				const prunedSessions = sessionCountRows[0]?.count ?? 0;
+
+				// FK CASCADE on tool_invocations.turn_id and file_edits.turn_id
+				// drops the children when these turns rows go. The sessions rows
+				// themselves stay so the summary remains queryable.
+				yield* sql`
+					DELETE FROM turns WHERE session_id IN (
+						SELECT id FROM sessions WHERE started_at <= ${cutoff}
+					)
+				`;
+
+				return { prunedSessions, prunedTurns };
+			}).pipe(
+				Effect.annotateLogs("service", "DataStore"),
+				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "turns", reason: extractSqlReason(e) })),
+			);
+
 		return {
 			ensureFile,
 			writeSettings,
@@ -478,6 +577,10 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 			writeTurn,
 			writeFailureSignature,
 			endSession,
+			writeHypothesis,
+			validateHypothesis,
+			recordIdempotentResponse,
+			pruneSessions,
 		};
 	}),
 );

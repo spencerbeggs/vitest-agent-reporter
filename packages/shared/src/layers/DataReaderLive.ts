@@ -1677,6 +1677,32 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				),
 			);
 
+		const findIdempotentResponse = (
+			procedurePath: string,
+			key: string,
+		): Effect.Effect<Option.Option<string>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("findIdempotentResponse").pipe(Effect.annotateLogs({ procedurePath, key }));
+				const rows = yield* sql<{
+					result_json: string;
+				}>`
+					SELECT result_json FROM mcp_idempotent_responses
+					WHERE procedure_path = ${procedurePath} AND key = ${key}
+					LIMIT 1
+				`;
+				return rows.length === 0 ? Option.none() : Option.some(rows[0].result_json);
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) =>
+						new DataStoreError({
+							operation: "read",
+							table: "mcp_idempotent_responses",
+							reason: extractSqlReason(e),
+						}),
+				),
+			);
+
 		return {
 			getLatestRun,
 			getRunsByProject,
@@ -1708,6 +1734,7 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 			getFailureSignatureByHash,
 			getTddSessionById,
 			listHypotheses,
+			findIdempotentResponse,
 		};
 	}),
 );

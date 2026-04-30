@@ -3,8 +3,8 @@ status: current
 module: vitest-agent-reporter
 category: testing
 created: 2026-04-29
-updated: 2026-04-29
-last-synced: 2026-04-29
+updated: 2026-04-30
+last-synced: 2026-04-30
 completeness: 90
 related:
   - vitest-agent-reporter/architecture.md
@@ -70,6 +70,29 @@ The β substrate-wiring branch added 20 more tests across packages:
 
 The Task 30 e2e test (spawnSync against the built bin) was
 deferred per Decision β-N2.
+
+The RC substrate-integration branch adds tests across packages
+for the new surfaces. The exact counts vary by sub-package, but
+the additions are:
+
+- shared: `0003_idempotent_responses` migration round-trip,
+  `recordIdempotentResponse` ON CONFLICT DO NOTHING semantics,
+  `findIdempotentResponse` returning `Option.none()` vs cached
+  `result_json`, `writeHypothesis` + `validateHypothesis`
+  (including the unknown-id `DataStoreError` path),
+  `pruneSessions` cutoff math + FK CASCADE behavior, plus the
+  `format-triage` and `format-wrapup` lib generators against
+  in-memory SqliteClient fixtures
+- cli: `triage` and `wrapup` subcommand wiring against test
+  layers, `cache prune --keep-recent` round-trip
+- mcp: the four new tools (`triage_brief`, `wrapup_prompt`,
+  `hypothesis_record`, `hypothesis_validate`) via the existing
+  `createCallerFactory` pattern (Pattern 2), plus a focused
+  test for the idempotency middleware that drives
+  `idempotentProcedure` with both cache-miss and cache-hit
+  paths and verifies the swallow-on-persist-failure behavior
+- The total moves above 697; refer to the running CI count for
+  the current number rather than hard-coding it here
 
 All four coverage metrics (statements, branches, functions, lines)
 are above 80%. The root `vitest.config.ts` `coverage.exclude` list
@@ -246,6 +269,6 @@ disk-backed DBs to avoid concurrent-test isolation issues.
 
 ---
 
-**Document Status:** Current. Reflects the post-2.0.0-β
+**Document Status:** Current. Reflects the post-2.0.0-RC
 four-package test layout. For when each pattern was introduced,
 see [phase-history.md](./phase-history.md).

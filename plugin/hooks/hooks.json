@@ -9,11 +9,6 @@
 						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh\"",
 						"timeout": 30,
 						"statusMessage": "Loading vitest-agent-reporter context..."
-					},
-					{
-						"type": "command",
-						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start-record.sh\"",
-						"timeout": 10
 					}
 				]
 			}
@@ -77,6 +72,17 @@
 					{
 						"type": "command",
 						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-end-record.sh\"",
+						"timeout": 10
+					}
+				]
+			}
+		],
+		"Stop": [
+			{
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/stop-record.sh\"",
 						"timeout": 10
 					}
 				]

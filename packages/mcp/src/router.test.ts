@@ -319,4 +319,108 @@ describe("MCP Router", () => {
 		expect(result).toContain("nonexistent.ts");
 		expect(result).toContain("not in the low-coverage list");
 	});
+
+	describe("hypothesis_record and hypothesis_validate", () => {
+		it("hypothesis_record creates a hypothesis and returns { id }", async () => {
+			// Seed a session so the FK resolves
+			const sessionId = await testRuntime.runPromise(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					return yield* store.writeSession({
+						cc_session_id: "cc-hyp-record-test",
+						project: "default",
+						cwd: process.cwd(),
+						agent_kind: "main",
+						started_at: new Date().toISOString(),
+					});
+				}),
+			);
+
+			const caller = createTestCaller();
+			const result = await caller.hypothesis_record({
+				sessionId,
+				content: "The failure is caused by a missing null guard in the parser.",
+			});
+
+			expect(result).toHaveProperty("id");
+			expect((result as { id: number }).id).toBeGreaterThan(0);
+		});
+
+		it("hypothesis_validate updates the validation outcome to confirmed", async () => {
+			// Seed session + hypothesis
+			const { hypothesisId } = await testRuntime.runPromise(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const sessionId = yield* store.writeSession({
+						cc_session_id: "cc-hyp-validate-test",
+						project: "default",
+						cwd: process.cwd(),
+						agent_kind: "main",
+						started_at: new Date().toISOString(),
+					});
+					const hypothesisId = yield* store.writeHypothesis({
+						sessionId,
+						content: "Race condition in the event loop.",
+					});
+					return { hypothesisId };
+				}),
+			);
+
+			const caller = createTestCaller();
+			const result = await caller.hypothesis_validate({
+				id: hypothesisId,
+				outcome: "confirmed",
+				validatedAt: new Date().toISOString(),
+			});
+
+			expect(result).toEqual({});
+		});
+
+		it("hypothesis_validate returns error for unknown hypothesis id", async () => {
+			const caller = createTestCaller();
+			await expect(
+				caller.hypothesis_validate({
+					id: 999999,
+					outcome: "refuted",
+					validatedAt: new Date().toISOString(),
+				}),
+			).rejects.toThrow();
+		});
+	});
+
+	describe("triage_brief tool", () => {
+		it("returns 'no orientation signal' on empty DB", async () => {
+			const caller = createTestCaller();
+			const result = await caller.triage_brief({});
+			expect(typeof result).toBe("string");
+			expect(result).toMatch(/No orientation signal|orientation triage|Recent Test Runs/i);
+		});
+
+		it("includes content when test runs are seeded", async () => {
+			const caller = createTestCaller();
+			await seedTestData();
+			const result = await caller.triage_brief({});
+			expect(typeof result).toBe("string");
+			expect(result.length).toBeGreaterThan(0);
+		});
+	});
+
+	describe("wrapup_prompt tool", () => {
+		it("returns 'Nothing to wrap up' for an unknown session", async () => {
+			const caller = createTestCaller();
+			const result = await caller.wrapup_prompt({});
+			expect(typeof result).toBe("string");
+			expect(result).toMatch(/Nothing to wrap up|no recent activity/i);
+		});
+
+		it("emits a failure-prompt nudge for the user_prompt_nudge variant", async () => {
+			const caller = createTestCaller();
+			const result = await caller.wrapup_prompt({
+				kind: "user_prompt_nudge",
+				userPromptHint: "fix the broken test in foo.test.ts",
+			});
+			expect(result).toContain("test_history");
+			expect(result).toContain("failure_signature_get");
+		});
+	});
 });

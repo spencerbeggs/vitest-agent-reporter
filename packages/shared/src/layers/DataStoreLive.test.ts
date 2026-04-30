@@ -710,6 +710,145 @@ describe("DataStoreLive", () => {
 		});
 	});
 
+	describe("writeHypothesis", () => {
+		it("writes a hypothesis and returns a positive integer id", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const sessionId = yield* store.writeSession({
+						cc_session_id: "cc-hyp-basic",
+						project: "p",
+						cwd: "/tmp/p",
+						agent_kind: "main",
+						started_at: "2026-04-30T00:00:00Z",
+					});
+					return yield* store.writeHypothesis({
+						sessionId,
+						content: "The failure is caused by a missing null check.",
+					});
+				}),
+			);
+			expect(result).toBeGreaterThan(0);
+		});
+
+		it("writes a hypothesis with all optional fields", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const sessionId = yield* store.writeSession({
+						cc_session_id: "cc-hyp-full",
+						project: "p",
+						cwd: "/tmp/p",
+						agent_kind: "main",
+						started_at: "2026-04-30T00:00:00Z",
+					});
+					const id1 = yield* store.writeHypothesis({
+						sessionId,
+						content: "First hypothesis.",
+					});
+					const id2 = yield* store.writeHypothesis({
+						sessionId,
+						content: "Second hypothesis with evidence ref.",
+					});
+					return { id1, id2 };
+				}),
+			);
+			expect(result.id1).toBeGreaterThan(0);
+			expect(result.id2).toBeGreaterThan(result.id1);
+		});
+
+		it("fails with a DataStoreError when session_id FK does not exist", async () => {
+			await expect(
+				run(
+					Effect.gen(function* () {
+						const store = yield* DataStore;
+						return yield* store.writeHypothesis({
+							sessionId: 99999,
+							content: "This should fail due to FK constraint.",
+						});
+					}),
+				),
+			).rejects.toThrow();
+		});
+	});
+
+	describe("validateHypothesis", () => {
+		it("updates validation_outcome to confirmed", async () => {
+			const sql_ = await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const sql = yield* SqlClient;
+					const sessionId = yield* store.writeSession({
+						cc_session_id: "cc-val-confirmed",
+						project: "p",
+						cwd: "/tmp/p",
+						agent_kind: "main",
+						started_at: "2026-04-30T00:00:00Z",
+					});
+					const hypothesisId = yield* store.writeHypothesis({
+						sessionId,
+						content: "The bug is in the parser.",
+					});
+					yield* store.validateHypothesis({
+						id: hypothesisId,
+						outcome: "confirmed",
+						validatedAt: "2026-04-30T01:00:00Z",
+					});
+					const rows = yield* sql<{ validation_outcome: string | null }>`
+						SELECT validation_outcome FROM hypotheses WHERE id = ${hypothesisId}
+					`;
+					return rows[0].validation_outcome;
+				}),
+			);
+			expect(sql_).toBe("confirmed");
+		});
+
+		it("updates validation_outcome to refuted", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const sql = yield* SqlClient;
+					const sessionId = yield* store.writeSession({
+						cc_session_id: "cc-val-refuted",
+						project: "p",
+						cwd: "/tmp/p",
+						agent_kind: "main",
+						started_at: "2026-04-30T00:00:00Z",
+					});
+					const hypothesisId = yield* store.writeHypothesis({
+						sessionId,
+						content: "The bug is in the serializer.",
+					});
+					yield* store.validateHypothesis({
+						id: hypothesisId,
+						outcome: "refuted",
+						validatedAt: "2026-04-30T02:00:00Z",
+					});
+					const rows = yield* sql<{ validation_outcome: string | null }>`
+						SELECT validation_outcome FROM hypotheses WHERE id = ${hypothesisId}
+					`;
+					return rows[0].validation_outcome;
+				}),
+			);
+			expect(result).toBe("refuted");
+		});
+
+		it("fails with DataStoreError for unknown hypothesis id", async () => {
+			await expect(
+				run(
+					Effect.gen(function* () {
+						const store = yield* DataStore;
+						yield* store.validateHypothesis({
+							id: 99999,
+							outcome: "confirmed",
+							validatedAt: "2026-04-30T00:00:00Z",
+						});
+					}),
+				),
+			).rejects.toThrow("unknown hypothesis id: 99999");
+		});
+	});
+
 	describe("writeSession + writeTurn", () => {
 		it("writes a session and a turn referencing it", async () => {
 			const result = await run(
@@ -770,6 +909,92 @@ describe("DataStoreLive", () => {
 				}),
 			);
 			expect(result.map((r) => r.turn_no)).toEqual([1, 2]);
+		});
+	});
+
+	describe("pruneSessions", () => {
+		it("keeps the N most-recent sessions' turns and drops older ones", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					// Seed 4 sessions, oldest first.
+					for (let i = 0; i < 4; i++) {
+						const id = yield* ds.writeSession({
+							cc_session_id: `cc-prune-${i}`,
+							project: "p",
+							cwd: "/tmp/p",
+							agent_kind: "main",
+							started_at: `2026-04-${String(20 + i).padStart(2, "0")}T00:00:00Z`,
+						});
+						yield* ds.writeTurn({
+							session_id: id,
+							type: "user_prompt",
+							payload: JSON.stringify({ type: "user_prompt", prompt: `p${i}` }),
+							occurred_at: `2026-04-${String(20 + i).padStart(2, "0")}T00:00:01Z`,
+						});
+					}
+
+					const out = yield* ds.pruneSessions(2);
+					const remainingTurnSessions = yield* sql<{ session_id: number }>`
+						SELECT DISTINCT session_id FROM turns ORDER BY session_id
+					`;
+					return { out, remainingTurnSessions };
+				}),
+			);
+			expect(result.out.prunedSessions).toBe(2);
+			expect(result.out.prunedTurns).toBe(2);
+			// Sessions 1+2 (the two oldest) lose their turns; 3+4 keep them.
+			expect(result.remainingTurnSessions).toHaveLength(2);
+		});
+
+		it("returns zeros when fewer sessions exist than the keepRecent count", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					yield* ds.writeSession({
+						cc_session_id: "cc-prune-only",
+						project: "p",
+						cwd: "/tmp/p",
+						agent_kind: "main",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					return yield* ds.pruneSessions(30);
+				}),
+			);
+			expect(result.prunedSessions).toBe(0);
+			expect(result.prunedTurns).toBe(0);
+		});
+
+		it("retains the sessions rows themselves (only turn rows are dropped)", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					for (let i = 0; i < 3; i++) {
+						const id = yield* ds.writeSession({
+							cc_session_id: `cc-keep-${i}`,
+							project: "p",
+							cwd: "/tmp/p",
+							agent_kind: "main",
+							started_at: `2026-04-${String(20 + i).padStart(2, "0")}T00:00:00Z`,
+						});
+						yield* ds.writeTurn({
+							session_id: id,
+							type: "user_prompt",
+							payload: JSON.stringify({ type: "user_prompt", prompt: `p${i}` }),
+							occurred_at: `2026-04-${String(20 + i).padStart(2, "0")}T00:00:01Z`,
+						});
+					}
+
+					yield* ds.pruneSessions(1);
+					const sessionRows = yield* sql<{ count: number }>`SELECT COUNT(*) AS count FROM sessions`;
+					return sessionRows[0].count;
+				}),
+			);
+			expect(result).toBe(3);
 		});
 	});
 });

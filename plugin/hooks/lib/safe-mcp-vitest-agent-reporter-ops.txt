@@ -1,8 +1,9 @@
 # Auto-allow MCP operation suffixes for the vitest-agent-reporter MCP server
 # (mcp__vitest-agent-reporter__<op>).
-# All 24 tools are read-only or self-contained and safe to auto-allow:
+# All tools are read-only or self-contained and safe to auto-allow:
 # - Discovery / status: read SQLite database, no side effects
 # - Notes CRUD: writes to the user's own notes table, scoped to the project
+# - Hypothesis writes: writes to the user's own hypotheses table, scoped to the session
 # - run_tests: executes the user's own test suite via Vitest; requires test
 #   files and tools to be available, but does not touch external systems
 
@@ -48,3 +49,10 @@ failure_signature_get
 tdd_session_get
 hypothesis_list
 acceptance_metrics
+
+# === β: Orientation triage ===
+triage_brief
+
+# === RC: Hypothesis writes ===
+hypothesis_record
+hypothesis_validate

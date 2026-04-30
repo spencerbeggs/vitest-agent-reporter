@@ -1,0 +1,117 @@
+/**
+ * Pure markdown generator for W5 wrap-up prompts.
+ *
+ * Powers the `wrapup` CLI subcommand, the `wrapup_prompt` MCP tool, and
+ * the four interpretive hooks (Stop / SessionEnd / PreCompact /
+ * UserPromptSubmit). Each caller passes a `kind` so the generator can
+ * tailor the prompt — `stop` is lighter-weight than `session_end`,
+ * `tdd_handoff` produces the spec's pointer-shaped message, and
+ * `user_prompt_nudge` is the lightest of all (a nudge to use
+ * test_history / failure_signature_get when the prompt mentions test
+ * failure).
+ *
+ * Returns an empty string when there is no signal worth showing — hooks
+ * treat empty as "skip injection."
+ *
+ * Error channel is `never` — every DataReader call is collapsed via
+ * `Effect.orElseSucceed`.
+ *
+ * @packageDocumentation
+ */
+
+import { Effect, Option } from "effect";
+import { DataReader } from "../services/DataReader.js";
+
+export type WrapupKind = "stop" | "session_end" | "pre_compact" | "tdd_handoff" | "user_prompt_nudge";
+
+export interface FormatWrapupOptions {
+	readonly sessionId?: number;
+	readonly ccSessionId?: string;
+	readonly kind: WrapupKind;
+	readonly userPromptHint?: string;
+}
+
+const FAILURE_PROMPT_PATTERN = /test fail|fix.*test|why.*failing|why.*fail|broken test/i;
+
+export const formatWrapupEffect = (options: FormatWrapupOptions): Effect.Effect<string, never, DataReader> =>
+	Effect.gen(function* () {
+		const reader = yield* DataReader;
+
+		// user_prompt_nudge does not need the session; it inspects the prompt
+		// text and emits a fixed nudge if the prompt looks failure-related.
+		if (options.kind === "user_prompt_nudge") {
+			const hint = options.userPromptHint ?? "";
+			if (!FAILURE_PROMPT_PATTERN.test(hint)) return "";
+			return [
+				"<vitest-agent-reporter-nudge>",
+				"Before fixing, consider checking with test_history (is this flaky?) and failure_signature_get (have we seen this failure before?).",
+				"</vitest-agent-reporter-nudge>",
+			].join("\n");
+		}
+
+		// Resolve sessionId from either the integer id or the cc_session_id.
+		let sessionId: number | null = null;
+		if (options.sessionId !== undefined) {
+			sessionId = options.sessionId;
+		} else if (options.ccSessionId !== undefined) {
+			const opt = yield* reader.getSessionByCcId(options.ccSessionId).pipe(Effect.orElseSucceed(() => Option.none()));
+			if (Option.isSome(opt)) sessionId = opt.value.id;
+		}
+
+		// TDD handoff: pull the subagent's tdd_session and summarize.
+		if (options.kind === "tdd_handoff") {
+			if (sessionId === null) return "Subagent finished. No TDD session metadata recorded.";
+			// Forward-compat probe — same magic id as format-triage. RC adds
+			// a list-open-tdd-sessions reader in a later phase.
+			const tddOpt = yield* reader.getTddSessionById(1).pipe(Effect.orElseSucceed(() => Option.none()));
+			if (Option.isNone(tddOpt) || tddOpt.value.sessionId !== sessionId) {
+				return `Subagent finished (session ${sessionId}). No TDD session metadata recorded.`;
+			}
+			const tdd = tddOpt.value;
+			return [
+				`Subagent tdd-orchestrator (session #${tdd.id}) finished.`,
+				`Outcome: ${tdd.outcome ?? "in progress"}. Goal: "${tdd.goal}".`,
+				`Phases: ${tdd.phases.length}. Artifacts: ${tdd.artifacts.length}.`,
+				`[Read full summary: tdd_session_get(${tdd.id})]`,
+				`[Resume: /tdd resume:${tdd.id}]`,
+			].join("\n");
+		}
+
+		if (sessionId === null) return "no recent activity to wrap up.";
+
+		// Pull the session's recent turns and hypotheses.
+		const turns = yield* reader.searchTurns({ sessionId, limit: 50 }).pipe(Effect.orElseSucceed(() => []));
+		const fileEditCount = turns.filter((t) => t.type === "file_edit").length;
+		const hypotheses = yield* reader.listHypotheses({ sessionId, limit: 50 }).pipe(Effect.orElseSucceed(() => []));
+		const openHypotheses = hypotheses.filter((h) => h.validationOutcome === null);
+
+		if (fileEditCount === 0 && openHypotheses.length === 0) {
+			return `no recent activity to wrap up (session ${sessionId}).`;
+		}
+
+		const lines: string[] = [];
+		const heading = options.kind === "stop" ? "## Before you finish" : "## Session wrap-up";
+		lines.push(heading);
+
+		if (fileEditCount > 0 && openHypotheses.length === 0) {
+			lines.push(
+				`- ${fileEditCount} recent file edit${fileEditCount === 1 ? "" : "s"} but no hypotheses recorded. Did your changes have a hypothesis? Use \`hypothesis_record\` to externalize the why before continuing.`,
+			);
+		}
+
+		if (openHypotheses.length > 0) {
+			lines.push(
+				`- ${openHypotheses.length} open hypothesis(es). Use \`hypothesis_validate(id, "confirmed"|"refuted"|"abandoned")\` to mark them.`,
+			);
+		}
+
+		if (options.kind === "session_end") {
+			lines.push("- Use `note_create` to record any insights worth carrying forward.");
+		}
+
+		if (options.kind === "pre_compact") {
+			lines.push("- What from this session matters next? Record it now via `note_create` before context compaction.");
+		}
+
+		return lines.join("\n");
+	});
