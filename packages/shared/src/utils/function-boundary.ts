@@ -1,5 +1,5 @@
 import * as acorn from "acorn";
-import tsPlugin from "acorn-typescript";
+import { tsPlugin } from "acorn-typescript";
 
 const Parser = acorn.Parser.extend(
 	// biome-ignore lint/suspicious/noExplicitAny: acorn-typescript's plugin signature is loosely typed
