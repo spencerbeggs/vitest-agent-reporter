@@ -38,10 +38,14 @@ describe("validatePhaseTransition", () => {
 		}
 	});
 
-	it("rejects when current_phase doesn't match the source for the transition", () => {
-		const result = validatePhaseTransition(baseCtx({ current_phase: "refactor", requested_phase: "green" }));
-		expect(result.accepted).toBe(false);
-		if (!result.accepted) expect(result.denialReason).toBe("wrong_source_phase");
+	it("accepts free (evidence-free) transitions unconditionally", () => {
+		// spike→red is the entry point for every TDD cycle; it has no
+		// required artifact. Other free pairs (e.g. refactor→green,
+		// red.triangulate→red) follow the same rule.
+		expect(validatePhaseTransition(baseCtx({ current_phase: "spike", requested_phase: "red" })).accepted).toBe(true);
+		expect(validatePhaseTransition(baseCtx({ current_phase: "refactor", requested_phase: "green" })).accepted).toBe(
+			true,
+		);
 	});
 
 	it("rejects D2 binding rule 1: cited test created before phase start", () => {

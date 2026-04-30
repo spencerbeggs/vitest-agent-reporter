@@ -745,30 +745,33 @@ const migration = Effect.gen(function* () {
 	`;
 	yield* sql`CREATE INDEX idx_hook_executions_run ON hook_executions(run_id)`;
 
-	// 41. notes_fts (FTS5 virtual table with corrected trigger pattern)
+	// 41. notes_fts (FTS5 virtual table with corrected trigger pattern).
+	// Indexes both title and content so searchNotes can match either. The 1.x
+	// schema also indexed both; dropping title here would silently break
+	// title-based search.
 	yield* sql`
-		CREATE VIRTUAL TABLE notes_fts USING fts5(content, content='notes', content_rowid='id')
+		CREATE VIRTUAL TABLE notes_fts USING fts5(title, content, content='notes', content_rowid='id')
 	`;
 	yield* sql`
 		CREATE TRIGGER notes_ai AFTER INSERT ON notes BEGIN
-			INSERT INTO notes_fts(rowid, content) VALUES (NEW.id, NEW.content);
+			INSERT INTO notes_fts(rowid, title, content) VALUES (NEW.id, NEW.title, NEW.content);
 		END
 	`;
 	yield* sql`
 		CREATE TRIGGER notes_ad AFTER DELETE ON notes BEGIN
-			INSERT INTO notes_fts(notes_fts, rowid, content) VALUES('delete', OLD.id, OLD.content);
+			INSERT INTO notes_fts(notes_fts, rowid, title, content) VALUES('delete', OLD.id, OLD.title, OLD.content);
 		END
 	`;
 	// CORRECTED PATTERN: BEFORE UPDATE for the delete (captures OLD values
 	// before the UPDATE rewrites them). AFTER UPDATE for insert with NEW values.
 	yield* sql`
 		CREATE TRIGGER notes_bu BEFORE UPDATE ON notes BEGIN
-			INSERT INTO notes_fts(notes_fts, rowid, content) VALUES('delete', OLD.id, OLD.content);
+			INSERT INTO notes_fts(notes_fts, rowid, title, content) VALUES('delete', OLD.id, OLD.title, OLD.content);
 		END
 	`;
 	yield* sql`
 		CREATE TRIGGER notes_au AFTER UPDATE ON notes BEGIN
-			INSERT INTO notes_fts(rowid, content) VALUES (NEW.id, NEW.content);
+			INSERT INTO notes_fts(rowid, title, content) VALUES (NEW.id, NEW.title, NEW.content);
 		END
 	`;
 });

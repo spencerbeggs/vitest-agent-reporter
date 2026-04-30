@@ -1081,8 +1081,13 @@ denial with a typed reason and a remediation hint.
 Plus the artifact-kind precondition: `red → green` requires
 `test_failed_run`, `green → refactor` requires `test_passed_run`,
 `refactor → red` requires `test_passed_run` (refactor must end
-with all tests still passing). Other transitions trigger
-`wrong_source_phase` denials when no specific binding exists.
+with all tests still passing). All other transitions are
+**evidence-free** and accepted unconditionally — including
+`spike → red` (the entry point for every TDD cycle),
+`red.triangulate → red`, `green.fake-it → refactor`, and
+`extended-red → green`. The `wrong_source_phase` denial is
+reserved for future enumerated invalid edges; no transitions
+currently raise it.
 
 **Why a pure function (vs Effect service):**
 

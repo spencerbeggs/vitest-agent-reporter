@@ -30,6 +30,18 @@ const nodeName = (node: AstNode, parent: AstNode | null): string => {
 	return "<anonymous>";
 };
 
+/**
+ * Parse `source` as JavaScript (via acorn) and return the smallest enclosing
+ * function's start line and name for `line`.
+ *
+ * Returns `null` when acorn cannot parse the source. Notably, acorn is
+ * **JavaScript-only** — TypeScript syntax (type annotations, generics,
+ * decorators, `as` casts, etc.) throws and yields `null` here. Callers should
+ * fall back to a coarser coordinate (see `computeFailureSignature`'s `raw:`
+ * bucket). Stable failure signatures over `.ts` source will improve when this
+ * helper learns to parse TypeScript (acorn-typescript or
+ * @typescript-eslint/typescript-estree).
+ */
 export const findFunctionBoundary = (source: string, line: number): FunctionBoundary | null => {
 	let ast: AstNode;
 	try {

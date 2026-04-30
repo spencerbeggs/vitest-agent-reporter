@@ -91,16 +91,11 @@ const requiredArtifactForTransition = (from: Phase, to: Phase): { kind: Artifact
 export const validatePhaseTransition = (ctx: PhaseTransitionContext): PhaseTransitionResult => {
 	const expected = requiredArtifactForTransition(ctx.current_phase, ctx.requested_phase);
 	if (expected === null) {
-		return {
-			accepted: false,
-			phase: ctx.current_phase,
-			denialReason: "wrong_source_phase",
-			remediation: {
-				suggestedTool: "tdd_session_get",
-				suggestedArgs: { id: ctx.tdd_session_id },
-				humanHint: `Cannot transition from ${ctx.current_phase} to ${ctx.requested_phase}. Inspect the session for the next valid transition.`,
-			},
-		};
+		// Transitions without a required artifact (e.g. spike→red, the entry
+		// point for every TDD cycle) are accepted unconditionally. The three
+		// evidence-bearing transitions (red→green, green→refactor, refactor→red)
+		// fall through to the artifact and binding-rule checks below.
+		return { accepted: true, phase: ctx.requested_phase };
 	}
 
 	if (ctx.cited_artifact.artifact_kind !== expected.kind) {
