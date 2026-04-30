@@ -1011,18 +1011,31 @@ even the raw line is unknown, falls back to `raw:?`, which means
 all such failures collapse to one signature -- intentional, since
 we have no better discriminator.
 
-**Why acorn (vs other parsers):**
+**Why acorn (vs other parsers) for the alpha:**
 
 - Zero-deps on the parser side; acorn is `^8.16.0` and well-
   maintained
-- We only need ES module parsing; we don't need the heavier
-  TypeScript or JSX parser surface (failures we're hashing are
-  almost always in compiled output anyway -- the relevant source
-  is JS by the time we see a stack frame)
 - Returns AST nodes with `loc` data when `locations: true` is
   passed, which is exactly the data we need
 - Throws cleanly on syntax errors so we can fall through to the
   bucket fallback rather than blowing up the reporter
+- Smallest viable parser to land the schema + utility scaffolding;
+  swapping in TypeScript support is a one-line parser change later
+
+**TypeScript limitation (load-bearing for stable):**
+
+Acorn is a JavaScript-only parser. Vitest stack frames source-map
+back to the original `.ts` files, so `findFunctionBoundary` is
+called against TypeScript source in practice and throws on every
+type annotation, generic, decorator, or `as` cast. The catch
+falls through to the `raw:<bucket>` coordinate, so the alpha
+ships with `function_boundary_line` always NULL for TS projects --
+functional but ~10-line granularity instead of function-stable.
+Adding TS support (`acorn-typescript` plugin or
+`@typescript-eslint/typescript-estree`) is **deferred to Phase β**
+and bundled with the reporter wiring that subscribes failure-
+signature writes; that's when the granularity gap shifts from
+"polish" to "load-bearing for the headline metric."
 
 **Trade-offs:**
 
