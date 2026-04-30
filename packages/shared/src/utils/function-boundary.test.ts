@@ -38,4 +38,38 @@ describe("findFunctionBoundary", () => {
 	it("returns null on parse error rather than throwing", () => {
 		expect(findFunctionBoundary("function {{{ broken", 1)).toBeNull();
 	});
+
+	it("parses TypeScript syntax (type annotations)", () => {
+		const source = `
+function add(a: number, b: number): number {
+	return a + b;
+}
+`;
+		const boundary = findFunctionBoundary(source, 3); // line of `return`
+		expect(boundary).toEqual({ line: 2, name: "add" });
+	});
+
+	it("parses TypeScript syntax (generics + as cast)", () => {
+		const source = `
+function head<T>(arr: T[]): T | undefined {
+	const x = arr[0] as T | undefined;
+	return x;
+}
+`;
+		const boundary = findFunctionBoundary(source, 3);
+		expect(boundary).toEqual({ line: 2, name: "head" });
+	});
+
+	it("parses TypeScript decorators on class methods", () => {
+		const source = `
+class Foo {
+	@bar()
+	greet(name: string): string {
+		return \`hi \${name}\`;
+	}
+}
+`;
+		const boundary = findFunctionBoundary(source, 5); // line of `return`
+		expect(boundary?.name).toBe("greet");
+	});
 });
