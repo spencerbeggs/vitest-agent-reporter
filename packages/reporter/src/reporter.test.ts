@@ -14,6 +14,14 @@ import { AgentReporter } from "./reporter.js";
 
 // --- Test Helpers ---
 
+interface TestErrorFixture {
+	readonly message: string;
+	readonly name?: string;
+	readonly diff?: string;
+	readonly stack?: string;
+	readonly stacks?: string[];
+}
+
 function makeTestCase(
 	overrides: Partial<{
 		name: string;
@@ -22,7 +30,7 @@ function makeTestCase(
 		duration: number;
 		flaky: boolean;
 		slow: boolean;
-		errors: Array<{ message: string; diff?: string; stacks?: string[] }>;
+		errors: TestErrorFixture[];
 	}> = {},
 ): VitestTestCase {
 	const name = overrides.name ?? "my test";
@@ -34,7 +42,7 @@ function makeTestCase(
 		result: () => {
 			const res: {
 				state: string;
-				errors?: ReadonlyArray<{ message: string; diff?: string; stacks?: string[] }>;
+				errors?: ReadonlyArray<TestErrorFixture>;
 			} = { state: overrides.state ?? "passed" };
 			if (overrides.errors != null) res.errors = overrides.errors;
 			return res;
@@ -586,6 +594,44 @@ describe("AgentReporter", () => {
 			);
 
 			expect(fs.existsSync(path.join(tmpDir, "data.db"))).toBe(true);
+		});
+	});
+
+	describe("failure signatures", () => {
+		it("writes failure_signatures and signature_hash for failing tests", async () => {
+			const reporter = new AgentReporter({
+				cacheDir: tmpDir,
+				consoleOutput: "silent",
+			});
+
+			const failingTest = makeTestCase({
+				name: "fails",
+				fullName: "Foo > fails",
+				state: "failed",
+				errors: [
+					{
+						name: "AssertionError",
+						message: "expected 1 to equal 2",
+						stack: "AssertionError: expected 1 to equal 2\n" + "    at Foo.bar (/abs/src/foo.ts:42:9)\n",
+					},
+				],
+			});
+
+			await reporter.onTestRunEnd([makeTestModule({ state: "failed", tests: [failingTest] })], [], "failed");
+
+			const db = new DatabaseSync(path.join(tmpDir, "data.db"));
+			const sigRows = db.prepare("SELECT signature_hash FROM failure_signatures").all() as Array<{
+				signature_hash: string;
+			}>;
+			const errRows = db
+				.prepare("SELECT signature_hash FROM test_errors WHERE signature_hash IS NOT NULL")
+				.all() as Array<{ signature_hash: string }>;
+			db.close();
+
+			expect(sigRows).toHaveLength(1);
+			expect(sigRows[0].signature_hash).toMatch(/^[a-f0-9]{16}$/);
+			expect(errRows).toHaveLength(1);
+			expect(errRows[0].signature_hash).toBe(sigRows[0].signature_hash);
 		});
 	});
 });

@@ -4,7 +4,7 @@ import { DataStoreError, extractSqlReason } from "../errors/DataStoreError.js";
 import type { CoverageBaselines } from "../schemas/Baselines.js";
 import type { TrendEntry } from "../schemas/Trends.js";
 import type {
-	FailureSignatureInput,
+	FailureSignatureWriteInput,
 	FileCoverageInput,
 	ModuleInput,
 	NoteInput,
@@ -410,7 +410,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "turns", reason: extractSqlReason(e) })),
 			);
 
-		const writeFailureSignature = (input: FailureSignatureInput): Effect.Effect<void, DataStoreError> =>
+		const writeFailureSignature = (input: FailureSignatureWriteInput): Effect.Effect<void, DataStoreError> =>
 			Effect.gen(function* () {
 				yield* Effect.logDebug("writeFailureSignature").pipe(
 					Effect.annotateLogs({ signatureHash: input.signatureHash, runId: input.runId }),
