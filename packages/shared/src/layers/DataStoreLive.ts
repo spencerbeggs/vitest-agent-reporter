@@ -410,6 +410,21 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "turns", reason: extractSqlReason(e) })),
 			);
 
+		const endSession = (
+			ccSessionId: string,
+			endedAt: string,
+			endReason: string | null,
+		): Effect.Effect<void, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("endSession").pipe(Effect.annotateLogs({ ccSessionId, endReason }));
+				yield* sql`UPDATE sessions SET ended_at = ${endedAt}, end_reason = ${endReason} WHERE cc_session_id = ${ccSessionId}`;
+			}).pipe(
+				Effect.annotateLogs("service", "DataStore"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "sessions", reason: extractSqlReason(e) }),
+				),
+			);
+
 		const writeFailureSignature = (input: FailureSignatureWriteInput): Effect.Effect<void, DataStoreError> =>
 			Effect.gen(function* () {
 				yield* Effect.logDebug("writeFailureSignature").pipe(
@@ -442,6 +457,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 			writeSession,
 			writeTurn,
 			writeFailureSignature,
+			endSession,
 		};
 	}),
 );

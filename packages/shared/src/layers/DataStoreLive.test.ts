@@ -341,6 +341,33 @@ describe("DataStoreLive", () => {
 		});
 	});
 
+	describe("endSession", () => {
+		it("updates ended_at and end_reason on the matching cc_session_id", async () => {
+			await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					yield* store.writeSession({
+						cc_session_id: "cc-end-test",
+						project: "p",
+						cwd: "/tmp/p",
+						agent_kind: "main",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+
+					yield* store.endSession("cc-end-test", "2026-04-29T00:01:00Z", "clear");
+
+					const rows = yield* sql<{ ended_at: string | null; end_reason: string | null }>`
+						SELECT ended_at, end_reason FROM sessions WHERE cc_session_id = 'cc-end-test'
+					`;
+					expect(rows[0].ended_at).toBe("2026-04-29T00:01:00Z");
+					expect(rows[0].end_reason).toBe("clear");
+				}),
+			);
+		});
+	});
+
 	describe("writeFailureSignature", () => {
 		it("inserts on first call and increments occurrence_count on second", async () => {
 			await run(

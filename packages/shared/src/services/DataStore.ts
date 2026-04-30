@@ -235,5 +235,10 @@ export class DataStore extends Context.Tag("vitest-agent-reporter/DataStore")<
 		readonly writeSession: (input: SessionInput) => Effect.Effect<number, DataStoreError>;
 		readonly writeTurn: (input: TurnInput) => Effect.Effect<number, DataStoreError>;
 		readonly writeFailureSignature: (input: FailureSignatureWriteInput) => Effect.Effect<void, DataStoreError>;
+		readonly endSession: (
+			ccSessionId: string,
+			endedAt: string,
+			endReason: string | null,
+		) => Effect.Effect<void, DataStoreError>;
 	}
 >() {}
