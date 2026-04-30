@@ -14,6 +14,12 @@ package family. Carries everything `vitest-agent-reporter`,
 - XDG-based path resolution (`resolveDataPath`, `PathResolutionLive`,
   `ConfigLive`)
 - `LoggerLive`, `ensureMigrated`, and shared utilities
+- `TurnPayload` Effect Schema union for Claude Code session/turn logging
+  (2.0.0-alpha)
+- `computeFailureSignature` and `findFunctionBoundary` for stable failure
+  identity hashing across line drift (2.0.0-alpha)
+- `validatePhaseTransition` pure validator for TDD phase-transition
+  evidence binding (2.0.0-alpha)
 
 You almost certainly don't install this directly — install
 `vitest-agent-reporter` and the runtime packages get pulled in via

@@ -25,294 +25,94 @@ and data flow diagrams.
 
 ## File Structure
 
-As of 2.0 (Phase 6) the source lives in four pnpm workspaces under
-`packages/` instead of a single `package/`. The plugin directory is
-unchanged. `examples/` adds an integration target that doubles as a
-Vitest project.
+Source lives in four pnpm workspaces under `packages/` plus the
+file-based `plugin/` directory and the `examples/` integration target.
+This is a navigation overview only -- per-component descriptions
+(interfaces, dependencies, file roles) live in
+[components.md](./components.md).
 
 ```text
 packages/
-  shared/                 -- vitest-agent-reporter-shared (no internal deps)
+  shared/    -- vitest-agent-reporter-shared (no internal deps)
     src/
-      index.ts            -- public re-exports
+      index.ts
+      formatters/  -- types.ts, markdown.ts, gfm.ts, json.ts, silent.ts
+      services/    -- DataStore, DataReader, EnvironmentDetector,
+                      ExecutorResolver, FormatSelector, DetailResolver,
+                      OutputRenderer, ProjectDiscovery, HistoryTracker,
+                      Config
+      layers/      -- *Live.ts and *Test.ts for each service, plus
+                      OutputPipelineLive, LoggerLive, ConfigLive,
+                      PathResolutionLive
+      errors/      -- DataStoreError, DiscoveryError, PathResolutionError
+      schemas/     -- Common, AgentReport, CacheManifest, Coverage,
+                      Thresholds, Baselines, Trends, History, Options,
+                      Config, turns/ (UserPromptPayload, ToolCallPayload,
+                      ToolResultPayload, FileEditPayload, HookFirePayload,
+                      NotePayload, HypothesisPayload + TurnPayload union)
+      migrations/  -- 0001_initial.ts (1.x 25-table schema),
+                      0002_comprehensive.ts (2.0.0-α drop-and-recreate
+                      with 40 tables + notes_fts, WAL, FKs)
+      sql/         -- rows.ts (Schema.Struct row types), assemblers.ts
+      utils/       -- compress-lines, safe-filename, ansi, detect-pm,
+                      compute-trend, split-project, classify-test,
+                      ensure-migrated, format-console, format-gfm,
+                      format-fatal-error, build-report,
+                      normalize-workspace-key, resolve-workspace-key,
+                      resolve-data-path, function-boundary,
+                      failure-signature, validate-phase-transition
 
-      formatters/
-        types.ts          -- Formatter, FormatterContext, RenderedOutput
-        markdown.ts       -- tiered console markdown formatter
-        gfm.ts            -- GitHub-Flavored Markdown formatter
-        json.ts           -- raw JSON output formatter
-        silent.ts         -- no-op formatter (database-only mode)
-
-      services/
-        DataStore.ts      -- Context.Tag: write to SQLite (+ SettingsInput)
-        DataReader.ts     -- Context.Tag: read from SQLite
-        EnvironmentDetector.ts -- Context.Tag: std-env wrapper (4 envs)
-        ExecutorResolver.ts -- Context.Tag: env -> executor mapping
-        FormatSelector.ts -- Context.Tag: format selection
-        DetailResolver.ts -- Context.Tag: detail level resolution
-        OutputRenderer.ts -- Context.Tag: formatter dispatch
-        ProjectDiscovery.ts -- Context.Tag: test file discovery
-        HistoryTracker.ts -- Context.Tag: test outcome classification
-        Config.ts         -- Context.Tag: VitestAgentReporterConfigFile (Phase 6)
-
-      layers/
-        DataStoreLive.ts / DataStoreTest.ts
-        DataReaderLive.ts
-        EnvironmentDetectorLive.ts / EnvironmentDetectorTest.ts
-        ExecutorResolverLive.ts
-        FormatSelectorLive.ts
-        DetailResolverLive.ts
-        OutputRendererLive.ts
-        OutputPipelineLive.ts   -- merged: all 5 output pipeline services
-        ProjectDiscoveryLive.ts / ProjectDiscoveryTest.ts
-        HistoryTrackerLive.ts / HistoryTrackerTest.ts
-        LoggerLive.ts       -- Effect structured logging (NDJSON, logLevel/logFile)
-        ConfigLive.ts       -- ConfigFile.Live for vitest-agent-reporter.config.toml (Phase 6)
-        PathResolutionLive.ts -- composite: AppDirs + ConfigFile + Workspaces (Phase 6)
-
-      errors/
-        DataStoreError.ts   -- Data.TaggedError (database I/O)
-        DiscoveryError.ts   -- Data.TaggedError (project discovery)
-        PathResolutionError.ts -- Data.TaggedError (path resolution) (Phase 6)
-
-      schemas/
-        Common.ts           -- shared literals (TestState, Environment, Executor,
-                               OutputFormat, DetailLevel, etc.)
-        AgentReport.ts      -- report + module + test schemas
-        CacheManifest.ts    -- manifest + entry schemas
-        Coverage.ts         -- coverage report + totals + file coverage
-        Thresholds.ts       -- MetricThresholds, PatternThresholds, ResolvedThresholds
-        Baselines.ts        -- CoverageBaselines (auto-ratcheting high-water marks)
-        Trends.ts           -- TrendEntry, TrendRecord (coverage trends)
-        History.ts          -- TestRun, TestHistory, HistoryRecord schemas
-        Options.ts          -- reporter + plugin + coverage + formatter options
-        Config.ts           -- VitestAgentReporterConfig (TOML config file) (Phase 6)
-
-      migrations/
-        0001_initial.ts     -- 25-table SQLite schema (WAL mode, FK enabled)
-
-      sql/
-        rows.ts             -- row type definitions for SQLite queries
-        assemblers.ts       -- functions to reconstruct domain types from rows
-
-      utils/
-        compress-lines.ts   -- range compression for uncovered lines
-        safe-filename.ts    -- project name sanitization
-        ansi.ts             -- ANSI color helpers (NO_COLOR aware)
-        detect-pm.ts        -- package manager detection (Effect-aware)
-        compute-trend.ts    -- coverage trend computation + hash comparison
-        split-project.ts    -- splits "project:subProject" into ProjectIdentity
-        classify-test.ts    -- pure test classification function
-        ensure-migrated.ts  -- process-level migration coordinator
-                               (globalThis-keyed promise cache,
-                               one-shot per dbPath)
-        format-console.ts   -- legacy console formatter (delegates to markdown)
-        format-gfm.ts       -- legacy GFM formatter (delegates to gfm)
-        format-fatal-error.ts -- formats fatal error output for reporter errors
-        build-report.ts     -- pure function: AgentReport builder + duck-typed
-                               Vitest interfaces
-        normalize-workspace-key.ts -- normalize package name as path segment (Phase 6)
-        resolve-workspace-key.ts -- resolve workspace key from projectDir (Phase 6)
-        resolve-data-path.ts -- resolveDataPath orchestrator (Phase 6)
-
-  reporter/               -- vitest-agent-reporter (depends on shared)
+  reporter/  -- vitest-agent-reporter (depends on shared)
     src/
-      index.ts            -- public re-exports
-      reporter.ts         -- AgentReporter class (async onInit, ensureDbPath)
-      plugin.ts           -- AgentPlugin function (async configureVitest hook)
-      services/
-        CoverageAnalyzer.ts -- only the reporter exercises istanbul data
-      layers/
-        CoverageAnalyzerLive.ts / CoverageAnalyzerTest.ts
-        ReporterLive.ts   -- (dbPath, logLevel?, logFile?) composition
-      utils/
-        capture-env.ts      -- captures CI/GitHub/Runner env vars
-        capture-settings.ts -- captures Vitest config + computes hash
-        resolve-thresholds.ts -- Vitest thresholds format parser
-        strip-console-reporters.ts -- reporter chain manipulation
+      index.ts, reporter.ts, plugin.ts
+      services/    -- CoverageAnalyzer (only istanbul-aware service)
+      layers/      -- CoverageAnalyzerLive, CoverageAnalyzerTest,
+                      ReporterLive(dbPath, logLevel?, logFile?)
+      utils/       -- capture-env, capture-settings, resolve-thresholds,
+                      strip-console-reporters
 
-  cli/                    -- vitest-agent-reporter-cli (depends on shared)
+  cli/       -- vitest-agent-reporter-cli (bin: vitest-agent-reporter)
     src/
-      bin.ts              -- bin entry: vitest-agent-reporter
-      index.ts            -- runCli re-export
-      commands/
-        status.ts overview.ts coverage.ts history.ts trends.ts cache.ts doctor.ts
-      lib/
-        format-status.ts format-overview.ts format-coverage.ts
-        format-history.ts format-trends.ts format-doctor.ts
-      layers/
-        CliLive.ts        -- (dbPath, logLevel?, logFile?) composition
+      bin.ts, index.ts
+      commands/    -- status, overview, coverage, history, trends,
+                      cache, doctor (each --format aware)
+      lib/         -- format-* (testable pure formatting logic)
+      layers/      -- CliLive(dbPath, logLevel?, logFile?)
 
-  mcp/                    -- vitest-agent-reporter-mcp (depends on shared)
+  mcp/       -- vitest-agent-reporter-mcp (bin: vitest-agent-reporter-mcp)
     src/
-      bin.ts              -- bin entry: vitest-agent-reporter-mcp
-      index.ts            -- programmatic entry
-      context.ts          -- tRPC context with ManagedRuntime
-      router.ts           -- tRPC router aggregating 24 tool procedures
-      server.ts           -- startMcpServer() registering tools with MCP SDK
-      layers/
-        McpLive.ts        -- (dbPath, logLevel?, logFile?) composition
-      tools/
-        help.ts status.ts overview.ts coverage.ts history.ts trends.ts
-        errors.ts test-for-file.ts test-get.ts test-list.ts file-coverage.ts
-        run-tests.ts cache-health.ts configure.ts notes.ts
-        project-list.ts module-list.ts suite-list.ts settings-list.ts
+      bin.ts, index.ts, context.ts, router.ts, server.ts
+      layers/      -- McpLive(dbPath, logLevel?, logFile?)
+      tools/       -- 24 tool implementations (help, status, overview,
+                      coverage, history, trends, errors, test-for-file,
+                      test-get, test-list, file-coverage, run-tests,
+                      cache-health, configure, notes, project-list,
+                      module-list, suite-list, settings-list)
 
 examples/
-  basic/                  -- minimal example app with tests (5th Vitest project)
-    src/math.ts
-    src/math.test.ts
+  basic/     -- minimal example app (5th Vitest project)
 
-plugin/                   -- file-based Claude Code plugin (NOT a workspace)
-  .claude-plugin/
-    plugin.json           -- plugin manifest with inline mcpServers config
-  bin/
-    mcp-server.mjs        -- Phase 6 rewrite: zero-deps PM-detect + spawn
-                             vitest-agent-reporter-mcp through user's PM.
-                             Forwards CLAUDE_PROJECT_DIR via
-                             VITEST_AGENT_REPORTER_PROJECT_DIR env var
-  hooks/
-    hooks.json            -- hook configuration (SessionStart, PreToolUse,
-                             PostToolUse)
-    session-start.sh      -- context injection on session start
-    pre-tool-use-mcp.sh   -- auto-allow MCP tools matching
-                             mcp__vitest-agent-reporter__.* whose
-                             operation suffix is in the allowlist
-    lib/
-      safe-mcp-vitest-agent-reporter-ops.txt
-                          -- one MCP operation suffix per line; covers
-                             all 24 tools (meta + read-only + discovery
-                             + run_tests + notes CRUD)
-    post-test-run.sh      -- test run detection on Bash tool use
-  skills/
-    tdd/SKILL.md          -- TDD workflow skill
-    debugging/SKILL.md    -- test debugging skill
-    configuration/SKILL.md -- Vitest configuration skill
-    coverage-improvement/SKILL.md -- coverage improvement skill
-  commands/
-    setup.md              -- setup command
-    configure.md          -- configure command
-  README.md
+plugin/      -- file-based Claude Code plugin (NOT a pnpm workspace)
+  .claude-plugin/plugin.json   -- manifest with inline mcpServers config
+  bin/mcp-server.mjs           -- zero-deps PM-detect + spawn loader.
+                                  Forwards projectDir via
+                                  VITEST_AGENT_REPORTER_PROJECT_DIR
+  hooks/       -- hooks.json + session-start.sh +
+                  pre-tool-use-mcp.sh (auto-allows the 24 MCP tools
+                  enumerated in lib/safe-mcp-vitest-agent-reporter-
+                  ops.txt) + post-test-run.sh
+  skills/      -- tdd, debugging, configuration, coverage-improvement
+  commands/    -- setup.md, configure.md
 ```
-
-**Removed in Phase 6:**
-
-- `package/` -- replaced by the four `packages/*/` workspaces
-- `package/src/cli/lib/resolve-cache-dir.ts` -- the artifact-probing
-  `resolveDbPath` is gone. Replaced by `packages/shared/src/utils/
-  resolve-data-path.ts` (deterministic XDG resolver). The `cache path`
-  CLI command now prints the resolved XDG path directly
 
 ---
 
 ## Test Files
 
-Tests are co-located with their sources, distributed across the four
-package workspaces. The root `vitest.config.ts` declares five named
-projects (one per package + `example-basic`) with explicit `include`
-globs per project.
-
-```text
-packages/reporter/src/
-  reporter.test.ts          -- AgentReporter lifecycle integration tests
-  plugin.test.ts            -- AgentPlugin environment detection + config
-  layers/
-    CoverageAnalyzerLive.test.ts -- coverage processing, test layer
-    ReporterLive.test.ts        -- merged layer composition
-  services/
-    services.test.ts        -- service Context.Tag (CoverageAnalyzer)
-  utils/
-    capture-env.test.ts      -- env var capture
-    capture-settings.test.ts -- settings capture + hash computation
-    resolve-thresholds.test.ts -- Vitest thresholds format parsing
-    strip-console-reporters.test.ts -- reporter chain manipulation
-
-packages/shared/src/
-  errors/
-    errors.test.ts          -- DataStoreError, DiscoveryError, PathResolutionError
-  formatters/
-    markdown.test.ts        -- markdown formatter (tiered output, coverage, trends)
-    gfm.test.ts             -- GFM formatter (single/multi-project, coverage)
-    json.test.ts            -- JSON formatter
-  layers/
-    EnvironmentDetectorLive.test.ts -- std-env integration, live layer
-    DataStoreLive.test.ts       -- database write via SQLite
-    DataReaderLive.test.ts      -- database read via SQLite
-    ProjectDiscoveryLive.test.ts -- test file discovery
-    HistoryTrackerLive.test.ts  -- classification logic, sliding window
-    ExecutorResolverLive.test.ts -- executor resolution
-    FormatSelectorLive.test.ts  -- format selection
-    DetailResolverLive.test.ts  -- detail level resolution
-    OutputRendererLive.test.ts  -- formatter dispatch
-    LoggerLive.test.ts          -- structured logging layer
-    ConfigLive.test.ts          -- TOML config loader (Phase 6)
-  migrations/
-    0001_initial.test.ts    -- migration schema verification
-  schemas/
-    Common.test.ts          -- shared literal schemas
-    AgentReport.test.ts     -- report schema validation
-    CacheManifest.test.ts   -- manifest schema validation
-    Coverage.test.ts        -- coverage schema validation
-    Baselines.test.ts       -- baselines schema validation
-    Trends.test.ts          -- TrendEntry, TrendRecord schema validation
-    History.test.ts         -- TestRun, TestHistory, HistoryRecord schema
-    Options.test.ts         -- reporter + plugin + coverage options schema
-    Config.test.ts          -- VitestAgentReporterConfig schema (Phase 6)
-  services/
-    services.test.ts        -- service Context.Tag definitions
-  sql/
-    assemblers.test.ts      -- assembler function tests
-  utils/
-    compress-lines.test.ts  -- range compression edge cases
-    safe-filename.test.ts   -- sanitization edge cases
-    ansi.test.ts            -- ANSI/stripAnsi, NO_COLOR
-    detect-pm.test.ts       -- package manager detection
-    compute-trend.test.ts   -- trend computation, hash change detection
-    format-console.test.ts  -- legacy console markdown formatting
-    format-gfm.test.ts      -- legacy GFM formatting
-    build-report.test.ts    -- report building with mock Vitest objects
-    split-project.test.ts   -- project name splitting
-    ensure-migrated.test.ts -- migration coordinator (4 tests: fresh DB,
-                               concurrent same dbPath sharing, distinct
-                               dbPaths independent, race serialization)
-    format-fatal-error.test.ts -- fatal error formatting
-    normalize-workspace-key.test.ts -- workspace key normalization (Phase 6)
-    resolve-workspace-key.test.ts -- workspace key resolution (Phase 6)
-    resolve-data-path.test.ts -- resolveDataPath orchestrator (Phase 6)
-
-packages/cli/src/
-  lib/
-    format-status.test.ts   -- status formatting logic
-    format-overview.test.ts -- overview formatting logic
-    format-coverage.test.ts -- coverage formatting logic
-    format-history.test.ts  -- history formatting logic
-    format-trends.test.ts   -- trends formatting logic
-    format-doctor.test.ts   -- doctor diagnostic formatting
-
-packages/mcp/src/
-  router.test.ts            -- tRPC router integration tests
-  tools/
-    run-tests.test.ts       -- run_tests tool (spawnSync)
-
-examples/basic/src/
-  math.test.ts              -- minimal example tests (8 tests)
-```
-
-**618 tests total** across 5 named Vitest projects:
-
-| Project | Tests |
-| --- | --- |
-| `vitest-agent-reporter` | 102 |
-| `vitest-agent-reporter-shared` | 429 |
-| `vitest-agent-reporter-mcp` | 40 |
-| `vitest-agent-reporter-cli` | 39 |
-| `example-basic` | 8 |
-
-All coverage metrics (statements, branches, functions, lines) are
-above 80%. The root `vitest.config.ts` `coverage.exclude` rewrites
-target the new `packages/`-prefixed paths (bin entries, command glue,
-the layer composition factories, and a couple of pure types-only
-modules are excluded as not separately testable).
+Test files are co-located with their sources under
+`packages/<name>/src/**/*.test.ts`. See
+[testing-strategy.md](./testing-strategy.md) for test counts per
+project and testing patterns.
 
 ---
 
@@ -391,20 +191,6 @@ cacheDir = "/abs/path/to/cache"
 projectKey = "my-app"
 ```
 
-### Removed in Phase 6
-
-The 1.x `node_modules/.vite/.../vitest-agent-reporter/data.db`
-location is gone. So is the `node_modules/.vite/vitest/<hash>/...`
-walking that the artifact-probing `resolveDbPath` did. There is no
-migration code: existing 1.x users have history reset on first 2.0
-run. The break is documented in the changeset and changelog.
-
-### Phase 1-4 JSON layout (removed in Phase 5)
-
-The previous JSON file cache (`manifest.json`, `baselines.json`,
-`reports/*.json`, `history/*.json`, `trends/*.json`) has been
-replaced entirely by the SQLite database.
-
 ### `splitProject()` examples (per-Vitest-sub-project keying inside the DB)
 
 The DB itself is one-per-workspace; Vitest sub-projects (the
@@ -433,11 +219,30 @@ zero-deps inline copy with the same detection order:
 
 ## SQLite Database Schema
 
-The database schema is defined in `package/src/migrations/0001_initial.ts`
-and managed via `@effect/sql-sqlite-node` SqliteMigrator. WAL journal mode
-and foreign keys are enabled.
+The canonical schema with column types, foreign keys, indexes, and the
+`notes_fts` triggers lives in
+`packages/shared/src/migrations/0002_comprehensive.ts` (2.0.0-α). It is
+managed via `@effect/sql-sqlite-node` SqliteMigrator with WAL journal
+mode and foreign keys enabled. The list below is a navigation aid only
+-- do not treat it as a column reference.
 
-**25 tables:**
+**Migration sequence:**
+`0001_initial` (1.x 25-table schema) runs first; `0002_comprehensive`
+then drops every 1.x table and recreates the layout with 15 additional
+tables and column augmentations on `test_errors` and `stack_frames`.
+Per Decision D9 this is the **last drop-and-recreate** migration;
+2.0.x and beyond are ALTER-only.
+
+**Key relationships:** `test_runs` is the spine; each run owns one or
+more `test_modules`, which own `test_suites` and `test_cases`. Errors
+attach to runs/cases via `test_errors` with parsed `stack_frames`.
+The `files` table is the shared FK target for any path-like column
+(test modules, source maps, coverage rows, file edits, run-changed
+files). `notes_fts` is an FTS5 virtual table over `notes` kept in
+sync via insert/update/delete triggers (see "FTS5 trigger pattern"
+below).
+
+**40 tables:**
 
 | # | Table | Purpose |
 | - | ----- | ------- |
@@ -449,8 +254,8 @@ and foreign keys are enabled.
 | 6 | `test_modules` | Test modules (files) per run |
 | 7 | `test_suites` | Test suites (describe blocks) per module |
 | 8 | `test_cases` | Individual test cases per module |
-| 9 | `test_errors` | Errors with diffs, expected/actual, stacks |
-| 10 | `stack_frames` | Parsed stack frames per error |
+| 9 | `test_errors` | Errors with diffs, expected/actual, stacks (2.0.0-α adds `signature_hash` FK) |
+| 10 | `stack_frames` | Parsed stack frames per error (2.0.0-α adds `source_mapped_line` and `function_boundary_line`) |
 | 11 | `tags` | Deduplicated tag names |
 | 12 | `test_case_tags` | Tag associations for test cases |
 | 13 | `test_suite_tags` | Tag associations for test suites |
@@ -466,17 +271,41 @@ and foreign keys are enabled.
 | 23 | `file_coverage` | Per-file coverage data per run |
 | 24 | `source_test_map` | Source file to test module mapping |
 | 25 | `notes` | Scoped notes with threading and expiration |
+| 26 | `sessions` (2.0.0-α) | Claude Code conversations (`cc_session_id` unique, `agent_kind`, `parent_session_id` self-FK, `triage_was_non_empty`) |
+| 27 | `turns` (2.0.0-α) | Per-session turn log; `type` CHECK in `(user_prompt, tool_call, tool_result, file_edit, hook_fire, note, hypothesis)`; `payload` is JSON-stringified `TurnPayload` |
+| 28 | `tool_invocations` (2.0.0-α) | Per-turn tool call detail (tool_name, params_hash, duration_ms, success) |
+| 29 | `file_edits` (2.0.0-α) | Per-turn file edits (write/edit/multi_edit, lines added/removed, diff) |
+| 30 | `hypotheses` (2.0.0-α) | Agent hypotheses with `cited_test_error_id`/`cited_stack_frame_id` evidence FKs and `validation_outcome` (`confirmed`/`refuted`/`abandoned` or NULL) |
+| 31 | `commits` (2.0.0-α) | Git commit metadata (sha, parent_sha, message, author, branch) |
+| 32 | `run_changed_files` (2.0.0-α) | Files changed for a given run (`added`/`modified`/`deleted`/`renamed`/`untracked-modified`) |
+| 33 | `run_triggers` (2.0.0-α) | 1:1 with `test_runs`; `trigger` CHECK in `(cli, ide, ci, agent, pre-commit, watch)`; `agent_session_id` FK to `sessions` |
+| 34 | `build_artifacts` (2.0.0-α) | Captured tsc/biome/eslint output (tool_kind, exit_code, output, duration_ms) |
+| 35 | `tdd_sessions` (2.0.0-α) | TDD session goal + outcome (`succeeded`/`blocked`/`abandoned`); `parent_tdd_session_id` self-FK; `summary_note_id` FK |
+| 36 | `tdd_session_behaviors` (2.0.0-α) | Ordered behaviors per TDD session; status (`pending`/`in_progress`/`done`/`abandoned`); `child_tdd_session_id` for delegation |
+| 37 | `tdd_phases` (2.0.0-α) | TDD phase transitions; 8-value `phase` CHECK (`spike`, `red`, `red.triangulate`, `green`, `green.fake-it`, `refactor`, `extended-red`, `green-without-red`); `parent_phase_id` self-FK |
+| 38 | `tdd_artifacts` (2.0.0-α) | Evidence artifacts per phase; `artifact_kind` CHECK in `(test_written, test_failed_run, code_written, test_passed_run, refactor, test_weakened)`; `test_first_failure_run_id` for D2 binding rule 3 |
+| 39 | `failure_signatures` (2.0.0-α) | `signature_hash` PK (16-char sha256 from `computeFailureSignature`); `first_seen_run_id`, `first_seen_at`, `occurrence_count` |
+| 40 | `hook_executions` (2.0.0-α) | Vitest hook lifecycle; `hook_kind` CHECK in `(beforeAll, beforeEach, afterEach, afterAll)`; CHECK constraint ensures at most one of test_module_id / test_suite_id / test_case_id is set |
 
-**Plus:** `notes_fts` FTS5 virtual table with sync triggers for full-text
-search across note titles and content.
+**Plus:** `notes_fts` FTS5 virtual table with sync triggers for
+full-text search across note content.
 
-For the full DDL, see `package/src/migrations/0001_initial.ts`.
+**FTS5 trigger pattern (2.0.0-α fix):** `notes_ai` (AFTER INSERT) and
+`notes_ad` (AFTER DELETE) are unchanged. The UPDATE pair was rewritten
+into `notes_bu` (**BEFORE UPDATE**, captures `OLD.id`/`OLD.content` for
+the FTS delete) plus `notes_au` (AFTER UPDATE, inserts NEW values).
+The 1.x triggers used `AFTER UPDATE` for both steps, so the delete
+read the already-updated row and accumulated stale tokens in the FTS5
+index over time.
+
+For the full DDL, see
+`packages/shared/src/migrations/0002_comprehensive.ts`.
 
 ---
 
 ## Data Structures
 
-All types are defined as Effect Schema definitions in `package/src/schemas/`
+All types are defined as Effect Schema definitions in `packages/shared/src/schemas/`
 with TypeScript types derived via `typeof Schema.Type`.
 
 ### JSON Report (`AgentReport`)
@@ -651,127 +480,133 @@ interface TestHistory {
 type HistoryRecord = Record<string, TestHistory>; // keyed by test fullName
 ```
 
-### Phase 5 Data Types
+### Service Input/Output Types
+
+Input and output types (`TestRunInput`, `ModuleInput`, `TestCaseInput`,
+`ProjectIdentity`, `ProjectRunSummary`, `FlakyTest`, `PersistentFailure`,
+`TestListEntry`, `ModuleListEntry`, `SuiteListEntry`, `SettingsListEntry`,
+`NoteRow`, `SettingsRow`, `TestError`) live in
+`packages/shared/src/services/DataStore.ts` and
+`packages/shared/src/services/DataReader.ts`. The 2.0.0-α schema branch
+adds `SessionInput`, `TurnInput` (DataStore) and `SessionDetail`,
+`TurnSummary`, `TurnSearchOptions`, `AcceptanceMetrics` (DataReader).
+The Common schema literals (`Environment`, `Executor`, `OutputFormat`,
+`DetailLevel`) live in `packages/shared/src/schemas/Common.ts`. Effect
+Schema is the source of truth -- TypeScript types derive via
+`typeof Schema.Type`.
+
+The MCP server's tRPC `McpContext` (carrying a `ManagedRuntime` over
+`DataReader | DataStore | ProjectDiscovery | OutputRenderer`) is
+defined in `packages/mcp/src/context.ts`. Formatter types
+(`Formatter`, `FormatterContext`, `RenderedOutput`) live in
+`packages/shared/src/formatters/types.ts`.
+
+### Turn Payload Schemas (2.0.0-α)
+
+`packages/shared/src/schemas/turns/` defines a discriminated
+`TurnPayload` union over seven `Schema.Struct` payload types, each
+keyed by a `type` literal that mirrors the `turns.type` CHECK
+constraint. The union is the source of truth that the forthcoming
+`record` CLI uses to validate the JSON-stringified payload before
+`DataStore.writeTurn` persists it.
 
 ```typescript
-// DataStore input types
-interface TestRunInput {
-  invocationId: string;
-  project: string;
-  subProject: string | null;
-  settingsHash: string;
-  timestamp: string;
-  commitSha: string | null;
-  branch: string | null;
-  reason: "passed" | "failed" | "interrupted";
-  duration: number;
-  total: number;
-  passed: number;
-  failed: number;
-  skipped: number;
-  scoped: boolean;
-  // ... snapshot fields
-}
+// UserPromptPayload
+{ type: "user_prompt", prompt: string, cc_message_id?: string }
 
-interface ProjectIdentity {
-  project: string;
-  subProject: string | null;
-}
+// ToolCallPayload
+{ type: "tool_call", tool_name: string, tool_input: unknown,
+  tool_use_id?: string }
 
-// DataReader output types
-interface ProjectRunSummary {
-  project: string;
-  subProject: string | null;
-  lastRun: string | null;
-  lastResult: "passed" | "failed" | "interrupted" | null;
-  total: number;
-  passed: number;
-  failed: number;
-  skipped: number;
-}
+// ToolResultPayload
+{ type: "tool_result", tool_name: string, tool_use_id?: string,
+  result_summary?: string, success: boolean, duration_ms?: number }
 
-interface FlakyTest {
-  fullName: string;
-  project: string;
-  subProject: string | null;
-  passCount: number;
-  failCount: number;
-  lastState: "passed" | "failed";
-  lastTimestamp: string;
-}
+// FileEditPayload
+{ type: "file_edit", file_path: string,
+  edit_kind: "write" | "edit" | "multi_edit",
+  lines_added?: number, lines_removed?: number, diff?: string }
 
-interface PersistentFailure {
-  fullName: string;
-  project: string;
-  subProject: string | null;
-  consecutiveFailures: number;
-  firstFailedAt: string;
-  lastFailedAt: string;
-  lastErrorMessage: string | null;
-}
+// HookFirePayload
+{ type: "hook_fire",
+  hook_kind: "SessionStart" | "SessionEnd" | "Stop" | "StopFailure"
+           | "SubagentStart" | "SubagentStop" | "PreCompact"
+           | "PostCompact" | "PreToolUse" | "PostToolUse"
+           | "PostToolUseFailure" | "UserPromptSubmit" | "FileChanged",
+  cc_session_id?: string,
+  previous_record_failures?: ReadonlyArray<string> }
 
-// DataReader discovery types
-interface TestListEntry {
+// NotePayload
+{ type: "note", scope: string, title?: string, content: string }
+
+// HypothesisPayload
+{ type: "hypothesis", content: string,
+  cited_test_error_id?: number, cited_stack_frame_id?: number }
+
+// TurnPayload
+type TurnPayload =
+  | UserPromptPayload | ToolCallPayload | ToolResultPayload
+  | FileEditPayload | HookFirePayload | NotePayload | HypothesisPayload;
+```
+
+### Phase Transition Validation Types (2.0.0-α)
+
+`packages/shared/src/utils/validate-phase-transition.ts` exports the
+TDD evidence-binding contract:
+
+```typescript
+type Phase =
+  | "spike" | "red" | "red.triangulate" | "green" | "green.fake-it"
+  | "refactor" | "extended-red" | "green-without-red";
+
+type ArtifactKind =
+  | "test_written" | "test_failed_run" | "code_written"
+  | "test_passed_run" | "refactor" | "test_weakened";
+
+interface CitedArtifact {
   id: number;
-  fullName: string;
-  state: string;
-  duration: number | null;
-  module: string;
-  classification: string | null;
+  artifact_kind: ArtifactKind;
+  test_case_id: number | null;
+  test_case_created_turn_at: string | null;
+  test_case_authored_in_session: boolean;
+  test_run_id: number | null;
+  test_first_failure_run_id: number | null;
+  behavior_id: number | null;
 }
 
-interface ModuleListEntry {
-  id: number;
-  file: string;
-  state: string;
-  testCount: number;
-  duration: number | null;
+type DenialReason =
+  | "missing_artifact_evidence" | "wrong_source_phase"
+  | "unknown_session" | "session_already_ended" | "goal_not_started"
+  | "refactor_without_passing_run" | "evidence_not_in_phase_window"
+  | "evidence_not_for_behavior"
+  | "evidence_test_was_already_failing";
+
+type PhaseTransitionResult =
+  | { accepted: true; phase: Phase }
+  | { accepted: false; phase: Phase; denialReason: DenialReason;
+      remediation: { suggestedTool: string;
+                     suggestedArgs: Record<string, unknown>;
+                     humanHint: string } };
+```
+
+### Failure Signature Input (2.0.0-α)
+
+`packages/shared/src/utils/failure-signature.ts`:
+
+```typescript
+interface FailureSignatureInput {
+  error_name: string;
+  assertion_message: string;
+  top_frame_function_name: string;
+  top_frame_function_boundary_line: number | null;
+  top_frame_raw_line?: number;
 }
 
-interface SuiteListEntry {
-  id: number;
-  name: string;
-  module: string;
-  state: string;
-  testCount: number;
-}
-
-interface SettingsListEntry {
-  hash: string;
-  capturedAt: string;
-}
-
-// Common schema literals (Phase 5)
-type Environment = "agent-shell" | "terminal" | "ci-github" | "ci-generic";
-type Executor = "human" | "agent" | "ci";
-type OutputFormat = "markdown" | "json" | "vitest-bypass" | "silent";
-type DetailLevel = "minimal" | "neutral" | "standard" | "verbose";
-
-// Formatter types
-interface RenderedOutput {
-  target: "stdout" | "file" | "github-summary";
-  content: string;
-  contentType: string;
-}
-
-interface FormatterContext {
-  detail: DetailLevel;
-  noColor: boolean;
-  coverageConsoleLimit: number;
-  trendSummary?: { direction, runCount, firstMetric? };
-  runCommand?: string;
-  mcp?: boolean;
-  githubSummaryFile?: string;
-}
-
-// MCP context
-interface McpContext {
-  runtime: ManagedRuntime<
-    DataReader | DataStore | ProjectDiscovery | OutputRenderer,
-    never
-  >;
-  cwd: string;
-}
+// computeFailureSignature -> 16-char sha256 hex
+// Hashes: "<error_name>|<normalized shape>|<fn name>|<line coord>"
+//   line coord: "fb:<boundary>" if known,
+//               else "raw:<floor(line/10)*10>" 10-line bucket,
+//               else "raw:?"
 ```
 
 ---
@@ -794,31 +629,24 @@ Console output uses three tiers based on run health:
 - **Red** (failures/threshold violations/regressions): full detail +
   CLI hints
 
-**Example output (green tier -- all passing, targets met):**
+Examples may drift; the formatter source is canonical at
+`packages/shared/src/formatters/markdown.ts`.
+
+**Green tier (all passing, targets met):**
 
 ```markdown
 ## [checkmark] Vitest -- 10 passed (120ms)
 ```
 
-**Example output (red tier -- failures):**
+**Red tier (failures, threshold violations, or regressions):**
 
-````markdown
+```markdown
 ## X Vitest -- 2 failed, 8 passed (340ms)
-
-Coverage regressing over 3 runs
 
 ### X `src/utils.test.ts`
 
 - X **compressLines > handles empty array** [new-failure]
   Expected [] to equal [""]
-
-  ```diff
-  - Expected
-  + Received
-
-  - [""]
-  + []
-  ```
 
 ### Coverage gaps
 
@@ -829,8 +657,7 @@ Coverage regressing over 3 runs
 - 1 new failure since last run
 - Re-run: `pnpm vitest run src/utils.test.ts`
 - Run `pnpm vitest-agent-reporter coverage` for gap analysis
-- Run `pnpm vitest-agent-reporter trends` for coverage trajectory
-````
+```
 
 ---
 
@@ -958,162 +785,67 @@ async onTestRunEnd(testModules, unhandledErrors, reason)
   +-- Effect.runPromise(program.pipe(Effect.provide(ReporterLive(dbPath))))
 ```
 
-### Flow 2: AgentPlugin (async configureVitest)
+### Flow 2: AgentPlugin (async `configureVitest`)
 
-```text
-async configureVitest({ vitest, project })
-  |
-  +-- Effect.runPromise(EnvironmentDetector.detect())
-  |     +-- Returns "agent-shell" | "terminal" | "ci-github" | "ci-generic"
-  |
-  +-- ExecutorResolver.resolve(env, mode)
-  |     +-- Returns "human" | "agent" | "ci"
-  |
-  +-- Apply output behavior based on executor + strategy
-  |
-  +-- Resolve cacheDir (Phase 6 dropped the third Vite-cacheDir fallback):
-  |     options.reporter.cacheDir
-  |     ?? outputFile["vitest-agent-reporter"]
-  |     ?? undefined
-  |   When undefined, AgentReporter falls through to XDG-based
-  |   resolution via resolveDataPath in ensureDbPath() (see Flow 1)
-  |
-  +-- Resolve coverage thresholds + targets
-  |
-  +-- Disable Vitest native autoUpdate if targets set
-  |
-  +-- Set coverage.reporter = [] in agent/own mode (suppress text table)
-  |
-  +-- vitest.config.reporters.push(new AgentReporter({
-  |     ...options, projectFilter: project.name,
-  |     ...(cacheDir !== undefined ? { cacheDir } : {})
-  |   }))
-```
+- `Effect.runPromise(EnvironmentDetector.detect())` -> environment;
+  `ExecutorResolver.resolve(env, mode)` -> executor role.
+- Resolve `cacheDir` from `options.reporter.cacheDir` ??
+  `outputFile["vitest-agent-reporter"]` (otherwise `undefined`, leaving
+  XDG resolution to `AgentReporter.ensureDbPath`).
+- Resolve coverage thresholds + targets; disable Vitest's native
+  `autoUpdate` if targets are set.
+- In agent/own mode, set `coverage.reporter = []` to suppress Vitest's
+  text table.
+- Push a new `AgentReporter` (with `projectFilter: project.name`) into
+  `vitest.config.reporters`.
 
-### Flow 3: CLI Commands (packages/cli/src/bin.ts)
+### Flow 3: CLI Commands (`packages/cli/src/bin.ts`)
 
-```text
-vitest-agent-reporter <command> [--format <format>] [options]
-  |
-  +-- projectDir = process.cwd()
-  +-- main = resolveDataPath(projectDir).pipe(
-  |     Effect.flatMap((dbPath) =>
-  |       Effect.suspend(() => cli(process.argv)).pipe(
-  |         Effect.provide(CliLive(dbPath, logLevel, logFile)))),
-  |     Effect.provide(PathResolutionLive(projectDir)),
-  |     Effect.provide(NodeContext.layer))
-  +-- NodeRuntime.runMain(main)
-  |
-  +-- status:
-  |     +-- DataReader.getRunsByProject()
-  |     +-- DataReader.getLatestRun() for failing projects
-  |     +-- OutputRenderer.render() -> stdout
-  |
-  +-- overview:
-  |     +-- DataReader.getRunsByProject()
-  |     +-- ProjectDiscovery.discoverTestFiles(rootDir)
-  |     +-- ProjectDiscovery.mapTestToSource() for file mapping
-  |     +-- OutputRenderer.render() -> stdout
-  |
-  +-- coverage:
-  |     +-- DataReader.getLatestRun() for all projects
-  |     +-- OutputRenderer.render() -> stdout
-  |
-  +-- history:
-  |     +-- DataReader.getHistory() for all projects
-  |     +-- DataReader.getFlaky() / getPersistentFailures()
-  |     +-- OutputRenderer.render() -> stdout
-  |
-  +-- trends:
-  |     +-- DataReader.getTrends() for all projects
-  |     +-- OutputRenderer.render() -> stdout
-  |
-  +-- cache path:
-  |     +-- prints the resolved XDG path (deterministic; no probing)
-  |
-  +-- cache clean:
-  |     +-- FileSystem.remove(dirname(dbPath), { recursive: true })
-  |
-  +-- doctor:
-        +-- DataReader.getManifest()
-        +-- DataReader.getLatestRun() per project (integrity)
-        +-- staleness check
-        +-- OutputRenderer.render() -> stdout
-```
+- Resolve `dbPath` via `resolveDataPath(process.cwd())` under
+  `PathResolutionLive(projectDir) + NodeContext.layer`.
+- Provide `CliLive(dbPath, logLevel, logFile)` to the `@effect/cli`
+  `Command.run` effect; execute via `NodeRuntime.runMain`.
+- Each subcommand (`status`, `overview`, `coverage`, `history`,
+  `trends`, `cache`, `doctor`) is a thin wrapper over a `lib/format-*`
+  function: query `DataReader` (and `ProjectDiscovery` for `overview`),
+  render via `OutputRenderer`, write to stdout.
+- `cache path` prints the deterministic XDG path. `cache clean` removes
+  the data directory.
 
-### Flow 4: MCP Server (packages/mcp/src/bin.ts)
+### Flow 4: MCP Server (`packages/mcp/src/bin.ts`)
 
-```text
-vitest-agent-reporter-mcp
-  |
-  +-- projectDir = resolveProjectDir() ::=
-  |     VITEST_AGENT_REPORTER_PROJECT_DIR  (set by plugin loader)
-  |     | CLAUDE_PROJECT_DIR
-  |     | process.cwd()
-  |
-  +-- dbPath = await Effect.runPromise(
-  |     resolveDataPath(projectDir).pipe(
-  |       Effect.provide(PathResolutionLive(projectDir)),
-  |       Effect.provide(NodeContext.layer)))
-  |
-  +-- runtime = ManagedRuntime.make(McpLive(dbPath, logLevel, logFile))
-  +-- startMcpServer({ runtime, cwd: projectDir })
-  |
-  +-- StdioServerTransport connects
-  |
-  +-- Tool invocations:
-  |     +-- createCallerFactory(appRouter) -> factory
-  |     +-- factory(ctx) -> caller
-  |     +-- caller.tool_name(args)
-  |     |     +-- tRPC procedure
-  |     |     +-- ctx.runtime.runPromise(effect)
-  |     |     +-- Returns text (markdown) or JSON
-  |
-  +-- Read-only tools: query DataReader, format via OutputRenderer
-  +-- run_tests: spawnSync("npx vitest run", { files, project, timeout })
-  +-- Note CRUD: DataStore.writeNote/updateNote/deleteNote,
-  |              DataReader.getNotes/getNoteById/searchNotes
-```
+- Resolve `projectDir` from `VITEST_AGENT_REPORTER_PROJECT_DIR` (set by
+  the plugin loader) ?? `CLAUDE_PROJECT_DIR` ?? `process.cwd()`.
+- Resolve `dbPath` via `resolveDataPath(projectDir)` under
+  `PathResolutionLive(projectDir) + NodeContext.layer`.
+- Create `ManagedRuntime.make(McpLive(dbPath, logLevel, logFile))`,
+  call `startMcpServer({ runtime, cwd: projectDir })`.
+- `StdioServerTransport` connects; tool invocations route through tRPC
+  via `createCallerFactory(appRouter)`. Each procedure calls
+  `ctx.runtime.runPromise(effect)` against `DataReader`, `DataStore`,
+  `ProjectDiscovery`, or `OutputRenderer`.
+- `run_tests` uses `spawnSync("npx vitest run", ...)` with timeout.
 
 ### Flow 5: Plugin -> MCP Server spawn (Phase 6)
 
-```text
-Claude Code spawns plugin/bin/mcp-server.mjs (zero-deps Node script)
-  |
-  +-- projectDir = process.env.CLAUDE_PROJECT_DIR ?? process.cwd()
-  |
-  +-- detectPm(projectDir):
-  |     +-- read packageManager field in package.json
-  |     +-- else check lockfiles in order:
-  |     |     pnpm-lock.yaml -> "pnpm"
-  |     |     bun.lock | bun.lockb -> "bun"
-  |     |     yarn.lock -> "yarn"
-  |     |     package-lock.json -> "npm"
-  |     +-- default: "npm"
-  |
-  +-- spawn(<pm-cmd>, [...exec-args, "vitest-agent-reporter-mcp"], {
-  |     cwd: projectDir,
-  |     stdio: "inherit",
-  |     env: { ...process.env,
-  |       VITEST_AGENT_REPORTER_PROJECT_DIR: projectDir }
-  |   })
-  |
-  +-- on child.error -> print PM-specific install hint, exit 1
-  +-- on child.exit(code, signal):
-  |     code === 0 -> exit 0
-  |     signal -> process.kill(self, signal)  (re-raise on parent)
-  |     code !== 0 -> print install hint, exit code
-  |
-  +-- The spawned MCP subprocess uses
-      VITEST_AGENT_REPORTER_PROJECT_DIR as its highest-precedence
-      projectDir source (Flow 4)
-```
+- `plugin/bin/mcp-server.mjs` (zero-deps) reads
+  `process.env.CLAUDE_PROJECT_DIR ?? process.cwd()`.
+- Detect PM: `packageManager` field in `package.json`, else lockfile
+  (`pnpm-lock.yaml`, `bun.lock(b)`, `yarn.lock`,
+  `package-lock.json`), else default `npm`.
+- Spawn `<pm-exec> vitest-agent-reporter-mcp` (`pnpm exec`,
+  `npx --no-install`, `yarn run`, or `bun x`) with `stdio: "inherit"`,
+  `cwd: projectDir`, and
+  `env.VITEST_AGENT_REPORTER_PROJECT_DIR = projectDir` so the spawned
+  bin sees the right project root (Flow 4).
+- Forward exit code; re-raise termination signals; print PM-specific
+  install instructions on non-zero exit.
 
 ---
 
 ## Integration Points
 
-### Integration 1: Vitest Reporter v2 API
+### Integration 1: Vitest Reporter API (>= 4.1.0)
 
 **Hooks used:**
 
@@ -1138,7 +870,6 @@ Claude Code spawns plugin/bin/mcp-server.mjs (zero-deps Node script)
 
 - Uses `VitestPluginContext` from `vitest/node` for type safety
 - Uses `as unknown as` casts where Vitest types are too strict
-- Available since Vitest 3.1
 - Runs before reporters are instantiated
 - Now async (Vitest awaits plugin hooks)
 - Mutate `vitest.config.reporters` to inject `AgentReporter`
@@ -1246,12 +977,4 @@ Decision 30 for details.
 
 ---
 
-**Document Status:** Current -- reflects Phase 1 through Phase 6 (2.0
-architectural restructure on `feat/db-issues`). 2.0 highlights:
-four-package layout (`packages/shared`, `packages/reporter`,
-`packages/cli`, `packages/mcp`); deterministic XDG-derived data path
-(`$XDG_DATA_HOME/vitest-agent-reporter/<workspaceKey>/data.db`);
-optional `vitest-agent-reporter.config.toml` (`cacheDir`/`projectKey`);
-new `resolveDataPath` orchestrator with `WorkspaceRootNotFoundError`
-fail-loud semantics; plugin's MCP loader rewritten as PM-detect +
-spawn (Decision 30, Decision 29 retired). All phases complete.
+**Last updated:** 2026-04-29

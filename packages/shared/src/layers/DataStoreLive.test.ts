@@ -5,6 +5,7 @@ import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
 import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 import migration0001 from "../migrations/0001_initial.js";
+import migration0002 from "../migrations/0002_comprehensive.js";
 import { DataStore } from "../services/DataStore.js";
 import { DataStoreLive } from "./DataStoreLive.js";
 
@@ -12,7 +13,10 @@ const SqliteLayer = sqliteClientLayer({ filename: ":memory:" });
 const PlatformLayer = NodeContext.layer;
 
 const MigratorLayer = SqliteMigrator.layer({
-	loader: SqliteMigrator.fromRecord({ "0001_initial": migration0001 }),
+	loader: SqliteMigrator.fromRecord({
+		"0001_initial": migration0001,
+		"0002_comprehensive": migration0002,
+	}),
 }).pipe(Layer.provide(Layer.merge(SqliteLayer, PlatformLayer)));
 
 const DataStoreLayer = DataStoreLive.pipe(Layer.provide(SqliteLayer));
@@ -558,6 +562,33 @@ describe("DataStoreLive", () => {
 					expect(rows[0].title).toBe("No change");
 				}),
 			);
+		});
+	});
+
+	describe("writeSession + writeTurn", () => {
+		it("writes a session and a turn referencing it", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-test",
+						project: "p",
+						cwd: "/tmp/p",
+						agent_kind: "main",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const turnId = yield* ds.writeTurn({
+						session_id: sessionId,
+						turn_no: 1,
+						type: "user_prompt",
+						payload: JSON.stringify({ type: "user_prompt", prompt: "hi" }),
+						occurred_at: "2026-04-29T00:00:01Z",
+					});
+					return { sessionId, turnId };
+				}),
+			);
+			expect(result.sessionId).toBeGreaterThan(0);
+			expect(result.turnId).toBeGreaterThan(0);
 		});
 	});
 });

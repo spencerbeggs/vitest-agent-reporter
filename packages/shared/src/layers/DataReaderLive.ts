@@ -8,16 +8,20 @@ import type { CoverageReport, FileCoverageReport } from "../schemas/Coverage.js"
 import type { HistoryRecord } from "../schemas/History.js";
 import type { TrendRecord } from "../schemas/Trends.js";
 import type {
+	AcceptanceMetrics,
 	FlakyTest,
 	ModuleListEntry,
 	NoteRow,
 	PersistentFailure,
 	ProjectRunSummary,
+	SessionDetail,
 	SettingsListEntry,
 	SettingsRow,
 	SuiteListEntry,
 	TestError,
 	TestListEntry,
+	TurnSearchOptions,
+	TurnSummary,
 } from "../services/DataReader.js";
 import { DataReader } from "../services/DataReader.js";
 
@@ -1277,6 +1281,198 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				),
 			);
 
+		const getSessionById = (id: number): Effect.Effect<Option.Option<SessionDetail>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("getSessionById").pipe(Effect.annotateLogs({ id }));
+				const rows = yield* sql<{
+					id: number;
+					cc_session_id: string;
+					project: string;
+					sub_project: string | null;
+					cwd: string;
+					agent_kind: string;
+					agent_type: string | null;
+					parent_session_id: number | null;
+					triage_was_non_empty: number;
+					started_at: string;
+					ended_at: string | null;
+					end_reason: string | null;
+				}>`SELECT id, cc_session_id, project, sub_project, cwd, agent_kind, agent_type, parent_session_id, triage_was_non_empty, started_at, ended_at, end_reason FROM sessions WHERE id = ${id} LIMIT 1`;
+				if (rows.length === 0) return Option.none<SessionDetail>();
+				const r = rows[0];
+				return Option.some<SessionDetail>({
+					id: r.id,
+					cc_session_id: r.cc_session_id,
+					project: r.project,
+					subProject: r.sub_project,
+					cwd: r.cwd,
+					agentKind: r.agent_kind as "main" | "subagent",
+					agentType: r.agent_type,
+					parentSessionId: r.parent_session_id,
+					triageWasNonEmpty: r.triage_was_non_empty === 1,
+					startedAt: r.started_at,
+					endedAt: r.ended_at,
+					endReason: r.end_reason,
+				});
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "sessions", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const searchTurns = (options: TurnSearchOptions): Effect.Effect<ReadonlyArray<TurnSummary>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("searchTurns").pipe(Effect.annotateLogs({ ...options }));
+				const limit = options.limit ?? 100;
+				const sessionFilter = options.sessionId !== undefined ? sql` AND session_id = ${options.sessionId}` : sql``;
+				const typeFilter = options.type !== undefined ? sql` AND type = ${options.type}` : sql``;
+				const sinceFilter = options.since !== undefined ? sql` AND occurred_at >= ${options.since}` : sql``;
+				const rows = yield* sql<{
+					id: number;
+					session_id: number;
+					turn_no: number;
+					type: string;
+					payload: string;
+					occurred_at: string;
+				}>`SELECT id, session_id, turn_no, type, payload, occurred_at FROM turns WHERE 1=1${sessionFilter}${typeFilter}${sinceFilter} ORDER BY occurred_at DESC, turn_no DESC LIMIT ${limit}`;
+				return rows.map((r) => ({
+					id: r.id,
+					sessionId: r.session_id,
+					turnNo: r.turn_no,
+					type: r.type,
+					payload: r.payload,
+					occurredAt: r.occurred_at,
+				}));
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError((e) => new DataStoreError({ operation: "read", table: "turns", reason: extractSqlReason(e) })),
+			);
+
+		const computeAcceptanceMetrics = (): Effect.Effect<AcceptanceMetrics, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("computeAcceptanceMetrics");
+
+				// Metric 1: phase-evidence integrity — sessions where the
+				// first test_failed_run artifact precedes the first
+				// code_written artifact (red-before-code).
+				const m1 = yield* sql<{ total: number; compliant: number }>`
+					WITH session_orderings AS (
+						SELECT
+							p.tdd_session_id,
+							MIN(CASE WHEN a.artifact_kind = 'test_failed_run' THEN a.id END) AS first_failed_run,
+							MIN(CASE WHEN a.artifact_kind = 'code_written'    THEN a.id END) AS first_code_written
+						FROM tdd_artifacts a
+						JOIN tdd_phases p ON a.phase_id = p.id
+						WHERE a.artifact_kind IN ('test_failed_run', 'code_written')
+						GROUP BY p.tdd_session_id
+					)
+					SELECT
+						COUNT(*) AS total,
+						COALESCE(SUM(CASE WHEN first_failed_run < first_code_written THEN 1 ELSE 0 END), 0) AS compliant
+					FROM session_orderings
+					WHERE first_code_written IS NOT NULL
+				`;
+
+				// Metric 2: compliance-hook responsiveness — sessions that
+				// fired SessionEnd or PreCompact and produced a follow-up
+				// note/hypothesis/tdd_session_end tool call.
+				const m2 = yield* sql<{ total: number; with_followup: number }>`
+					WITH wrap_up_fires AS (
+						SELECT t.session_id
+						FROM turns t
+						WHERE t.type = 'hook_fire'
+							AND json_extract(t.payload, '$.hook_kind') IN ('SessionEnd', 'PreCompact')
+					),
+					followups AS (
+						SELECT DISTINCT t.session_id
+						FROM turns t
+						JOIN tool_invocations ti ON ti.turn_id = t.id
+						WHERE ti.tool_name IN ('note_create', 'hypothesis_validate', 'tdd_session_end')
+					)
+					SELECT
+						(SELECT COUNT(DISTINCT session_id) FROM wrap_up_fires) AS total,
+						(SELECT COUNT(DISTINCT wf.session_id)
+							FROM wrap_up_fires wf JOIN followups f ON f.session_id = wf.session_id) AS with_followup
+				`;
+
+				// Metric 3: orientation usefulness — sessions with non-empty
+				// triage that referenced an orientation tool in their first
+				// three tool calls.
+				const m3 = yield* sql<{ total: number; referenced_count: number }>`
+					WITH triaged_sessions AS (
+						SELECT id AS session_id FROM sessions WHERE triage_was_non_empty = 1
+					),
+					first_three_tool_calls AS (
+						SELECT t.session_id, ti.tool_name
+						FROM turns t
+						JOIN tool_invocations ti ON ti.turn_id = t.id
+						WHERE t.turn_no <= 3 AND t.type = 'tool_call'
+					),
+					referenced AS (
+						SELECT DISTINCT ts.session_id
+						FROM triaged_sessions ts
+						JOIN first_three_tool_calls ftc ON ftc.session_id = ts.session_id
+						WHERE ftc.tool_name IN ('tdd_session_resume', 'run_tests', 'test_history',
+							'failure_signature_get', 'tdd_session_start')
+					)
+					SELECT
+						(SELECT COUNT(*) FROM triaged_sessions) AS total,
+						(SELECT COUNT(*) FROM referenced) AS referenced_count
+				`;
+
+				// Metric 4: anti-pattern detection rate — completed TDD
+				// sessions with zero test_weakened artifacts.
+				const m4 = yield* sql<{ total: number; clean_sessions: number }>`
+					SELECT
+						COUNT(*) AS total,
+						COALESCE(SUM(CASE WHEN weakened_count = 0 THEN 1 ELSE 0 END), 0) AS clean_sessions
+					FROM (
+						SELECT ts.id AS tdd_session_id,
+							COUNT(a.id) AS weakened_count
+						FROM tdd_sessions ts
+						LEFT JOIN tdd_phases p ON p.tdd_session_id = ts.id
+						LEFT JOIN tdd_artifacts a ON a.phase_id = p.id AND a.artifact_kind = 'test_weakened'
+						WHERE ts.ended_at IS NOT NULL
+						GROUP BY ts.id
+					) sessions_with_counts
+				`;
+
+				const ratio = (n: number, d: number): number => (d === 0 ? 0 : n / d);
+				return {
+					phaseEvidenceIntegrity: {
+						total: m1[0].total,
+						compliant: m1[0].compliant,
+						ratio: ratio(m1[0].compliant, m1[0].total),
+					},
+					complianceHookResponsiveness: {
+						total: m2[0].total,
+						withFollowup: m2[0].with_followup,
+						ratio: ratio(m2[0].with_followup, m2[0].total),
+					},
+					orientationUsefulness: {
+						total: m3[0].total,
+						referencedCount: m3[0].referenced_count,
+						ratio: ratio(m3[0].referenced_count, m3[0].total),
+					},
+					antiPatternDetectionRate: {
+						total: m4[0].total,
+						cleanSessions: m4[0].clean_sessions,
+						ratio: ratio(m4[0].clean_sessions, m4[0].total),
+					},
+				};
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) =>
+						new DataStoreError({
+							operation: "read",
+							table: "tdd_sessions",
+							reason: extractSqlReason(e),
+						}),
+				),
+			);
+
 		return {
 			getLatestRun,
 			getRunsByProject,
@@ -1300,6 +1496,9 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 			listModules,
 			listSuites,
 			listSettings,
+			getSessionById,
+			searchTurns,
+			computeAcceptanceMetrics,
 		};
 	}),
 );

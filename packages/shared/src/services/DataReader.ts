@@ -113,6 +113,44 @@ export interface SettingsListEntry {
 	readonly capturedAt: string;
 }
 
+export interface SessionDetail {
+	readonly id: number;
+	readonly cc_session_id: string;
+	readonly project: string;
+	readonly subProject: string | null;
+	readonly cwd: string;
+	readonly agentKind: "main" | "subagent";
+	readonly agentType: string | null;
+	readonly parentSessionId: number | null;
+	readonly triageWasNonEmpty: boolean;
+	readonly startedAt: string;
+	readonly endedAt: string | null;
+	readonly endReason: string | null;
+}
+
+export interface TurnSummary {
+	readonly id: number;
+	readonly sessionId: number;
+	readonly turnNo: number;
+	readonly type: string;
+	readonly payload: string;
+	readonly occurredAt: string;
+}
+
+export interface TurnSearchOptions {
+	readonly sessionId?: number;
+	readonly type?: string;
+	readonly since?: string;
+	readonly limit?: number;
+}
+
+export interface AcceptanceMetrics {
+	readonly phaseEvidenceIntegrity: { total: number; compliant: number; ratio: number };
+	readonly complianceHookResponsiveness: { total: number; withFollowup: number; ratio: number };
+	readonly orientationUsefulness: { total: number; referencedCount: number; ratio: number };
+	readonly antiPatternDetectionRate: { total: number; cleanSessions: number; ratio: number };
+}
+
 export class DataReader extends Context.Tag("vitest-agent-reporter/DataReader")<
 	DataReader,
 	{
@@ -180,5 +218,8 @@ export class DataReader extends Context.Tag("vitest-agent-reporter/DataReader")<
 			options?: { module?: string },
 		) => Effect.Effect<ReadonlyArray<SuiteListEntry>, DataStoreError>;
 		readonly listSettings: () => Effect.Effect<ReadonlyArray<SettingsListEntry>, DataStoreError>;
+		readonly getSessionById: (id: number) => Effect.Effect<Option.Option<SessionDetail>, DataStoreError>;
+		readonly searchTurns: (options: TurnSearchOptions) => Effect.Effect<ReadonlyArray<TurnSummary>, DataStoreError>;
+		readonly computeAcceptanceMetrics: () => Effect.Effect<AcceptanceMetrics, DataStoreError>;
 	}
 >() {}

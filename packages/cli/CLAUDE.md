@@ -1,0 +1,83 @@
+# vitest-agent-reporter-cli
+
+The `@effect/cli`-based bin (`vitest-agent-reporter`) for on-demand test
+landscape queries. Reads cached test data from SQLite via `DataReader`;
+never runs tests or calls AI providers. Required as a peerDependency by
+the reporter package.
+
+## Layout
+
+```text
+src/
+  bin.ts              -- bin entry: resolves dbPath via resolveDataPath,
+                         provides CliLive(dbPath, logLevel?, logFile?)
+                         to Command.run, runs via NodeRuntime.runMain
+  index.ts            -- runCli() re-export for programmatic invocation
+  commands/           -- thin @effect/cli Command wrappers
+    status.ts overview.ts coverage.ts history.ts trends.ts
+    cache.ts doctor.ts
+  lib/                -- pure formatting logic (where tests live)
+    format-status.ts format-overview.ts format-coverage.ts
+    format-history.ts format-trends.ts format-doctor.ts
+  layers/
+    CliLive.ts        -- (dbPath, logLevel?, logFile?) composition:
+                         DataReader + ProjectDiscovery + HistoryTracker
+                         + OutputPipeline + SqliteClient + Migrator
+                         + NodeContext + NodeFileSystem + Logger
+```
+
+## Key files
+
+| File | Purpose |
+| ---- | ------- |
+| `bin.ts` | Bin entry. Pipeline: `resolveDataPath(cwd)` -> provide `PathResolutionLive(projectDir) + NodeContext.layer` -> provide `CliLive(dbPath, ...)` -> `cli(process.argv)` |
+| `commands/cache.ts` | `cache path` prints the deterministic XDG path (no probing); `cache clean` deletes the directory |
+| `commands/doctor.ts` | 5-point health diagnostic (manifest assembly, latest-run integrity, staleness check) |
+| `lib/format-*.ts` | Pure formatting functions tested as plain functions; `commands/*.ts` are thin `@effect/cli` wrappers around these |
+| `layers/CliLive.ts` | Composition layer for the CLI runtime |
+
+## Conventions
+
+- **`@effect/cli` command pattern.** Each command in `commands/` is an
+  `@effect/cli` `Command.make(...)` that delegates to a pure function
+  in `lib/`. Tests live next to the lib functions, not the commands
+  (commands are too thin to test meaningfully).
+- **`--format` on every command.** All seven subcommands accept
+  `--format <markdown|json|silent|vitest-bypass>`. The `OutputPipeline`
+  and `OutputRenderer` services from `-shared` handle dispatch; the
+  lib functions produce `RenderedOutput[]`.
+- **Read-only by default.** The CLI reads data via `DataReader`; it
+  does not write to the DB. Keep this property -- mutations belong in
+  the reporter (during a test run) or the MCP server (`note_*`).
+- **`NodeRuntime.runMain` for the entry.** Defects print
+  `formatFatalError(cause)` to stderr. Don't swap to `Effect.runPromise`
+  at the top level; `runMain` handles signals and exit codes correctly
+  for a CLI process.
+- **Bin name vs package name.** Package `vitest-agent-reporter-cli`
+  publishes the bin `vitest-agent-reporter` (no `-cli` suffix). The
+  reporter's "Next steps" output references this short name.
+
+## When working in this package
+
+- Adding a subcommand: create `commands/<name>.ts` (the `@effect/cli`
+  glue), `lib/format-<name>.ts` (the pure formatter), and
+  `lib/format-<name>.test.ts`. Wire into the root `Command` group in
+  `bin.ts`.
+- Need a new `DataReader` query: add it to `-shared`'s `DataReader`
+  service, then consume it from `lib/format-*.ts`. Don't reach into
+  SQLite directly from the CLI.
+- `cache path` returns the resolved XDG path even when no DB has been
+  written yet -- the path is a function of identity, not artifact
+  presence. The pre-2.0 `node_modules/.vite/...` probing is gone.
+- `--format=vitest-bypass` and `--format=silent` are valid; don't
+  assume markdown output in lib functions.
+- Adding a flag: `@effect/cli` validates types at the `Command` layer
+  but the lib function should still accept a typed options object.
+  Keep the lib function callable without `@effect/cli` for testing.
+- Per-call layer construction is fine here (CLI is short-lived); only
+  MCP uses `ManagedRuntime`.
+
+## Design references
+
+@../../.claude/design/vitest-agent-reporter/components.md
+@../../.claude/design/vitest-agent-reporter/data-structures.md

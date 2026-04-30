@@ -1,6 +1,10 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as NodeContext from "@effect/platform-node/NodeContext";
+import { SqlClient } from "@effect/sql/SqlClient";
+import { layer as sqliteClientLayer } from "@effect/sql-sqlite-node/SqliteClient";
+import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { _resetMigrationCacheForTesting, ensureMigrated } from "./ensure-migrated.js";
 
@@ -37,5 +41,21 @@ describe("ensureMigrated", () => {
 		const promises = [ensureMigrated(dbPath), ensureMigrated(dbPath), ensureMigrated(dbPath)];
 		// All resolve without "database is locked".
 		await expect(Promise.all(promises)).resolves.toBeDefined();
+	});
+
+	it("creates the 2.0 schema (sessions table) in a fresh DB", async () => {
+		const dbPath = newDbPath();
+		await ensureMigrated(dbPath);
+
+		const tables = await Effect.runPromise(
+			Effect.gen(function* () {
+				const sql = yield* SqlClient;
+				const rows = yield* sql<{
+					name: string;
+				}>`SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'`;
+				return rows.length;
+			}).pipe(Effect.provide(sqliteClientLayer({ filename: dbPath })), Effect.provide(NodeContext.layer)),
+		);
+		expect(tables).toBe(1);
 	});
 });
