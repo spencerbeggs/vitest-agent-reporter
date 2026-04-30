@@ -287,5 +287,9 @@ export class DataReader extends Context.Tag("vitest-agent-reporter/DataReader")<
 			readonly outcome?: "confirmed" | "refuted" | "abandoned" | "open";
 			readonly limit?: number;
 		}) => Effect.Effect<ReadonlyArray<HypothesisDetail>, DataStoreError>;
+		readonly findIdempotentResponse: (
+			procedurePath: string,
+			key: string,
+		) => Effect.Effect<Option.Option<string>, DataStoreError>;
 	}
 >() {}

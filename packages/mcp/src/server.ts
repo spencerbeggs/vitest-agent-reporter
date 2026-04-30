@@ -505,6 +505,54 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 			),
 	);
 
+	// ── Hypothesis writes ───────────────────────────────────────────────
+
+	server.registerTool(
+		"hypothesis_record",
+		{
+			description: "Record an agent hypothesis about a test failure or code behavior",
+			inputSchema: {
+				sessionId: z.number().describe("Session id the hypothesis belongs to"),
+				content: z.string().describe("Hypothesis content"),
+				createdTurnId: z.optional(z.number()).describe("Turn id when the hypothesis was created"),
+				citedTestErrorId: z.optional(z.number()).describe("Test error id cited as evidence"),
+				citedStackFrameId: z.optional(z.number()).describe("Stack frame id cited as evidence"),
+			},
+		},
+		async (args) =>
+			jsonResult(
+				await caller.hypothesis_record({
+					sessionId: args.sessionId,
+					content: args.content,
+					createdTurnId: args.createdTurnId,
+					citedTestErrorId: args.citedTestErrorId,
+					citedStackFrameId: args.citedStackFrameId,
+				}),
+			),
+	);
+
+	server.registerTool(
+		"hypothesis_validate",
+		{
+			description: "Record a validation outcome (confirmed / refuted / abandoned) for an existing hypothesis",
+			inputSchema: {
+				id: z.number().describe("Hypothesis id to validate"),
+				outcome: z.enum(["confirmed", "refuted", "abandoned"]).describe("Validation outcome"),
+				validatedTurnId: z.optional(z.number()).describe("Turn id when the validation was recorded"),
+				validatedAt: z.string().describe("ISO 8601 timestamp of validation"),
+			},
+		},
+		async (args) =>
+			jsonResult(
+				await caller.hypothesis_validate({
+					id: args.id,
+					outcome: args.outcome,
+					validatedTurnId: args.validatedTurnId,
+					validatedAt: args.validatedAt,
+				}),
+			),
+	);
+
 	// ── Acceptance metrics ──────────────────────────────────────────────
 
 	server.registerTool(
@@ -514,6 +562,53 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 			inputSchema: {},
 		},
 		async () => textResult(await caller.acceptance_metrics({})),
+	);
+
+	// ── Triage brief ────────────────────────────────────────────────────
+
+	server.registerTool(
+		"triage_brief",
+		{
+			description: "Orientation triage brief: failing tests, flaky tests, open TDD sessions, suggested next actions",
+			inputSchema: {
+				project: z.optional(z.string()).describe("Filter to a specific project (or project:subProject)"),
+				maxLines: z.optional(z.number()).describe("Soft cap on rendered output lines"),
+			},
+		},
+		async (args) =>
+			textResult(
+				await caller.triage_brief({
+					project: args.project,
+					maxLines: args.maxLines,
+				}),
+			),
+	);
+
+	// ── Wrapup prompt ───────────────────────────────────────────────────
+
+	server.registerTool(
+		"wrapup_prompt",
+		{
+			description:
+				"Tailored wrap-up prompt for a session (Stop / SessionEnd / PreCompact / TDD handoff / UserPromptSubmit nudge variants)",
+			inputSchema: {
+				sessionId: z.optional(z.number()).describe("sessions.id (integer); omit to use ccSessionId"),
+				ccSessionId: z.optional(z.string()).describe("Claude Code session id (alternative to sessionId)"),
+				kind: z
+					.optional(z.enum(["stop", "session_end", "pre_compact", "tdd_handoff", "user_prompt_nudge"]))
+					.describe("Wrap-up flavor (default: session_end)"),
+				userPromptHint: z.optional(z.string()).describe("For user_prompt_nudge: the prompt text to inspect"),
+			},
+		},
+		async (args) =>
+			textResult(
+				await caller.wrapup_prompt({
+					sessionId: args.sessionId,
+					ccSessionId: args.ccSessionId,
+					kind: args.kind,
+					userPromptHint: args.userPromptHint,
+				}),
+			),
 	);
 
 	const transport = new StdioServerTransport();

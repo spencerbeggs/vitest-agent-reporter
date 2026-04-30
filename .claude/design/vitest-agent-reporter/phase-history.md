@@ -3,8 +3,8 @@ status: current
 module: vitest-agent-reporter
 category: history
 created: 2026-04-29
-updated: 2026-04-29
-last-synced: 2026-04-29
+updated: 2026-04-30
+last-synced: 2026-04-30
 completeness: 90
 related:
   - vitest-agent-reporter/architecture.md
@@ -543,8 +543,179 @@ disambiguation and the deferred e2e test).
 
 ---
 
-**Document Status:** Current. Covers Phase 1 through Phase 8
-(2.0.0-β). Implementation complete on this branch; subsequent
+## Phase 9: 2.0.0-RC Substrate Integration -- COMPLETE
+
+The 2.0.0-RC release closes the W3/W5/W6 workstreams and the W4
+cheap wins on top of α's schema substrate and β's record paths.
+RC is purely **integration**: it consumes existing α primitives
+(failure signatures, turn payload schemas, evidence-binding
+validator) and β record paths (sessions, turns, hypothesis
+substrate, MCP read tools) and adds the user-facing surfaces
+that turn the captured data into action -- the orientation
+triage brief, interpretive prompt-injection hooks, hypothesis
+write tools, and a shared idempotency middleware. **No new
+architectural decisions** are introduced. The migration
+(`0003_idempotent_responses`) is purely additive (one
+`CREATE TABLE`, no DROP) -- per Decision D9, `0002` remains the
+last drop-and-recreate.
+
+- **W3 orientation triage report**: new
+  `packages/shared/src/lib/format-triage.ts` -- a pure markdown
+  generator (`E = never` via `Effect.orElseSucceed`) that reads
+  from DataReader and emits the triage brief. Options:
+  `{ project?, maxLines?, since? }`. Powers both the new CLI
+  `triage` subcommand and the new `triage_brief` MCP tool.
+  `session-start.sh` is rewritten to call the `triage` CLI and
+  emit `hookSpecificOutput.additionalContext` with the triage
+  markdown (or generic context fallback), additionally writing
+  the sessions row with `--triage-was-non-empty`. The earlier β
+  `session-start-record.sh` is removed -- its responsibility
+  folds into `session-start.sh`, and the duplicate `SessionStart`
+  entry in `hooks.json` is removed
+- **W5 interpretive hook nudges**: new
+  `packages/shared/src/lib/format-wrapup.ts` -- a pure markdown
+  generator with five `kind` variants (`stop`, `session_end`,
+  `pre_compact`, `tdd_handoff`, `user_prompt_nudge`). The
+  text-match logic for "is this a failure prompt?" lives in
+  this generator, not in the hooks. Powers the new `wrapup`
+  CLI, the `wrapup_prompt` MCP tool, and four interpretive
+  hooks. New `stop-record.sh` (registered for the first time as
+  the `Stop` hook in `hooks.json`) records a `hook_fire` turn
+  AND injects a wrap-up nudge via `wrapup --kind=stop`. The β
+  hooks `session-end-record.sh`, `pre-compact-record.sh`, and
+  `user-prompt-submit-record.sh` are upgraded from record-only
+  to record + inject (calling `wrapup --kind=session_end`,
+  `--kind=pre_compact`, and
+  `--kind=user_prompt_nudge --user-prompt-hint <prompt>`
+  respectively). PreToolUse-record and PostToolUse-record stay
+  record-only -- they fire too often for prompt injection to be
+  tolerable
+- **W6 hypothesis MCP write tools**: two new mutation tools
+  (`hypothesis_record`, `hypothesis_validate`) backed by new
+  DataStore methods of the same names. Both go through the new
+  tRPC idempotency middleware so duplicate calls (from a flaky
+  agent retry) are no-ops at the database layer
+- **tRPC idempotency middleware**: new
+  `packages/mcp/src/middleware/idempotency.ts`. Wraps a
+  procedure: derives a key from input via a per-procedure
+  `idempotencyKeys` derive function, checks
+  `DataReader.findIdempotentResponse(path, key)`, replays the
+  cached result with `_idempotentReplay: true` on a hit,
+  otherwise runs `next()` and persists via
+  `DataStore.recordIdempotentResponse`. Persistence errors are
+  swallowed (best-effort) so a transient DB failure doesn't
+  surface as a tool error. Exposes `idempotentProcedure` (a
+  drop-in for `publicProcedure` on idempotent mutations) and
+  shares the same tRPC instance via a new `middleware` export
+  from `packages/mcp/src/context.ts` rather than constructing a
+  parallel `t`. Currently registers `hypothesis_record` (key:
+  `${sessionId}:${content}`) and `hypothesis_validate` (key:
+  `${id}:${outcome}`)
+- **W4 cheap wins**: three additions hand-picked from the
+  larger W4 backlog. `wrapup` CLI subcommand
+  (`--since --cc-session-id --kind --user-prompt-hint --format`
+  -- emits the same wrap-up prompt as the MCP tool and the
+  interpretive hooks). `wrapup_prompt` MCP tool (read-only;
+  identical generator). `cache prune --keep-recent` CLI
+  subcommand (W1 retention -- finds the cutoff at the
+  `(keepRecent+1)`-th most recent session and deletes turn
+  rows for older sessions; FK CASCADE handles
+  `tool_invocations` and `file_edits`; sessions rows
+  themselves are retained). The remaining W4 items
+  (std-osc8 hyperlinks, CI annotation formatter, the
+  `commit_changes` MCP tool, Bun-rewrite hooks) defer to
+  later releases
+- **`0003_idempotent_responses` migration**: additive
+  `CREATE TABLE mcp_idempotent_responses` with composite PK
+  `(procedure_path, key)`, `result_json` text, `created_at`
+  timestamp, plus a `(procedure_path, created_at DESC)` index
+  for future TTL pruning. Per Decision D9, this is purely
+  additive (no DROP); 0002 remains the last drop-and-recreate.
+  Registered in `ensureMigrated`, `DataStoreTestLayer`,
+  `DataReaderLive.test.ts`'s migrator, and
+  `format-wrapup.test.ts`'s migrator. Exported from
+  `packages/shared/src/index.ts` as `migration0003`. Tables
+  total moves from 40 to 41 + `notes_fts`
+- **New `DataStore` methods** (in
+  `packages/shared/src/services/DataStore.ts` and
+  `layers/DataStoreLive.ts`):
+  - `recordIdempotentResponse(input: IdempotentResponseInput)`
+    -- `INSERT ... ON CONFLICT DO NOTHING` so duplicate keys
+    are no-ops
+  - `writeHypothesis(input: HypothesisInput)` -- inserts a
+    `hypotheses` row with cited evidence FKs
+    (`citedTestErrorId`, `citedStackFrameId`,
+    `createdTurnId`) and returns the new id
+  - `validateHypothesis(input: ValidateHypothesisInput)` --
+    updates `validation_outcome`, `validated_at`,
+    `validated_turn_id`; raises a `DataStoreError` when the
+    hypothesis id is unknown
+  - `pruneSessions(keepRecent: number)` -- finds the cutoff at
+    the `(keepRecent+1)`-th most recent session and deletes
+    turn rows for older sessions (FK CASCADE handles
+    `tool_invocations` + `file_edits`). Sessions rows
+    themselves are retained. Returns
+    `{ prunedSessions, prunedTurns }`
+
+  New input shapes in DataStore.ts: `IdempotentResponseInput`,
+  `HypothesisInput`, `ValidateHypothesisInput`
+- **New `DataReader` method**:
+  `findIdempotentResponse(procedurePath, key)` returning
+  `Option<string>`. Backs the tRPC idempotency middleware's
+  cache check
+- **Four new MCP tools** (registered in `router.ts` and
+  `server.ts`, allowlisted in
+  `plugin/hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt`,
+  listed in `tools/help.ts`):
+  - `triage_brief({ project?, maxLines? })` -- read-only;
+    same generator as the CLI `triage` subcommand
+  - `wrapup_prompt({ sessionId?, ccSessionId?, kind?,
+    userPromptHint? })` -- read-only; same generator as the
+    `wrapup` CLI
+  - `hypothesis_record({ sessionId, content,
+    citedTestErrorId?, citedStackFrameId?, createdTurnId? })`
+    -- mutation; idempotent
+  - `hypothesis_validate({ id, outcome, validatedAt,
+    validatedTurnId? })` -- mutation; idempotent
+
+  Total tool count moves from 31 (β) to 37 (RC). `help.ts`
+  reports 37
+- **Three new CLI subcommands** (registered in
+  `packages/cli/src/bin.ts`):
+  - `triage --format --project --max-lines` -- emits the W3
+    orientation triage brief
+  - `wrapup --since --cc-session-id --kind --user-prompt-hint
+    --format` -- emits the W5 wrap-up prompt
+  - `cache prune --keep-recent` -- drops old turn history
+    (W1 retention)
+
+**Breaking changes from Phase 8:** none. RC is additive across
+the schema (one new table), the data layer, the CLI, the MCP
+server, and the plugin. Existing β data layout, frontmatter,
+options, and command names are preserved.
+
+**Out of scope on this branch (deferred to final/post-RC):**
+
+- TDD orchestrator subagent
+- Write-side TDD lifecycle MCP tools (`tdd_session_start`,
+  `tdd_phase_transition_request`, `tdd_session_end`,
+  `tdd_artifact_record`)
+- Remaining W4 polish (std-osc8 hyperlinks, CI annotation
+  formatter, `commit_changes` MCP tool, Bun-rewrite hooks)
+- E2E spawnSync test against the built bin (Decision β-N2)
+
+**Dependencies added:** none. RC is built entirely on the α/β
+dependency graph.
+
+See [decisions.md](./decisions.md) "Phase 9 / RC notes"
+subsection for the idempotency middleware's
+`findIdempotentResponse` -> `next()` ->
+`recordIdempotentResponse` flow and how it handles the
+persist-failure case.
+
+---
+
+**Document Status:** Current. Covers Phase 1 through Phase 9
+(2.0.0-RC). Implementation complete on this branch; subsequent
 phases (TDD orchestrator subagent, write-side TDD/hypothesis
-tools, interpretive hooks, W3/W4 polish) will be appended here
-as they ship.
+tools, remaining W4 polish) will be appended here as they ship.

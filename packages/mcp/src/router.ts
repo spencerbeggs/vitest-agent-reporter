@@ -9,6 +9,8 @@ import { fileCoverage } from "./tools/file-coverage.js";
 import { help } from "./tools/help.js";
 import { testHistory } from "./tools/history.js";
 import { hypothesisList } from "./tools/hypothesis-list.js";
+import { hypothesisRecord } from "./tools/hypothesis-record.js";
+import { hypothesisValidate } from "./tools/hypothesis-validate.js";
 import { moduleList } from "./tools/module-list.js";
 import { noteCreate, noteDelete, noteGet, noteList, noteSearch, noteUpdate } from "./tools/notes.js";
 import { testOverview } from "./tools/overview.js";
@@ -24,7 +26,9 @@ import { testForFile } from "./tools/test-for-file.js";
 import { testGet } from "./tools/test-get.js";
 import { testList } from "./tools/test-list.js";
 import { testTrends } from "./tools/trends.js";
+import { triageBrief } from "./tools/triage-brief.js";
 import { turnSearch } from "./tools/turn-search.js";
+import { wrapupPrompt } from "./tools/wrapup-prompt.js";
 
 export const appRouter = router({
 	help: help,
@@ -57,7 +61,11 @@ export const appRouter = router({
 	failure_signature_get: failureSignatureGet,
 	tdd_session_get: tddSessionGet,
 	hypothesis_list: hypothesisList,
+	hypothesis_record: hypothesisRecord,
+	hypothesis_validate: hypothesisValidate,
 	acceptance_metrics: acceptanceMetrics,
+	triage_brief: triageBrief,
+	wrapup_prompt: wrapupPrompt,
 });
 
 export type AppRouter = typeof appRouter;

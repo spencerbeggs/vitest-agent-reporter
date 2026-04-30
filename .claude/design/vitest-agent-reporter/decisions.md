@@ -3,10 +3,11 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-04-29
-last-synced: 2026-04-29
+updated: 2026-04-30
+last-synced: 2026-04-30
 post-phase5-sync: 2026-04-23
 post-2-0-sync: 2026-04-29
+post-rc-sync: 2026-04-30
 completeness: 95
 related:
   - vitest-agent-reporter/architecture.md
@@ -1221,6 +1222,83 @@ prove the side effects work given correct inputs; manual smoke
 testing of the bin through the hook scripts catches the
 command-tree wiring. We accept this gap until the RC hook tests
 land.
+
+---
+
+## Phase 9 / RC notes
+
+RC introduces no new numbered architectural decisions. Each of
+the W3/W5/W6 workstreams plus the W4 cheap wins is a direct
+integration of α primitives or β record paths -- the choices are
+downstream of D9 (last drop-and-recreate), D10 (failure
+signatures), and D11 (TDD evidence binding), all of which RC
+respects. The notes below capture two patterns worth recording
+explicitly so future readers don't re-derive them.
+
+### Note RC-N1: tRPC idempotency middleware persist-failure handling
+
+**Context:** the W6 hypothesis MCP write tools
+(`hypothesis_record`, `hypothesis_validate`) need to be safe
+against duplicate calls. The natural pattern is "check cache,
+otherwise run + persist" -- but the persist step itself can
+fail (transient SQLITE_BUSY, disk full, FK violation in a
+parallel migration window). Two flavors of failure mode are
+possible: a transient failure that fails the write but lets
+the next call succeed, or a persistent failure that rejects
+both writes. We need to pick a behavior on persist failure.
+
+**Decision:** the middleware **swallows** persist errors
+rather than surfacing them as tool errors. The flow is:
+
+1. `DataReader.findIdempotentResponse(path, key)` -> if cached,
+   return cached result with `_idempotentReplay: true`
+2. Otherwise `next()` (the inner procedure body, which writes
+   to the DataStore via `writeHypothesis`/`validateHypothesis`)
+3. After `next()` resolves: best-effort
+   `DataStore.recordIdempotentResponse(...)`. If this throws,
+   log it but **do not propagate** -- the procedure result is
+   still returned to the agent successfully
+
+**Why swallow:**
+
+- The procedure already succeeded. The agent's request was
+  honored. Surfacing a cache-write failure as a tool error
+  inverts the success/failure signal: the agent sees "error"
+  and retries, but the underlying write already succeeded, so
+  the retry now writes a duplicate hypothesis row. This is the
+  opposite of what idempotency is supposed to give us
+- Worst case after a swallowed persist failure: the next call
+  with the same key runs `next()` again instead of replaying.
+  Since `next()` itself is idempotent at the database layer
+  (e.g., `writeHypothesis` is just an `INSERT`; a duplicate
+  insert is benign because hypotheses don't enforce content
+  uniqueness, and the tool call's intent is to record the
+  hypothesis), the worst-case outcome is "two rows instead of
+  one" -- mild data hygiene cost, no correctness issue
+- The composite PK on `mcp_idempotent_responses` is
+  `(procedure_path, key)` with `INSERT ... ON CONFLICT DO
+  NOTHING`, so a parallel insert race resolves to a no-op.
+  Persistence is naturally retry-safe; we don't need to retry
+  here, just let the next call try again
+
+**Trade-off:** a permanently broken DataStore.write path
+(persistent SQLITE_BUSY, disk full, etc.) means the cache row
+never lands and every call re-runs `next()`. Acceptable: the
+underlying procedure already absorbs the cost gracefully, and
+the user's environment has bigger problems than idempotency at
+that point.
+
+### Note RC-N2: 0003 is additive and D9 stays intact
+
+The 2.0.0-RC migration `0003_idempotent_responses` is a single
+`CREATE TABLE` statement with no DROP. Per Decision D9 (the
+last drop-and-recreate), every migration after `0002` must be
+ALTER-only (or `CREATE TABLE` with no destructive component).
+0003 is the first migration to honor this contract. Future RC+
+migrations follow the same rule -- if a future change cannot
+be expressed without dropping data, it ships an
+export/import path on a major bump rather than silently
+dropping. D9 is not relaxed for RC.
 
 ---
 

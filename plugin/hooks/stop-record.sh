@@ -1,9 +1,9 @@
 #!/bin/bash
-# PreCompact hook: record + inject "save what matters next" prompt.
+# Stop hook: record a hook_fire turn AND inject a tailored wrap-up nudge.
 #
-# Per spec W5: before context compaction, agent decides what to
-# preserve. Wrap-up content from formatWrapupEffect via the wrapup
-# CLI (kind=pre_compact).
+# Per spec W5: lighter-weight than SessionEnd (every turn vs end of
+# session). Nudge content comes from the shared format-wrapup generator
+# via the wrapup CLI subcommand.
 
 set -e
 
@@ -20,26 +20,26 @@ fi
 . "$(dirname "$0")/lib/detect-pm.sh"
 pm_exec=$(detect_pm_exec "$cwd")
 
-# 1. Record the firing.
+# 1. Record the firing as a hook_fire turn.
 fire_payload=$(jq -nc --arg cc "$cc_session_id" \
-	'{type: "hook_fire", hook_kind: "PreCompact", cc_session_id: $cc}')
+	'{type: "hook_fire", hook_kind: "Stop", cc_session_id: $cc}')
 cd "$cwd" && $pm_exec vitest-agent-reporter record turn \
 	--cc-session-id "$cc_session_id" \
 	"$fire_payload" \
 	>/dev/null 2>&1 \
-	|| echo "record turn (hook_fire PreCompact) failed (non-fatal)" >&2
+	|| echo "record turn (hook_fire Stop) failed (non-fatal)" >&2
 
 # 2. Compute the wrap-up nudge.
 nudge=$(cd "$cwd" && $pm_exec vitest-agent-reporter wrapup \
 	--cc-session-id "$cc_session_id" \
-	--kind pre_compact \
+	--kind stop \
 	--format markdown 2>/dev/null || echo "")
 
-# 3. Inject if non-empty.
+# 3. If non-empty, emit hookSpecificOutput so Claude Code injects it.
 if [ -n "$nudge" ]; then
 	jq -n --arg ctx "$nudge" '{
 		hookSpecificOutput: {
-			hookEventName: "PreCompact",
+			hookEventName: "Stop",
 			additionalContext: $ctx
 		}
 	}'

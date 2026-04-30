@@ -58,4 +58,20 @@ describe("ensureMigrated", () => {
 		);
 		expect(tables).toBe(1);
 	});
+
+	it("migration 0003 creates the mcp_idempotent_responses table", async () => {
+		const dbPath = newDbPath();
+		await ensureMigrated(dbPath);
+
+		const tables = await Effect.runPromise(
+			Effect.gen(function* () {
+				const sql = yield* SqlClient;
+				const rows = yield* sql<{
+					name: string;
+				}>`SELECT name FROM sqlite_master WHERE type='table' AND name='mcp_idempotent_responses'`;
+				return rows.length;
+			}).pipe(Effect.provide(sqliteClientLayer({ filename: dbPath })), Effect.provide(NodeContext.layer)),
+		);
+		expect(tables).toBe(1);
+	});
 });

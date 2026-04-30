@@ -19,3 +19,5 @@ const t = initTRPC.context<McpContext>().create();
 export const router = t.router;
 export const publicProcedure = t.procedure;
 export const createCallerFactory = t.createCallerFactory;
+/** Exported so middleware modules can attach to the same tRPC instance. */
+export const middleware = t.middleware;

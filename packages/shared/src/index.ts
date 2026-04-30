@@ -39,11 +39,15 @@ export * from "./layers/OutputRendererLive.js";
 export * from "./layers/PathResolutionLive.js";
 export * from "./layers/ProjectDiscoveryLive.js";
 export * from "./layers/ProjectDiscoveryTest.js";
-
+// 2.0 RC: shared markdown generators (consumed by CLI + MCP).
+export type { FormatTriageOptions } from "./lib/format-triage.js";
+export { formatTriageEffect } from "./lib/format-triage.js";
+export type { FormatWrapupOptions, WrapupKind } from "./lib/format-wrapup.js";
+export { formatWrapupEffect } from "./lib/format-wrapup.js";
 // Migrations
 export { default as migration0001 } from "./migrations/0001_initial.js";
 export { default as migration0002 } from "./migrations/0002_comprehensive.js";
-
+export { default as migration0003 } from "./migrations/0003_idempotent_responses.js";
 // Schemas
 export * from "./schemas/AgentReport.js";
 export * from "./schemas/Baselines.js";
@@ -55,10 +59,8 @@ export * from "./schemas/History.js";
 export * from "./schemas/Options.js";
 export * from "./schemas/Thresholds.js";
 export * from "./schemas/Trends.js";
-
 // 2.0 turn schemas
 export * from "./schemas/turns/index.js";
-
 // Services
 export * from "./services/Config.js";
 export * from "./services/DataReader.js";
@@ -70,10 +72,8 @@ export * from "./services/FormatSelector.js";
 export * from "./services/HistoryTracker.js";
 export * from "./services/OutputRenderer.js";
 export * from "./services/ProjectDiscovery.js";
-
 // SQL helpers (assemblers public; raw row schemas are internal)
 export * from "./sql/assemblers.js";
-
 // Utilities
 export * from "./utils/ansi.js";
 export * from "./utils/build-report.js";
