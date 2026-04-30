@@ -298,6 +298,49 @@ describe("DataStoreLive", () => {
 		});
 	});
 
+	describe("writeErrors with frames", () => {
+		it("persists source_mapped_line and function_boundary_line when frames are provided", async () => {
+			await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					yield* store.writeSettings("frame-hash", settingsInput, {});
+					const runId = yield* store.writeRun({ ...runInput, settingsHash: "frame-hash" });
+
+					yield* store.writeErrors(runId, [
+						{
+							scope: "unhandled",
+							message: "boom",
+							ordinal: 0,
+							frames: [
+								{
+									ordinal: 0,
+									method: "Foo.bar",
+									filePath: "/abs/src/foo.ts",
+									line: 42,
+									col: 9,
+									sourceMappedLine: 17,
+									functionBoundaryLine: 12,
+								},
+							],
+						},
+					]);
+
+					const rows = yield* sql<{
+						source_mapped_line: number | null;
+						function_boundary_line: number | null;
+					}>`
+						SELECT source_mapped_line, function_boundary_line FROM stack_frames
+					`;
+					expect(rows).toHaveLength(1);
+					expect(rows[0].source_mapped_line).toBe(17);
+					expect(rows[0].function_boundary_line).toBe(12);
+				}),
+			);
+		});
+	});
+
 	describe("writeFailureSignature", () => {
 		it("inserts on first call and increments occurrence_count on second", async () => {
 			await run(

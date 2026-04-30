@@ -88,6 +88,16 @@ export interface TestCaseInput {
 	readonly tags?: readonly string[];
 }
 
+export interface StackFrameInput {
+	readonly ordinal: number;
+	readonly method: string | null;
+	readonly filePath: string;
+	readonly line: number;
+	readonly col: number;
+	readonly sourceMappedLine?: number;
+	readonly functionBoundaryLine?: number;
+}
+
 export interface TestErrorInput {
 	readonly testCaseId?: number;
 	readonly testSuiteId?: number;
@@ -101,6 +111,7 @@ export interface TestErrorInput {
 	readonly stack?: string;
 	readonly causeErrorId?: number;
 	readonly signatureHash?: string;
+	readonly frames?: ReadonlyArray<StackFrameInput>;
 	readonly ordinal?: number;
 }
 
