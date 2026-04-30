@@ -166,7 +166,8 @@ export interface SessionInput {
 
 export interface TurnInput {
 	readonly session_id: number;
-	readonly turn_no: number;
+	/** When omitted, writeTurn computes MAX(turn_no) + 1 for the session. */
+	readonly turn_no?: number;
 	readonly type: "user_prompt" | "tool_call" | "tool_result" | "file_edit" | "hook_fire" | "note" | "hypothesis";
 	readonly payload: string; // pre-stringified JSON, validated by record CLI
 	readonly occurred_at: string;

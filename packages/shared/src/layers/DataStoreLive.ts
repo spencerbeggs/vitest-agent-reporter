@@ -398,12 +398,21 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 		const writeTurn = (input: TurnInput): Effect.Effect<number, DataStoreError> =>
 			Effect.gen(function* () {
 				yield* Effect.logDebug("writeTurn").pipe(
-					Effect.annotateLogs({ session_id: input.session_id, turn_no: input.turn_no, type: input.type }),
+					Effect.annotateLogs({ session_id: input.session_id, type: input.type }),
 				);
-				yield* sql`INSERT INTO turns (session_id, turn_no, type, payload, occurred_at) VALUES (${input.session_id}, ${input.turn_no}, ${input.type}, ${input.payload}, ${input.occurred_at})`;
+				let turnNo: number;
+				if (input.turn_no !== undefined) {
+					turnNo = input.turn_no;
+				} else {
+					const maxRows = yield* sql<{ next_no: number }>`
+						SELECT COALESCE(MAX(turn_no), 0) + 1 AS next_no FROM turns WHERE session_id = ${input.session_id}
+					`;
+					turnNo = maxRows[0].next_no;
+				}
+				yield* sql`INSERT INTO turns (session_id, turn_no, type, payload, occurred_at) VALUES (${input.session_id}, ${turnNo}, ${input.type}, ${input.payload}, ${input.occurred_at})`;
 				const rows = yield* sql<{
 					id: number;
-				}>`SELECT id FROM turns WHERE session_id = ${input.session_id} AND turn_no = ${input.turn_no}`;
+				}>`SELECT id FROM turns WHERE session_id = ${input.session_id} AND turn_no = ${turnNo}`;
 				return rows[0].id;
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),

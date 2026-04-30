@@ -724,5 +724,41 @@ describe("DataStoreLive", () => {
 			expect(result.sessionId).toBeGreaterThan(0);
 			expect(result.turnId).toBeGreaterThan(0);
 		});
+
+		it("auto-assigns turn_no when omitted (next per session)", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-auto-no",
+						project: "p",
+						cwd: "/tmp/p",
+						agent_kind: "main",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+
+					yield* ds.writeTurn({
+						session_id: sessionId,
+						type: "user_prompt",
+						payload: '{"type":"user_prompt","prompt":"a"}',
+						occurred_at: "2026-04-29T00:00:01Z",
+					});
+					yield* ds.writeTurn({
+						session_id: sessionId,
+						type: "user_prompt",
+						payload: '{"type":"user_prompt","prompt":"b"}',
+						occurred_at: "2026-04-29T00:00:02Z",
+					});
+
+					const rows = yield* sql<{ turn_no: number }>`
+						SELECT turn_no FROM turns WHERE session_id = ${sessionId} ORDER BY turn_no
+					`;
+					return rows;
+				}),
+			);
+			expect(result.map((r) => r.turn_no)).toEqual([1, 2]);
+		});
 	});
 });
