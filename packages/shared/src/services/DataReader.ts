@@ -219,6 +219,7 @@ export class DataReader extends Context.Tag("vitest-agent-reporter/DataReader")<
 		) => Effect.Effect<ReadonlyArray<SuiteListEntry>, DataStoreError>;
 		readonly listSettings: () => Effect.Effect<ReadonlyArray<SettingsListEntry>, DataStoreError>;
 		readonly getSessionById: (id: number) => Effect.Effect<Option.Option<SessionDetail>, DataStoreError>;
+		readonly getSessionByCcId: (ccSessionId: string) => Effect.Effect<Option.Option<SessionDetail>, DataStoreError>;
 		readonly searchTurns: (options: TurnSearchOptions) => Effect.Effect<ReadonlyArray<TurnSummary>, DataStoreError>;
 		readonly computeAcceptanceMetrics: () => Effect.Effect<AcceptanceMetrics, DataStoreError>;
 	}

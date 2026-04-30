@@ -1281,39 +1281,57 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				),
 			);
 
+		interface SessionRow {
+			id: number;
+			cc_session_id: string;
+			project: string;
+			sub_project: string | null;
+			cwd: string;
+			agent_kind: string;
+			agent_type: string | null;
+			parent_session_id: number | null;
+			triage_was_non_empty: number;
+			started_at: string;
+			ended_at: string | null;
+			end_reason: string | null;
+		}
+
+		const sessionRowToDetail = (r: SessionRow): SessionDetail => ({
+			id: r.id,
+			cc_session_id: r.cc_session_id,
+			project: r.project,
+			subProject: r.sub_project,
+			cwd: r.cwd,
+			agentKind: r.agent_kind as "main" | "subagent",
+			agentType: r.agent_type,
+			parentSessionId: r.parent_session_id,
+			triageWasNonEmpty: r.triage_was_non_empty === 1,
+			startedAt: r.started_at,
+			endedAt: r.ended_at,
+			endReason: r.end_reason,
+		});
+
 		const getSessionById = (id: number): Effect.Effect<Option.Option<SessionDetail>, DataStoreError> =>
 			Effect.gen(function* () {
 				yield* Effect.logDebug("getSessionById").pipe(Effect.annotateLogs({ id }));
-				const rows = yield* sql<{
-					id: number;
-					cc_session_id: string;
-					project: string;
-					sub_project: string | null;
-					cwd: string;
-					agent_kind: string;
-					agent_type: string | null;
-					parent_session_id: number | null;
-					triage_was_non_empty: number;
-					started_at: string;
-					ended_at: string | null;
-					end_reason: string | null;
-				}>`SELECT id, cc_session_id, project, sub_project, cwd, agent_kind, agent_type, parent_session_id, triage_was_non_empty, started_at, ended_at, end_reason FROM sessions WHERE id = ${id} LIMIT 1`;
+				const rows =
+					yield* sql<SessionRow>`SELECT id, cc_session_id, project, sub_project, cwd, agent_kind, agent_type, parent_session_id, triage_was_non_empty, started_at, ended_at, end_reason FROM sessions WHERE id = ${id} LIMIT 1`;
 				if (rows.length === 0) return Option.none<SessionDetail>();
-				const r = rows[0];
-				return Option.some<SessionDetail>({
-					id: r.id,
-					cc_session_id: r.cc_session_id,
-					project: r.project,
-					subProject: r.sub_project,
-					cwd: r.cwd,
-					agentKind: r.agent_kind as "main" | "subagent",
-					agentType: r.agent_type,
-					parentSessionId: r.parent_session_id,
-					triageWasNonEmpty: r.triage_was_non_empty === 1,
-					startedAt: r.started_at,
-					endedAt: r.ended_at,
-					endReason: r.end_reason,
-				});
+				return Option.some<SessionDetail>(sessionRowToDetail(rows[0]));
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "sessions", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const getSessionByCcId = (ccSessionId: string): Effect.Effect<Option.Option<SessionDetail>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("getSessionByCcId").pipe(Effect.annotateLogs({ ccSessionId }));
+				const rows =
+					yield* sql<SessionRow>`SELECT id, cc_session_id, project, sub_project, cwd, agent_kind, agent_type, parent_session_id, triage_was_non_empty, started_at, ended_at, end_reason FROM sessions WHERE cc_session_id = ${ccSessionId} LIMIT 1`;
+				if (rows.length === 0) return Option.none<SessionDetail>();
+				return Option.some<SessionDetail>(sessionRowToDetail(rows[0]));
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
 				Effect.mapError(
@@ -1497,6 +1515,7 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 			listSuites,
 			listSettings,
 			getSessionById,
+			getSessionByCcId,
 			searchTurns,
 			computeAcceptanceMetrics,
 		};
