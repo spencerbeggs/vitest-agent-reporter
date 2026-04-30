@@ -366,6 +366,17 @@ describe("DataStoreLive", () => {
 				}),
 			);
 		});
+
+		it("fails loudly when cc_session_id is unknown", async () => {
+			await expect(
+				run(
+					Effect.gen(function* () {
+						const store = yield* DataStore;
+						yield* store.endSession("nope", "2026-04-29T00:01:00Z", "clear");
+					}),
+				),
+			).rejects.toThrow(/unknown cc_session_id/);
+		});
 	});
 
 	describe("writeFailureSignature", () => {

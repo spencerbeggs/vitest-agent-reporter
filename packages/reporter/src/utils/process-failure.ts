@@ -16,7 +16,11 @@ interface VitestErrorLike {
 	readonly stacks?: ReadonlyArray<VitestStackFrameLike>;
 }
 
-const FRAME_REGEX = /at\s+(?:(.+?)\s+)?\(?(.+?):(\d+):(\d+)\)?/g;
+// Per-line anchored regex (CodeQL flagged the prior global pattern for
+// polynomial backtracking on stack-shaped inputs that never reach the trailing
+// `:\d+:\d+`). We bound input by splitting on newlines first, and constrain
+// the function-name and file-path captures to non-newline / non-paren chars.
+const FRAME_LINE_REGEX = /^\s*at\s+(?:([\w$.<>[\] ]+?)\s+)?\(?([^\n)]+):(\d+):(\d+)\)?\s*$/;
 
 const isFrameworkPath = (filePath: string): boolean =>
 	filePath.includes("/node_modules/") ||
@@ -34,15 +38,21 @@ interface RawFrame {
 }
 
 const parseFramesFromStackString = (stack: string): RawFrame[] => {
-	const matches = [...stack.matchAll(FRAME_REGEX)];
-	return matches.map((m, ordinal) => ({
-		ordinal,
-		method: m[1] ?? null,
-		filePath: m[2],
-		line: Number.parseInt(m[3], 10),
-		col: Number.parseInt(m[4], 10),
-		sourceMapped: false,
-	}));
+	const frames: RawFrame[] = [];
+	let ordinal = 0;
+	for (const line of stack.split("\n")) {
+		const m = FRAME_LINE_REGEX.exec(line);
+		if (m === null) continue;
+		frames.push({
+			ordinal: ordinal++,
+			method: m[1] ?? null,
+			filePath: m[2],
+			line: Number.parseInt(m[3], 10),
+			col: Number.parseInt(m[4], 10),
+			sourceMapped: false,
+		});
+	}
+	return frames;
 };
 
 const readSourceSafe = (filePath: string): string | null => {
@@ -87,7 +97,9 @@ export const processFailure = (
 	let topBoundaryLine: number | null = null;
 	let topFunctionName: string | null = null;
 	if (topFrame !== undefined) {
-		const lineForBoundary = topFrame.sourceMapped ? topFrame.line : topFrame.line;
+		// Vitest's parsed `stacks` and the regex-parsed fallback both produce
+		// line numbers in the source's coordinate system at this point.
+		const lineForBoundary = topFrame.line;
 		const source = readSourceSafe(topFrame.filePath);
 		const boundary = source !== null ? findFunctionBoundary(source, lineForBoundary) : null;
 		if (boundary !== null) {

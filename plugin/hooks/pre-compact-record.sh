@@ -12,13 +12,17 @@ if [ -z "$cc_session_id" ] || [ -z "$cwd" ]; then
 	exit 0
 fi
 
+# shellcheck source=lib/detect-pm.sh
+. "$(dirname "$0")/lib/detect-pm.sh"
+pm_exec=$(detect_pm_exec "$cwd")
+
 payload=$(jq -nc --arg cc "$cc_session_id" \
 	'{type: "hook_fire", hook_kind: "PreCompact", cc_session_id: $cc}')
 
-cd "$cwd" && pnpm exec vitest-agent-reporter record turn \
+cd "$cwd" && $pm_exec vitest-agent-reporter record turn \
 	--cc-session-id "$cc_session_id" \
 	"$payload" \
-	2>&1 \
+	>/dev/null 2>&1 \
 	|| echo "record turn (hook_fire PreCompact) failed (non-fatal)" >&2
 
 exit 0

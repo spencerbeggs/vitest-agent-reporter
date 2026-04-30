@@ -400,19 +400,16 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				yield* Effect.logDebug("writeTurn").pipe(
 					Effect.annotateLogs({ session_id: input.session_id, type: input.type }),
 				);
-				let turnNo: number;
 				if (input.turn_no !== undefined) {
-					turnNo = input.turn_no;
+					yield* sql`INSERT INTO turns (session_id, turn_no, type, payload, occurred_at) VALUES (${input.session_id}, ${input.turn_no}, ${input.type}, ${input.payload}, ${input.occurred_at})`;
 				} else {
-					const maxRows = yield* sql<{ next_no: number }>`
-						SELECT COALESCE(MAX(turn_no), 0) + 1 AS next_no FROM turns WHERE session_id = ${input.session_id}
-					`;
-					turnNo = maxRows[0].next_no;
+					// Atomic auto-assignment: compute next turn_no inside the same INSERT
+					// so concurrent writers can't both compute the same value before either
+					// inserts. UNIQUE(session_id, turn_no) is enforced by the schema as a
+					// safety net.
+					yield* sql`INSERT INTO turns (session_id, turn_no, type, payload, occurred_at) SELECT ${input.session_id}, COALESCE(MAX(turn_no), 0) + 1, ${input.type}, ${input.payload}, ${input.occurred_at} FROM turns WHERE session_id = ${input.session_id}`;
 				}
-				yield* sql`INSERT INTO turns (session_id, turn_no, type, payload, occurred_at) VALUES (${input.session_id}, ${turnNo}, ${input.type}, ${input.payload}, ${input.occurred_at})`;
-				const rows = yield* sql<{
-					id: number;
-				}>`SELECT id FROM turns WHERE session_id = ${input.session_id} AND turn_no = ${turnNo}`;
+				const rows = yield* sql<{ id: number }>`SELECT last_insert_rowid() as id`;
 				return rows[0].id;
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
@@ -427,10 +424,24 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 			Effect.gen(function* () {
 				yield* Effect.logDebug("endSession").pipe(Effect.annotateLogs({ ccSessionId, endReason }));
 				yield* sql`UPDATE sessions SET ended_at = ${endedAt}, end_reason = ${endReason} WHERE cc_session_id = ${ccSessionId}`;
+				// Match the loud-fail contract of writeSession/writeTurn: a missing
+				// cc_session_id is a programmer error, not an idempotent no-op.
+				const rows = yield* sql<{ changes: number }>`SELECT changes() as changes`;
+				if (rows[0].changes === 0) {
+					return yield* Effect.fail(
+						new DataStoreError({
+							operation: "write",
+							table: "sessions",
+							reason: `unknown cc_session_id: ${ccSessionId}`,
+						}),
+					);
+				}
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
-				Effect.mapError(
-					(e) => new DataStoreError({ operation: "write", table: "sessions", reason: extractSqlReason(e) }),
+				Effect.mapError((e) =>
+					e instanceof DataStoreError
+						? e
+						: new DataStoreError({ operation: "write", table: "sessions", reason: extractSqlReason(e) }),
 				),
 			);
 

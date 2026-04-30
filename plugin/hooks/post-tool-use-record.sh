@@ -15,6 +15,10 @@ if [ -z "$cc_session_id" ] || [ -z "$cwd" ] || [ -z "$tool_name" ]; then
 	exit 0
 fi
 
+# shellcheck source=lib/detect-pm.sh
+. "$(dirname "$0")/lib/detect-pm.sh"
+pm_exec=$(detect_pm_exec "$cwd")
+
 # 1. Always emit a tool_result turn.
 result_payload=$(jq -nc \
 	--arg tn "$tool_name" \
@@ -22,10 +26,10 @@ result_payload=$(jq -nc \
 	--argjson ok "$success" \
 	'{type: "tool_result", tool_name: $tn, success: $ok} + (if $tuid != "" then {tool_use_id: $tuid} else {} end)')
 
-cd "$cwd" && pnpm exec vitest-agent-reporter record turn \
+cd "$cwd" && $pm_exec vitest-agent-reporter record turn \
 	--cc-session-id "$cc_session_id" \
 	"$result_payload" \
-	2>&1 \
+	>/dev/null 2>&1 \
 	|| echo "record turn (tool_result) failed (non-fatal)" >&2
 
 # 2. For Edit/Write/MultiEdit, additionally emit a file_edit turn.
@@ -44,10 +48,10 @@ case "$tool_name" in
 			--arg fp "$file_path" \
 			--arg ek "$edit_kind" \
 			'{type: "file_edit", file_path: $fp, edit_kind: $ek}')
-		cd "$cwd" && pnpm exec vitest-agent-reporter record turn \
+		cd "$cwd" && $pm_exec vitest-agent-reporter record turn \
 			--cc-session-id "$cc_session_id" \
 			"$edit_payload" \
-			2>&1 \
+			>/dev/null 2>&1 \
 			|| echo "record turn (file_edit) failed (non-fatal)" >&2
 		;;
 esac

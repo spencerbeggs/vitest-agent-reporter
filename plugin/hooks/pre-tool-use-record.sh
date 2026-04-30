@@ -15,16 +15,20 @@ if [ -z "$cc_session_id" ] || [ -z "$cwd" ] || [ -z "$tool_name" ]; then
 	exit 0
 fi
 
+# shellcheck source=lib/detect-pm.sh
+. "$(dirname "$0")/lib/detect-pm.sh"
+pm_exec=$(detect_pm_exec "$cwd")
+
 payload=$(jq -nc \
 	--arg tn "$tool_name" \
 	--argjson ti "$tool_input" \
 	--arg tuid "$tool_use_id" \
 	'{type: "tool_call", tool_name: $tn, tool_input: $ti} + (if $tuid != "" then {tool_use_id: $tuid} else {} end)')
 
-cd "$cwd" && pnpm exec vitest-agent-reporter record turn \
+cd "$cwd" && $pm_exec vitest-agent-reporter record turn \
 	--cc-session-id "$cc_session_id" \
 	"$payload" \
-	2>&1 \
+	>/dev/null 2>&1 \
 	|| echo "record turn (tool_call) failed (non-fatal)" >&2
 
 exit 0

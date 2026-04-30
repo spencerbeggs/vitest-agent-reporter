@@ -12,18 +12,22 @@ if [ -z "$cc_session_id" ] || [ -z "$cwd" ]; then
 	exit 0
 fi
 
+# shellcheck source=lib/detect-pm.sh
+. "$(dirname "$0")/lib/detect-pm.sh"
+pm_exec=$(detect_pm_exec "$cwd")
+
 # Project name: best-effort from cwd's package.json. Fall back to "unknown".
 project=$(jq -r '.name // "unknown"' < "$cwd/package.json" 2>/dev/null || echo "unknown")
 
 started_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-cd "$cwd" && pnpm exec vitest-agent-reporter record session-start \
+cd "$cwd" && $pm_exec vitest-agent-reporter record session-start \
 	--cc-session-id "$cc_session_id" \
 	--project "$project" \
 	--cwd "$cwd" \
 	--agent-kind main \
 	--started-at "$started_at" \
-	2>&1 \
+	>/dev/null 2>&1 \
 	|| echo "record session-start failed (non-fatal)" >&2
 
 exit 0
