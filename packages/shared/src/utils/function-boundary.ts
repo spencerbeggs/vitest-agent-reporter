@@ -39,8 +39,8 @@ const nodeName = (node: AstNode, parent: AstNode | null): string => {
  * decorators, `as` casts, etc.) throws and yields `null` here. Callers should
  * fall back to a coarser coordinate (see `computeFailureSignature`'s `raw:`
  * bucket). Stable failure signatures over `.ts` source will improve when this
- * helper learns to parse TypeScript (acorn-typescript or
- * @typescript-eslint/typescript-estree).
+ * helper learns to parse TypeScript (`acorn-typescript` or
+ * `\@typescript-eslint/typescript-estree`).
  */
 export const findFunctionBoundary = (source: string, line: number): FunctionBoundary | null => {
 	let ast: AstNode;
