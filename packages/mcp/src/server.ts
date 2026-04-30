@@ -400,6 +400,122 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 		async (args) => textResult(await caller.note_search({ query: args.query })),
 	);
 
+	// ── Session & turn tools ────────────────────────────────────────────
+
+	server.registerTool(
+		"session_list",
+		{
+			description: "List Claude Code sessions recorded in the database",
+			inputSchema: {
+				project: z.optional(z.string()).describe("Filter to a specific project"),
+				agentKind: z.optional(z.enum(["main", "subagent"])).describe("Filter by agent kind"),
+				limit: z.optional(z.number()).describe("Max sessions to return (default 50)"),
+			},
+		},
+		async (args) =>
+			textResult(
+				await caller.session_list({
+					project: args.project,
+					agentKind: args.agentKind,
+					limit: args.limit,
+				}),
+			),
+	);
+
+	server.registerTool(
+		"session_get",
+		{
+			description: "Get details for a single Claude Code session by integer id",
+			inputSchema: {
+				id: z.number().describe("Session integer id"),
+			},
+		},
+		async (args) => textResult(await caller.session_get({ id: args.id })),
+	);
+
+	server.registerTool(
+		"turn_search",
+		{
+			description: "Search turn logs across sessions with optional filters",
+			inputSchema: {
+				sessionId: z.optional(z.number()).describe("Filter to a specific session id"),
+				since: z.optional(z.string()).describe("ISO 8601 cutoff — return turns after this timestamp"),
+				type: z
+					.optional(z.enum(["user_prompt", "tool_call", "tool_result", "file_edit", "hook_fire", "note", "hypothesis"]))
+					.describe("Filter by turn type"),
+				limit: z.optional(z.number()).describe("Max turns to return (default 100)"),
+			},
+		},
+		async (args) =>
+			textResult(
+				await caller.turn_search({
+					sessionId: args.sessionId,
+					since: args.since,
+					type: args.type,
+					limit: args.limit,
+				}),
+			),
+	);
+
+	// ── Failure signatures ──────────────────────────────────────────────
+
+	server.registerTool(
+		"failure_signature_get",
+		{
+			description: "Look up a failure signature by its 16-char sha256 hash",
+			inputSchema: {
+				hash: z.string().describe("16-char failure signature hash"),
+			},
+		},
+		async (args) => textResult(await caller.failure_signature_get({ hash: args.hash })),
+	);
+
+	// ── TDD tools ───────────────────────────────────────────────────────
+
+	server.registerTool(
+		"tdd_session_get",
+		{
+			description: "Get details for a TDD session including phases and artifacts",
+			inputSchema: {
+				id: z.number().describe("TDD session id"),
+			},
+		},
+		async (args) => textResult(await caller.tdd_session_get({ id: args.id })),
+	);
+
+	server.registerTool(
+		"hypothesis_list",
+		{
+			description: "List agent hypotheses with optional filtering by session or validation outcome",
+			inputSchema: {
+				sessionId: z.optional(z.number()).describe("Filter to a specific session id"),
+				outcome: z
+					.optional(z.enum(["confirmed", "refuted", "abandoned", "open"]))
+					.describe("Filter by validation outcome (open = not yet validated)"),
+				limit: z.optional(z.number()).describe("Max hypotheses to return (default 50)"),
+			},
+		},
+		async (args) =>
+			textResult(
+				await caller.hypothesis_list({
+					sessionId: args.sessionId,
+					outcome: args.outcome,
+					limit: args.limit,
+				}),
+			),
+	);
+
+	// ── Acceptance metrics ──────────────────────────────────────────────
+
+	server.registerTool(
+		"acceptance_metrics",
+		{
+			description: "Compute the four spec Annex A acceptance metrics from the current database",
+			inputSchema: {},
+		},
+		async () => textResult(await caller.acceptance_metrics({})),
+	);
+
 	const transport = new StdioServerTransport();
 	await server.connect(transport);
 }

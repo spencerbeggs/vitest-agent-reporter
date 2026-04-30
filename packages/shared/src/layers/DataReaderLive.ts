@@ -9,7 +9,9 @@ import type { HistoryRecord } from "../schemas/History.js";
 import type { TrendRecord } from "../schemas/Trends.js";
 import type {
 	AcceptanceMetrics,
+	FailureSignatureDetail,
 	FlakyTest,
+	HypothesisDetail,
 	ModuleListEntry,
 	NoteRow,
 	PersistentFailure,
@@ -18,6 +20,7 @@ import type {
 	SettingsListEntry,
 	SettingsRow,
 	SuiteListEntry,
+	TddSessionDetail,
 	TestError,
 	TestListEntry,
 	TurnSearchOptions,
@@ -1281,39 +1284,57 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				),
 			);
 
+		interface SessionRow {
+			id: number;
+			cc_session_id: string;
+			project: string;
+			sub_project: string | null;
+			cwd: string;
+			agent_kind: string;
+			agent_type: string | null;
+			parent_session_id: number | null;
+			triage_was_non_empty: number;
+			started_at: string;
+			ended_at: string | null;
+			end_reason: string | null;
+		}
+
+		const sessionRowToDetail = (r: SessionRow): SessionDetail => ({
+			id: r.id,
+			cc_session_id: r.cc_session_id,
+			project: r.project,
+			subProject: r.sub_project,
+			cwd: r.cwd,
+			agentKind: r.agent_kind as "main" | "subagent",
+			agentType: r.agent_type,
+			parentSessionId: r.parent_session_id,
+			triageWasNonEmpty: r.triage_was_non_empty === 1,
+			startedAt: r.started_at,
+			endedAt: r.ended_at,
+			endReason: r.end_reason,
+		});
+
 		const getSessionById = (id: number): Effect.Effect<Option.Option<SessionDetail>, DataStoreError> =>
 			Effect.gen(function* () {
 				yield* Effect.logDebug("getSessionById").pipe(Effect.annotateLogs({ id }));
-				const rows = yield* sql<{
-					id: number;
-					cc_session_id: string;
-					project: string;
-					sub_project: string | null;
-					cwd: string;
-					agent_kind: string;
-					agent_type: string | null;
-					parent_session_id: number | null;
-					triage_was_non_empty: number;
-					started_at: string;
-					ended_at: string | null;
-					end_reason: string | null;
-				}>`SELECT id, cc_session_id, project, sub_project, cwd, agent_kind, agent_type, parent_session_id, triage_was_non_empty, started_at, ended_at, end_reason FROM sessions WHERE id = ${id} LIMIT 1`;
+				const rows =
+					yield* sql<SessionRow>`SELECT id, cc_session_id, project, sub_project, cwd, agent_kind, agent_type, parent_session_id, triage_was_non_empty, started_at, ended_at, end_reason FROM sessions WHERE id = ${id} LIMIT 1`;
 				if (rows.length === 0) return Option.none<SessionDetail>();
-				const r = rows[0];
-				return Option.some<SessionDetail>({
-					id: r.id,
-					cc_session_id: r.cc_session_id,
-					project: r.project,
-					subProject: r.sub_project,
-					cwd: r.cwd,
-					agentKind: r.agent_kind as "main" | "subagent",
-					agentType: r.agent_type,
-					parentSessionId: r.parent_session_id,
-					triageWasNonEmpty: r.triage_was_non_empty === 1,
-					startedAt: r.started_at,
-					endedAt: r.ended_at,
-					endReason: r.end_reason,
-				});
+				return Option.some<SessionDetail>(sessionRowToDetail(rows[0]));
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "sessions", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const getSessionByCcId = (ccSessionId: string): Effect.Effect<Option.Option<SessionDetail>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("getSessionByCcId").pipe(Effect.annotateLogs({ ccSessionId }));
+				const rows =
+					yield* sql<SessionRow>`SELECT id, cc_session_id, project, sub_project, cwd, agent_kind, agent_type, parent_session_id, triage_was_non_empty, started_at, ended_at, end_reason FROM sessions WHERE cc_session_id = ${ccSessionId} LIMIT 1`;
+				if (rows.length === 0) return Option.none<SessionDetail>();
+				return Option.some<SessionDetail>(sessionRowToDetail(rows[0]));
 			}).pipe(
 				Effect.annotateLogs("service", "DataReader"),
 				Effect.mapError(
@@ -1473,6 +1494,189 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				),
 			);
 
+		const listSessions = (options: {
+			readonly project?: string;
+			readonly agentKind?: "main" | "subagent";
+			readonly limit?: number;
+		}): Effect.Effect<ReadonlyArray<SessionDetail>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("listSessions").pipe(Effect.annotateLogs({ ...options }));
+				const limit = options.limit ?? 50;
+				const project = options.project ?? null;
+				const agentKind = options.agentKind ?? null;
+				const rows = yield* sql<SessionRow>`
+					SELECT id, cc_session_id, project, sub_project, cwd, agent_kind, agent_type,
+						parent_session_id, triage_was_non_empty, started_at, ended_at, end_reason
+					FROM sessions
+					WHERE (${project} IS NULL OR project = ${project})
+						AND (${agentKind} IS NULL OR agent_kind = ${agentKind})
+					ORDER BY started_at DESC
+					LIMIT ${limit}
+				`;
+				return rows.map(sessionRowToDetail);
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "sessions", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const getFailureSignatureByHash = (
+			hash: string,
+		): Effect.Effect<Option.Option<FailureSignatureDetail>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("getFailureSignatureByHash").pipe(Effect.annotateLogs({ hash }));
+				const sigRows = yield* sql<{
+					signature_hash: string;
+					first_seen_run_id: number | null;
+					first_seen_at: string;
+					occurrence_count: number;
+				}>`
+					SELECT signature_hash, first_seen_run_id, first_seen_at, occurrence_count
+					FROM failure_signatures WHERE signature_hash = ${hash} LIMIT 1
+				`;
+				if (sigRows.length === 0) return Option.none<FailureSignatureDetail>();
+				const errRows = yield* sql<{ run_id: number; message: string; name: string | null }>`
+					SELECT run_id, message, name FROM test_errors
+					WHERE signature_hash = ${hash}
+					ORDER BY run_id DESC
+					LIMIT 10
+				`;
+				const sig = sigRows[0];
+				return Option.some<FailureSignatureDetail>({
+					signatureHash: sig.signature_hash,
+					firstSeenRunId: sig.first_seen_run_id,
+					firstSeenAt: sig.first_seen_at,
+					occurrenceCount: sig.occurrence_count,
+					recentErrors: errRows.map((e) => ({ runId: e.run_id, message: e.message, errorName: e.name })),
+				});
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "failure_signatures", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const getTddSessionById = (id: number): Effect.Effect<Option.Option<TddSessionDetail>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("getTddSessionById").pipe(Effect.annotateLogs({ id }));
+				const sessionRows = yield* sql<{
+					id: number;
+					session_id: number;
+					goal: string;
+					started_at: string;
+					ended_at: string | null;
+					outcome: string | null;
+				}>`
+					SELECT id, session_id, goal, started_at, ended_at, outcome
+					FROM tdd_sessions WHERE id = ${id} LIMIT 1
+				`;
+				if (sessionRows.length === 0) return Option.none<TddSessionDetail>();
+				const tddSession = sessionRows[0];
+				const phaseRows = yield* sql<{
+					id: number;
+					behavior_id: number | null;
+					phase: string;
+					started_at: string;
+					ended_at: string | null;
+					transition_reason: string | null;
+				}>`
+					SELECT id, behavior_id, phase, started_at, ended_at, transition_reason
+					FROM tdd_phases WHERE tdd_session_id = ${id}
+					ORDER BY started_at ASC
+				`;
+				const artifactRows = yield* sql<{
+					id: number;
+					phase_id: number;
+					artifact_kind: string;
+					test_case_id: number | null;
+					test_run_id: number | null;
+					recorded_at: string;
+				}>`
+					SELECT a.id, a.phase_id, a.artifact_kind, a.test_case_id, a.test_run_id, a.recorded_at
+					FROM tdd_artifacts a
+					JOIN tdd_phases p ON a.phase_id = p.id
+					WHERE p.tdd_session_id = ${id}
+					ORDER BY a.recorded_at ASC
+				`;
+				return Option.some<TddSessionDetail>({
+					id: tddSession.id,
+					sessionId: tddSession.session_id,
+					goal: tddSession.goal,
+					startedAt: tddSession.started_at,
+					endedAt: tddSession.ended_at,
+					outcome: tddSession.outcome,
+					phases: phaseRows.map((p) => ({
+						id: p.id,
+						behaviorId: p.behavior_id,
+						phase: p.phase,
+						startedAt: p.started_at,
+						endedAt: p.ended_at,
+						transitionReason: p.transition_reason,
+					})),
+					artifacts: artifactRows.map((a) => ({
+						id: a.id,
+						phaseId: a.phase_id,
+						artifactKind: a.artifact_kind,
+						testCaseId: a.test_case_id,
+						testRunId: a.test_run_id,
+						recordedAt: a.recorded_at,
+					})),
+				});
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "tdd_sessions", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const listHypotheses = (options: {
+			readonly sessionId?: number;
+			readonly outcome?: "confirmed" | "refuted" | "abandoned" | "open";
+			readonly limit?: number;
+		}): Effect.Effect<ReadonlyArray<HypothesisDetail>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("listHypotheses").pipe(Effect.annotateLogs({ ...options }));
+				const limit = options.limit ?? 50;
+				const sessionId = options.sessionId ?? null;
+				const outcome = options.outcome ?? null;
+				const rows = yield* sql<{
+					id: number;
+					session_id: number;
+					content: string;
+					cited_test_error_id: number | null;
+					cited_stack_frame_id: number | null;
+					validation_outcome: string | null;
+					validated_at: string | null;
+				}>`
+					SELECT id, session_id, content, cited_test_error_id, cited_stack_frame_id,
+						validation_outcome, validated_at
+					FROM hypotheses
+					WHERE (${sessionId} IS NULL OR session_id = ${sessionId})
+						AND (
+							${outcome} IS NULL
+							OR (${outcome} = 'open' AND validation_outcome IS NULL)
+							OR (${outcome} != 'open' AND validation_outcome = ${outcome})
+						)
+					ORDER BY id DESC
+					LIMIT ${limit}
+				`;
+				return rows.map((r) => ({
+					id: r.id,
+					sessionId: r.session_id,
+					content: r.content,
+					citedTestErrorId: r.cited_test_error_id,
+					citedStackFrameId: r.cited_stack_frame_id,
+					validationOutcome: r.validation_outcome as "confirmed" | "refuted" | "abandoned" | null,
+					validatedAt: r.validated_at,
+				}));
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "hypotheses", reason: extractSqlReason(e) }),
+				),
+			);
+
 		return {
 			getLatestRun,
 			getRunsByProject,
@@ -1497,8 +1701,13 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 			listSuites,
 			listSettings,
 			getSessionById,
+			getSessionByCcId,
+			listSessions,
 			searchTurns,
 			computeAcceptanceMetrics,
+			getFailureSignatureByHash,
+			getTddSessionById,
+			listHypotheses,
 		};
 	}),
 );

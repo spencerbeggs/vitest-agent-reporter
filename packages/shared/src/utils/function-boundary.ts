@@ -1,4 +1,10 @@
 import * as acorn from "acorn";
+import { tsPlugin } from "acorn-typescript";
+
+const Parser = acorn.Parser.extend(
+	// biome-ignore lint/suspicious/noExplicitAny: acorn-typescript's plugin signature is loosely typed
+	tsPlugin() as any,
+);
 
 export interface FunctionBoundary {
 	readonly line: number;
@@ -27,25 +33,26 @@ const nodeName = (node: AstNode, parent: AstNode | null): string => {
 		const decl = parent as unknown as { id?: { name?: string } };
 		if (decl.id !== undefined && decl.id.name !== undefined) return decl.id.name;
 	}
+	// Class method (MethodDefinition): use the key name (e.g. `greet` in `greet(name: string) {}`)
+	if (parent !== null && parent.type === "MethodDefinition") {
+		const method = parent as unknown as { key?: { name?: string } };
+		if (method.key !== undefined && method.key.name !== undefined) return method.key.name;
+	}
 	return "<anonymous>";
 };
 
 /**
- * Parse `source` as JavaScript (via acorn) and return the smallest enclosing
- * function's start line and name for `line`.
+ * Parse `source` (JavaScript or TypeScript, via `acorn` + `acorn-typescript`)
+ * and return the smallest enclosing function's start line and name for `line`.
  *
- * Returns `null` when acorn cannot parse the source. Notably, acorn is
- * **JavaScript-only** — TypeScript syntax (type annotations, generics,
- * decorators, `as` casts, etc.) throws and yields `null` here. Callers should
- * fall back to a coarser coordinate (see `computeFailureSignature`'s `raw:`
- * bucket). Stable failure signatures over `.ts` source will improve when this
- * helper learns to parse TypeScript (`acorn-typescript` or
- * `\@typescript-eslint/typescript-estree`).
+ * Returns `null` only when the parser rejects the source outright (rare —
+ * usually a syntax error). Type annotations, generics, decorators, and `as`
+ * casts are all accepted.
  */
 export const findFunctionBoundary = (source: string, line: number): FunctionBoundary | null => {
 	let ast: AstNode;
 	try {
-		ast = acorn.parse(source, {
+		ast = Parser.parse(source, {
 			ecmaVersion: "latest",
 			sourceType: "module",
 			locations: true,

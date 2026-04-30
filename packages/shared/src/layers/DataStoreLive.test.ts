@@ -263,6 +263,151 @@ describe("DataStoreLive", () => {
 				}),
 			);
 		});
+
+		it("persists signature_hash on test_errors when provided", async () => {
+			await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					yield* store.writeSettings("sig-hash", settingsInput, {});
+					const runId = yield* store.writeRun({ ...runInput, settingsHash: "sig-hash" });
+
+					yield* store.writeFailureSignature({
+						signatureHash: "abcdef0123456789",
+						runId,
+						seenAt: "2026-04-29T00:00:00Z",
+					});
+
+					yield* store.writeErrors(runId, [
+						{
+							scope: "unhandled",
+							message: "boom",
+							signatureHash: "abcdef0123456789",
+							ordinal: 0,
+						},
+					]);
+
+					const rows = yield* sql<{ signature_hash: string | null }>`
+						SELECT signature_hash FROM test_errors WHERE run_id = ${runId}
+					`;
+					expect(rows).toHaveLength(1);
+					expect(rows[0].signature_hash).toBe("abcdef0123456789");
+				}),
+			);
+		});
+	});
+
+	describe("writeErrors with frames", () => {
+		it("persists source_mapped_line and function_boundary_line when frames are provided", async () => {
+			await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					yield* store.writeSettings("frame-hash", settingsInput, {});
+					const runId = yield* store.writeRun({ ...runInput, settingsHash: "frame-hash" });
+
+					yield* store.writeErrors(runId, [
+						{
+							scope: "unhandled",
+							message: "boom",
+							ordinal: 0,
+							frames: [
+								{
+									ordinal: 0,
+									method: "Foo.bar",
+									filePath: "/abs/src/foo.ts",
+									line: 42,
+									col: 9,
+									sourceMappedLine: 17,
+									functionBoundaryLine: 12,
+								},
+							],
+						},
+					]);
+
+					const rows = yield* sql<{
+						source_mapped_line: number | null;
+						function_boundary_line: number | null;
+					}>`
+						SELECT source_mapped_line, function_boundary_line FROM stack_frames
+					`;
+					expect(rows).toHaveLength(1);
+					expect(rows[0].source_mapped_line).toBe(17);
+					expect(rows[0].function_boundary_line).toBe(12);
+				}),
+			);
+		});
+	});
+
+	describe("endSession", () => {
+		it("updates ended_at and end_reason on the matching cc_session_id", async () => {
+			await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					yield* store.writeSession({
+						cc_session_id: "cc-end-test",
+						project: "p",
+						cwd: "/tmp/p",
+						agent_kind: "main",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+
+					yield* store.endSession("cc-end-test", "2026-04-29T00:01:00Z", "clear");
+
+					const rows = yield* sql<{ ended_at: string | null; end_reason: string | null }>`
+						SELECT ended_at, end_reason FROM sessions WHERE cc_session_id = 'cc-end-test'
+					`;
+					expect(rows[0].ended_at).toBe("2026-04-29T00:01:00Z");
+					expect(rows[0].end_reason).toBe("clear");
+				}),
+			);
+		});
+
+		it("fails loudly when cc_session_id is unknown", async () => {
+			await expect(
+				run(
+					Effect.gen(function* () {
+						const store = yield* DataStore;
+						yield* store.endSession("nope", "2026-04-29T00:01:00Z", "clear");
+					}),
+				),
+			).rejects.toThrow(/unknown cc_session_id/);
+		});
+	});
+
+	describe("writeFailureSignature", () => {
+		it("inserts on first call and increments occurrence_count on second", async () => {
+			await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					yield* store.writeSettings("fs-hash", settingsInput, {});
+					const runId = yield* store.writeRun({ ...runInput, settingsHash: "fs-hash" });
+
+					yield* store.writeFailureSignature({
+						signatureHash: "deadbeefcafe1234",
+						runId,
+						seenAt: "2026-04-29T00:00:00Z",
+					});
+					yield* store.writeFailureSignature({
+						signatureHash: "deadbeefcafe1234",
+						runId,
+						seenAt: "2026-04-29T00:00:01Z",
+					});
+
+					const rows = yield* sql<{ signature_hash: string; occurrence_count: number }>`
+						SELECT signature_hash, occurrence_count FROM failure_signatures WHERE signature_hash = 'deadbeefcafe1234'
+					`;
+					expect(rows).toHaveLength(1);
+					expect(rows[0].occurrence_count).toBe(2);
+				}),
+			);
+		});
 	});
 
 	describe("writeCoverage", () => {
@@ -589,6 +734,42 @@ describe("DataStoreLive", () => {
 			);
 			expect(result.sessionId).toBeGreaterThan(0);
 			expect(result.turnId).toBeGreaterThan(0);
+		});
+
+		it("auto-assigns turn_no when omitted (next per session)", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-auto-no",
+						project: "p",
+						cwd: "/tmp/p",
+						agent_kind: "main",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+
+					yield* ds.writeTurn({
+						session_id: sessionId,
+						type: "user_prompt",
+						payload: '{"type":"user_prompt","prompt":"a"}',
+						occurred_at: "2026-04-29T00:00:01Z",
+					});
+					yield* ds.writeTurn({
+						session_id: sessionId,
+						type: "user_prompt",
+						payload: '{"type":"user_prompt","prompt":"b"}',
+						occurred_at: "2026-04-29T00:00:02Z",
+					});
+
+					const rows = yield* sql<{ turn_no: number }>`
+						SELECT turn_no FROM turns WHERE session_id = ${sessionId} ORDER BY turn_no
+					`;
+					return rows;
+				}),
+			);
+			expect(result.map((r) => r.turn_no)).toEqual([1, 2]);
 		});
 	});
 });

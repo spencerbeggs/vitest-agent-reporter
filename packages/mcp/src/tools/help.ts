@@ -60,6 +60,18 @@ Scopes: \`run_tests({})\` all tests, \`run_tests({ project: "name" })\` by proje
 | \`note_delete\` | \`id\` | Delete a note |
 | \`note_search\` | \`query\` | Full-text search notes |
 
+## Sessions / Turns / TDD reads (β)
+
+| Tool | Parameters | Description |
+| ---- | ---------- | ----------- |
+| \`session_list\` | \`project?\`, \`agentKind?\`, \`limit?\` | List recorded Claude Code sessions |
+| \`session_get\` | \`id\` | Full detail for one session by integer id |
+| \`turn_search\` | \`sessionId?\`, \`since?\`, \`type?\`, \`limit?\` | Search turns (default limit 100) |
+| \`failure_signature_get\` | \`hash\` | Stable failure signature with recent example errors |
+| \`tdd_session_get\` | \`id\` | TDD session with phases and artifacts rolled up |
+| \`hypothesis_list\` | \`sessionId?\`, \`outcome?\`, \`limit?\` | List recorded hypotheses (\`outcome=open\` for unvalidated) |
+| \`acceptance_metrics\` | _(none)_ | Four spec Annex A acceptance metrics |
+
 ## Parameter Key
 
 - **Required** parameters are unmarked

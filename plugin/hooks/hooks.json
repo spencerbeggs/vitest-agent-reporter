@@ -9,6 +9,22 @@
 						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh\"",
 						"timeout": 30,
 						"statusMessage": "Loading vitest-agent-reporter context..."
+					},
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start-record.sh\"",
+						"timeout": 10
+					}
+				]
+			}
+		],
+		"UserPromptSubmit": [
+			{
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit-record.sh\"",
+						"timeout": 5
 					}
 				]
 			}
@@ -23,6 +39,15 @@
 						"timeout": 5
 					}
 				]
+			},
+			{
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use-record.sh\"",
+						"timeout": 5
+					}
+				]
 			}
 		],
 		"PostToolUse": [
@@ -33,6 +58,37 @@
 						"type": "command",
 						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/post-test-run.sh\"",
 						"timeout": 10
+					}
+				]
+			},
+			{
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-use-record.sh\"",
+						"timeout": 10
+					}
+				]
+			}
+		],
+		"SessionEnd": [
+			{
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-end-record.sh\"",
+						"timeout": 10
+					}
+				]
+			}
+		],
+		"PreCompact": [
+			{
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-compact-record.sh\"",
+						"timeout": 5
 					}
 				]
 			}

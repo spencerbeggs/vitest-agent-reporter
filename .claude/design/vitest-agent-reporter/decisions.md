@@ -1138,6 +1138,90 @@ currently raise it.
   `DenialReason` and a new branch in the function -- no schema
   change. Easy to evolve
 
+### β-N1: `FailureSignatureWriteInput` vs `FailureSignatureInput` (2.0.0-β)
+
+**Context:** β added `DataStore.writeFailureSignature` so the
+reporter could persist computed failure signatures. The natural
+input name is `FailureSignatureInput`, but α already exported a
+type by that name from
+`packages/shared/src/utils/failure-signature.ts` -- the
+**compute-time** input to `computeFailureSignature` (the
+un-hashed `error_name` / `assertion_message` / `top_frame_*`
+fields that get hashed *into* the signature).
+
+**Decision:** call the new persistence-time input
+`FailureSignatureWriteInput`. Keep the existing `FailureSignatureInput`
+unchanged. Both types live in the shared package; only one is
+exported from each module.
+
+**Why this naming over the alternatives:**
+
+- **Renaming the α type** (e.g., to `FailureSignatureComputeInput`):
+  invasive (rewrites a public type that's already shipped in 2.0.0-α
+  test fixtures and any external schema-doc consumers). The
+  compute-time input is the older, simpler one -- the `Compute`
+  qualifier is implicit, the name was fine in isolation. Changing
+  it for the sake of namespace neatness is the wrong direction
+- **Sharing the name** (overload `FailureSignatureInput`): would
+  require a single union type covering both shapes, which makes
+  every consumer pattern-match between the two cases. The shapes
+  have nothing in common -- one is the inputs to a hash, the other
+  is the metadata to store alongside the hash. Forced unions
+  obscure intent
+- **`*WriteInput` qualifier**: matches the existing DataStore input
+  convention (`TestRunInput`, `ModuleInput`, `TestCaseInput`,
+  `TestErrorInput`, `SessionInput`, `TurnInput`, `StackFrameInput`
+  all live in DataStore.ts). The `Write` qualifier is the
+  disambiguator since the persistence inputs have a write-side flavor
+  the compute-time input doesn't
+
+**Trade-off:** the asymmetry (compute side has no `Compute`
+qualifier, write side has `Write`) is mild but real. It's the cost
+of keeping the α public surface stable. We accept it because the
+two inputs live in different files (`utils/` vs `services/`), so
+local readers see only one at a time and the asymmetry isn't load-
+bearing in any single context.
+
+### β-N2: Defer the spawnSync E2E Test Against the Built Bin (2.0.0-β)
+
+**Context:** the β plan included an end-to-end test that would
+build the CLI bin to disk, spawn it via `spawnSync` against a
+clean test database, drive a full record-flow (session-start ->
+several turns -> session-end), then read back via DataReader and
+assert the rows landed correctly. Task 30 of the β plan.
+
+**Decision:** defer the e2e test to a later phase. β ships
+without it; the unit tests for `parseAndValidateTurnPayload`,
+`recordTurnEffect`, `recordSessionStart`, and `recordSessionEnd`
+already exercise the lib functions against an in-memory SqliteClient.
+
+**Why defer:**
+
+- The bin's wiring is thin. `bin.ts` resolves `dbPath`, builds
+  `CliLive`, and hands the `Command.run` effect to the
+  `@effect/cli` runtime. The lib functions (covered by unit
+  tests) carry the actual semantics. The bin's only unique
+  surface is "does the @effect/cli command tree wire up
+  correctly?" -- a question the framework's own integration
+  tests answer
+- The build-and-spawn loop is slow. Running it on every test
+  invocation adds the rslib production build to the critical
+  path of `pnpm test`, and the spawn brings up a fresh Node
+  process per test case. The cost-benefit ratio is poor for
+  what the test would prove
+- The hook scripts (which are the CLI's actual real-world
+  callers) shell out to the bin themselves. When we get to RC's
+  hook integration tests, those will exercise the bin via the
+  hook driver -- a more realistic e2e that subsumes Task 30
+
+**Trade-off:** if the `@effect/cli` command tree breaks (e.g., a
+subcommand silently dropping its options binding) we won't catch
+it via tests. Mitigation: the unit tests for the lib functions
+prove the side effects work given correct inputs; manual smoke
+testing of the bin through the hook scripts catches the
+command-tree wiring. We accept this gap until the RC hook tests
+land.
+
 ---
 
 ## Design Patterns Used

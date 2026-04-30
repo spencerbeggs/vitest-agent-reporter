@@ -39,3 +39,12 @@ note_get
 note_update
 note_delete
 note_search
+
+# === β: Session / turn / TDD reads (read-only) ===
+session_list
+session_get
+turn_search
+failure_signature_get
+tdd_session_get
+hypothesis_list
+acceptance_metrics

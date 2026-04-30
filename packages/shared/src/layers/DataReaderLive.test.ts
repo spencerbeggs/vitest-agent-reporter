@@ -1215,6 +1215,41 @@ describe("DataReaderLive", () => {
 		});
 	});
 
+	describe("getSessionByCcId", () => {
+		it("returns the matching session", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const dr = yield* DataReader;
+
+					yield* ds.writeSession({
+						cc_session_id: "cc-lookup",
+						project: "p",
+						cwd: "/tmp/p",
+						agent_kind: "main",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+
+					return yield* dr.getSessionByCcId("cc-lookup");
+				}),
+			);
+			expect(Option.isSome(result)).toBe(true);
+			if (Option.isSome(result)) {
+				expect(result.value.cc_session_id).toBe("cc-lookup");
+			}
+		});
+
+		it("returns None for unknown id", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const dr = yield* DataReader;
+					return yield* dr.getSessionByCcId("nope");
+				}),
+			);
+			expect(Option.isNone(result)).toBe(true);
+		});
+	});
+
 	describe("computeAcceptanceMetrics", () => {
 		it("returns zeros on an empty DB", async () => {
 			const result = await run(

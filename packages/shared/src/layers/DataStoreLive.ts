@@ -4,6 +4,7 @@ import { DataStoreError, extractSqlReason } from "../errors/DataStoreError.js";
 import type { CoverageBaselines } from "../schemas/Baselines.js";
 import type { TrendEntry } from "../schemas/Trends.js";
 import type {
+	FailureSignatureWriteInput,
 	FileCoverageInput,
 	ModuleInput,
 	NoteInput,
@@ -148,10 +149,18 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 			Effect.gen(function* () {
 				yield* Effect.logDebug("writeErrors").pipe(Effect.annotateLogs({ runId, count: errors.length }));
 				for (const err of errors) {
-					yield* sql`INSERT INTO test_errors (run_id, test_case_id, test_suite_id, module_id, scope, name, message, diff, actual, expected, stack, cause_error_id, ordinal) VALUES (${runId}, ${err.testCaseId ?? null}, ${err.testSuiteId ?? null}, ${err.moduleId ?? null}, ${err.scope}, ${err.name ?? null}, ${err.message}, ${err.diff ?? null}, ${err.actual ?? null}, ${err.expected ?? null}, ${err.stack ?? null}, ${err.causeErrorId ?? null}, ${err.ordinal ?? 0})`;
+					yield* sql`INSERT INTO test_errors (run_id, test_case_id, test_suite_id, module_id, scope, name, message, diff, actual, expected, stack, cause_error_id, signature_hash, ordinal) VALUES (${runId}, ${err.testCaseId ?? null}, ${err.testSuiteId ?? null}, ${err.moduleId ?? null}, ${err.scope}, ${err.name ?? null}, ${err.message}, ${err.diff ?? null}, ${err.actual ?? null}, ${err.expected ?? null}, ${err.stack ?? null}, ${err.causeErrorId ?? null}, ${err.signatureHash ?? null}, ${err.ordinal ?? 0})`;
 
-					// Parse stack trace into structured frames
-					if (err.stack) {
+					// Persist structured frames. Prefer caller-provided frames (with
+					// source-map and function-boundary annotations) over regex parsing.
+					if (err.frames && err.frames.length > 0) {
+						const errorIdRows = yield* sql<{ id: number }>`SELECT last_insert_rowid() as id`;
+						const errorId = errorIdRows[0].id;
+						for (const frame of err.frames) {
+							const fileId = yield* ensureFile(frame.filePath);
+							yield* sql`INSERT INTO stack_frames (error_id, ordinal, method, file_id, line, col, source_mapped_line, function_boundary_line) VALUES (${errorId}, ${frame.ordinal}, ${frame.method}, ${fileId}, ${frame.line}, ${frame.col}, ${frame.sourceMappedLine ?? null}, ${frame.functionBoundaryLine ?? null})`;
+						}
+					} else if (err.stack) {
 						const errorIdRows = yield* sql<{ id: number }>`SELECT last_insert_rowid() as id`;
 						const errorId = errorIdRows[0].id;
 						const framePattern = /at\s+(?:(.+?)\s+)?\(?(.+?):(\d+):(\d+)\)?/g;
@@ -163,7 +172,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 							const line = Number.parseInt(m[3], 10);
 							const col = Number.parseInt(m[4], 10);
 							const fileId = yield* ensureFile(filePath);
-							yield* sql`INSERT INTO stack_frames (error_id, ordinal, method, file_id, line, col) VALUES (${errorId}, ${frameOrdinal}, ${method}, ${fileId}, ${line}, ${col})`;
+							yield* sql`INSERT INTO stack_frames (error_id, ordinal, method, file_id, line, col, source_mapped_line, function_boundary_line) VALUES (${errorId}, ${frameOrdinal}, ${method}, ${fileId}, ${line}, ${col}, NULL, NULL)`;
 						}
 					}
 				}
@@ -389,16 +398,64 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 		const writeTurn = (input: TurnInput): Effect.Effect<number, DataStoreError> =>
 			Effect.gen(function* () {
 				yield* Effect.logDebug("writeTurn").pipe(
-					Effect.annotateLogs({ session_id: input.session_id, turn_no: input.turn_no, type: input.type }),
+					Effect.annotateLogs({ session_id: input.session_id, type: input.type }),
 				);
-				yield* sql`INSERT INTO turns (session_id, turn_no, type, payload, occurred_at) VALUES (${input.session_id}, ${input.turn_no}, ${input.type}, ${input.payload}, ${input.occurred_at})`;
-				const rows = yield* sql<{
-					id: number;
-				}>`SELECT id FROM turns WHERE session_id = ${input.session_id} AND turn_no = ${input.turn_no}`;
+				if (input.turn_no !== undefined) {
+					yield* sql`INSERT INTO turns (session_id, turn_no, type, payload, occurred_at) VALUES (${input.session_id}, ${input.turn_no}, ${input.type}, ${input.payload}, ${input.occurred_at})`;
+				} else {
+					// Atomic auto-assignment: compute next turn_no inside the same INSERT
+					// so concurrent writers can't both compute the same value before either
+					// inserts. UNIQUE(session_id, turn_no) is enforced by the schema as a
+					// safety net.
+					yield* sql`INSERT INTO turns (session_id, turn_no, type, payload, occurred_at) SELECT ${input.session_id}, COALESCE(MAX(turn_no), 0) + 1, ${input.type}, ${input.payload}, ${input.occurred_at} FROM turns WHERE session_id = ${input.session_id}`;
+				}
+				const rows = yield* sql<{ id: number }>`SELECT last_insert_rowid() as id`;
 				return rows[0].id;
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
 				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "turns", reason: extractSqlReason(e) })),
+			);
+
+		const endSession = (
+			ccSessionId: string,
+			endedAt: string,
+			endReason: string | null,
+		): Effect.Effect<void, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("endSession").pipe(Effect.annotateLogs({ ccSessionId, endReason }));
+				yield* sql`UPDATE sessions SET ended_at = ${endedAt}, end_reason = ${endReason} WHERE cc_session_id = ${ccSessionId}`;
+				// Match the loud-fail contract of writeSession/writeTurn: a missing
+				// cc_session_id is a programmer error, not an idempotent no-op.
+				const rows = yield* sql<{ changes: number }>`SELECT changes() as changes`;
+				if (rows[0].changes === 0) {
+					return yield* Effect.fail(
+						new DataStoreError({
+							operation: "write",
+							table: "sessions",
+							reason: `unknown cc_session_id: ${ccSessionId}`,
+						}),
+					);
+				}
+			}).pipe(
+				Effect.annotateLogs("service", "DataStore"),
+				Effect.mapError((e) =>
+					e instanceof DataStoreError
+						? e
+						: new DataStoreError({ operation: "write", table: "sessions", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const writeFailureSignature = (input: FailureSignatureWriteInput): Effect.Effect<void, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("writeFailureSignature").pipe(
+					Effect.annotateLogs({ signatureHash: input.signatureHash, runId: input.runId }),
+				);
+				yield* sql`INSERT INTO failure_signatures (signature_hash, first_seen_run_id, first_seen_at, occurrence_count) VALUES (${input.signatureHash}, ${input.runId}, ${input.seenAt}, 1) ON CONFLICT(signature_hash) DO UPDATE SET occurrence_count = occurrence_count + 1`;
+			}).pipe(
+				Effect.annotateLogs("service", "DataStore"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "failure_signatures", reason: extractSqlReason(e) }),
+				),
 			);
 
 		return {
@@ -419,6 +476,8 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 			deleteNote,
 			writeSession,
 			writeTurn,
+			writeFailureSignature,
+			endSession,
 		};
 	}),
 );

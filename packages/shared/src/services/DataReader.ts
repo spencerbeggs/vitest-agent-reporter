@@ -151,6 +151,57 @@ export interface AcceptanceMetrics {
 	readonly antiPatternDetectionRate: { total: number; cleanSessions: number; ratio: number };
 }
 
+export interface FailureSignatureDetail {
+	readonly signatureHash: string;
+	readonly firstSeenRunId: number | null;
+	readonly firstSeenAt: string;
+	readonly occurrenceCount: number;
+	readonly recentErrors: ReadonlyArray<{
+		readonly runId: number;
+		readonly message: string;
+		readonly errorName: string | null;
+	}>;
+}
+
+export interface TddPhaseDetail {
+	readonly id: number;
+	readonly behaviorId: number | null;
+	readonly phase: string;
+	readonly startedAt: string;
+	readonly endedAt: string | null;
+	readonly transitionReason: string | null;
+}
+
+export interface TddArtifactDetail {
+	readonly id: number;
+	readonly phaseId: number;
+	readonly artifactKind: string;
+	readonly testCaseId: number | null;
+	readonly testRunId: number | null;
+	readonly recordedAt: string;
+}
+
+export interface TddSessionDetail {
+	readonly id: number;
+	readonly sessionId: number;
+	readonly goal: string;
+	readonly startedAt: string;
+	readonly endedAt: string | null;
+	readonly outcome: string | null;
+	readonly phases: ReadonlyArray<TddPhaseDetail>;
+	readonly artifacts: ReadonlyArray<TddArtifactDetail>;
+}
+
+export interface HypothesisDetail {
+	readonly id: number;
+	readonly sessionId: number;
+	readonly content: string;
+	readonly citedTestErrorId: number | null;
+	readonly citedStackFrameId: number | null;
+	readonly validationOutcome: "confirmed" | "refuted" | "abandoned" | null;
+	readonly validatedAt: string | null;
+}
+
 export class DataReader extends Context.Tag("vitest-agent-reporter/DataReader")<
 	DataReader,
 	{
@@ -219,7 +270,22 @@ export class DataReader extends Context.Tag("vitest-agent-reporter/DataReader")<
 		) => Effect.Effect<ReadonlyArray<SuiteListEntry>, DataStoreError>;
 		readonly listSettings: () => Effect.Effect<ReadonlyArray<SettingsListEntry>, DataStoreError>;
 		readonly getSessionById: (id: number) => Effect.Effect<Option.Option<SessionDetail>, DataStoreError>;
+		readonly getSessionByCcId: (ccSessionId: string) => Effect.Effect<Option.Option<SessionDetail>, DataStoreError>;
+		readonly listSessions: (options: {
+			readonly project?: string;
+			readonly agentKind?: "main" | "subagent";
+			readonly limit?: number;
+		}) => Effect.Effect<ReadonlyArray<SessionDetail>, DataStoreError>;
 		readonly searchTurns: (options: TurnSearchOptions) => Effect.Effect<ReadonlyArray<TurnSummary>, DataStoreError>;
 		readonly computeAcceptanceMetrics: () => Effect.Effect<AcceptanceMetrics, DataStoreError>;
+		readonly getFailureSignatureByHash: (
+			hash: string,
+		) => Effect.Effect<Option.Option<FailureSignatureDetail>, DataStoreError>;
+		readonly getTddSessionById: (id: number) => Effect.Effect<Option.Option<TddSessionDetail>, DataStoreError>;
+		readonly listHypotheses: (options: {
+			readonly sessionId?: number;
+			readonly outcome?: "confirmed" | "refuted" | "abandoned" | "open";
+			readonly limit?: number;
+		}) => Effect.Effect<ReadonlyArray<HypothesisDetail>, DataStoreError>;
 	}
 >() {}

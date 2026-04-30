@@ -36,7 +36,7 @@ only what you need for the task at hand.
 | [decisions.md](./decisions.md) | Need to understand "why" something was built a certain way | Architectural decisions (incl. 2.0 four-package split, XDG path resolution, retired plugin file:// loader), design patterns, constraints/trade-offs |
 | [data-structures.md](./data-structures.md) | Working with schemas, DB schema, output, or data flow | File structure across four packages, TypeScript interfaces, SQLite schema, XDG data layout, config file schema, data flow diagrams, integration points |
 | [testing-strategy.md](./testing-strategy.md) | Writing tests, reviewing test coverage, or checking testing patterns | Current test patterns, coverage targets, per-project test counts, integration test targets |
-| [phase-history.md](./phase-history.md) | Understanding implementation history or when a feature shipped | Chronological narrative of Phases 1-7 (2.0 restructure + 2.0.0-α comprehensive schema) with breaking changes per phase |
+| [phase-history.md](./phase-history.md) | Understanding implementation history or when a feature shipped | Chronological narrative of Phases 1-8 (2.0 restructure + 2.0.0-α comprehensive schema + 2.0.0-β substrate wiring) with breaking changes per phase |
 
 ---
 
@@ -51,8 +51,8 @@ schema/data-layer contract:
 | --- | --- | --- |
 | `vitest-agent-reporter-shared` | `packages/shared/` | Effect Schema, SQLite migrations, errors, `DataStore`/`DataReader` services + live layers, all pipeline services (Environment/Executor/Format/Detail/OutputRenderer) and live layers, History/ProjectDiscovery, Logger, formatters, utilities, **and the new XDG path-resolution stack** (`AppDirs`, ConfigFile, WorkspaceDiscovery, `resolveDataPath`). No internal dependencies. |
 | `vitest-agent-reporter` | `packages/reporter/` | The Vitest reporter + plugin + `ReporterLive` + `CoverageAnalyzer`. Depends on shared. Declares the CLI and MCP packages as required `peerDependencies`. No bin entries. |
-| `vitest-agent-reporter-cli` | `packages/cli/` | `vitest-agent-reporter` bin (`@effect/cli`-based). Depends on shared. Owns `CliLive`. |
-| `vitest-agent-reporter-mcp` | `packages/mcp/` | `vitest-agent-reporter-mcp` bin (`@modelcontextprotocol/sdk` + tRPC). Depends on shared. Owns `McpLive`. |
+| `vitest-agent-reporter-cli` | `packages/cli/` | `vitest-agent-reporter` bin (`@effect/cli`-based) with `status`, `overview`, `coverage`, `history`, `trends`, `cache`, `doctor`, and (β) `record` subcommands. Depends on shared. Owns `CliLive`. |
+| `vitest-agent-reporter-mcp` | `packages/mcp/` | `vitest-agent-reporter-mcp` bin (`@modelcontextprotocol/sdk` + tRPC). Depends on shared. Owns `McpLive`. β adds seven read-only tools over the α schema substrate. |
 
 Examples live under `examples/*` (not pnpm workspaces by name, but
 included as a fifth Vitest project for integration coverage). The
@@ -68,9 +68,12 @@ pnpm workspace.
   project isolation via `projectFilter`, and native coverage table
   suppression in agent/own mode.
 - **CLI** -- `vitest-agent-reporter` bin with `status`, `overview`,
-  `coverage`, `history`, `trends`, `cache`, and `doctor` subcommands.
-  All commands support `--format` for output format selection. Reads
-  cached test data on-demand for LLM-oriented test landscape queries.
+  `coverage`, `history`, `trends`, `cache`, and `doctor` subcommands,
+  plus (2.0.0-β) a `record` subcommand with three actions
+  (`record turn`, `record session-start`, `record session-end`)
+  driven by the plugin hook scripts. All commands support `--format`
+  for output format selection. Reads cached test data on-demand for
+  LLM-oriented test landscape queries.
 - **Failure history and classification** -- per-test failure
   persistence with a 10-entry sliding window, classifying tests as
   `stable`, `new-failure`, `persistent`, `flaky`, or `recovered` for
@@ -87,10 +90,15 @@ pnpm workspace.
   (EnvironmentDetector -> ExecutorResolver -> FormatSelector ->
   DetailResolver -> OutputRenderer) with 4 built-in formatters
   (`markdown`, `gfm`, `json`, `silent`).
-- **MCP server and Claude Code plugin** -- 24 MCP tools via tRPC
-  router (stdio transport), plus a file-based Claude Code plugin at
-  `plugin/` with PM-detect-and-spawn loader, lifecycle hooks, skills,
-  and a `PreToolUse` hook that auto-allows the 24 MCP tools.
+- **MCP server and Claude Code plugin** -- 31 MCP tools via tRPC
+  router (24 from Phase 5/6 plus 7 read-only β tools:
+  `session_list`, `session_get`, `turn_search`,
+  `failure_signature_get`, `tdd_session_get`, `hypothesis_list`,
+  `acceptance_metrics`), stdio transport. The file-based Claude
+  Code plugin at `plugin/` ships a PM-detect-and-spawn loader,
+  lifecycle hooks (incl. six β `record-*` hook scripts that emit
+  session/turn rows via the CLI), skills, and a `PreToolUse` hook
+  that auto-allows all 31 MCP tools.
 
 For implementation history see [phase-history.md](./phase-history.md).
 
@@ -181,11 +189,30 @@ Vitest projects (one per package plus `example-basic`).
   for JSON encode/decode
 - **Duck-type istanbul** -- structural interface avoids hard peer dependency;
   works with both `v8` and `istanbul` coverage providers
-- **MCP-first agent integration** -- MCP server exposes 24 tools via
-  tRPC router, giving agents structured access to test data, coverage,
-  history, trends, errors, per-file coverage, individual test details,
-  note management, and discovery queries (project/test/module/suite/
-  settings listing) without parsing CLI output
+- **MCP-first agent integration** -- MCP server exposes 31 tools via
+  tRPC router (24 from Phase 5/6 plus 7 β read-only tools surfacing
+  α's session/turn/TDD/hypothesis/failure-signature substrate),
+  giving agents structured access to test data, coverage, history,
+  trends, errors, per-file coverage, individual test details, note
+  management, discovery queries (project/test/module/suite/settings
+  listing), and the new session/TDD/hypothesis read paths without
+  parsing CLI output
+- **Hook-driven session/turn capture (β)** -- six new `record-*`
+  shell hooks under `plugin/hooks/` (SessionStart,
+  UserPromptSubmit, PreToolUse, PostToolUse, SessionEnd,
+  PreCompact) call the new `vitest-agent-reporter record`
+  subcommand to write `sessions` and `turns` rows. Turn payloads
+  are validated against α's `TurnPayload` Effect Schema
+  discriminated union before persistence. β only records the data;
+  RC's interpretive hooks add prompt-injection nudges on top
+- **Reporter-side failure signature capture (β)** -- on each test
+  error, `processFailure` walks Vitest stack frames, source-maps
+  the top non-framework frame, runs `findFunctionBoundary`
+  (TypeScript-aware via `acorn-typescript` plugin), calls
+  `computeFailureSignature`, then upserts `failure_signatures` and
+  writes `test_errors.signature_hash` and the `stack_frames`
+  source-mapped/function-boundary line columns. Activates α's
+  failure-signature schema
 - **CLI-first overview** -- overview/status generated on-demand by CLI, not
   on every test run. Keeps the reporter lean
 - **Three-level coverage model** -- Vitest-native `coverageThresholds`
@@ -203,7 +230,12 @@ Vitest projects (one per package plus `example-basic`).
   Phase 6 (2.0) splits the monolith into four packages, replaces
   artifact-probing path resolution with deterministic XDG-based
   derivation, and rewrites the plugin's MCP loader to spawn the bin
-  through the user's package manager
+  through the user's package manager; Phase 7 (2.0.0-α) lands the
+  comprehensive 40-table SQLite schema with session/turn logging,
+  TDD lifecycle, hypothesis tracking, and failure-signature
+  primitives; Phase 8 (2.0.0-β) wires the α substrate into reporter
+  failure-signature capture, the `record` CLI, six plugin hook
+  scripts, and seven read-only MCP tools
 
 ---
 
@@ -244,13 +276,25 @@ Package layout (the four pnpm workspaces under `packages/`):
                                           v       v          v
                                        stdout   data.db   GITHUB_
                                                           STEP_SUMMARY
+                                      (β) processFailure ->
+                                          writeFailureSignature +
+                                          test_errors.signature_hash
 
    CLI bin and MCP server bin both:
      resolveDataPath(projectDir) -> CliLive/McpLive(dbPath)
-     read from data.db; MCP also writes notes via DataStore
+     read from data.db; MCP also writes notes via DataStore;
+     (β) MCP exposes seven additional read-only tools over
+     sessions/turns/TDD/hypothesis/failure-signature/metrics
+
+   CLI bin (β): record turn / session-start / session-end
+     write sessions + turns rows under TurnPayload validation.
+     Driven by plugin hook scripts.
 
    Claude Code plugin (plugin/) spawns vitest-agent-reporter-mcp
-     through the user's package manager via plugin/bin/mcp-server.mjs
+     through the user's package manager via plugin/bin/mcp-server.mjs.
+     (β) Six record-* hook scripts (SessionStart, UserPromptSubmit,
+     PreToolUse, PostToolUse, SessionEnd, PreCompact) invoke the
+     CLI's record subcommand to capture session/turn data.
 ```
 
 XDG data path resolution (`resolveDataPath`, `packages/shared`).
@@ -289,8 +333,12 @@ The most important components, with their canonical locations. See
 | XDG path resolution | `packages/shared/src/utils/resolve-data-path.ts`, `packages/shared/src/layers/PathResolutionLive.ts` |
 | SQLite migrations | `packages/shared/src/migrations/0001_initial.ts` (1.x), `packages/shared/src/migrations/0002_comprehensive.ts` (2.0.0-α drop-and-recreate, 40 tables) |
 | Turn payload schemas (2.0.0-α) | `packages/shared/src/schemas/turns/` (7 payload `Schema.Struct` types + `TurnPayload` union) |
-| Failure signature + function boundary (2.0.0-α) | `packages/shared/src/utils/failure-signature.ts`, `packages/shared/src/utils/function-boundary.ts` |
+| Failure signature + function boundary (2.0.0-α; TS-aware in β) | `packages/shared/src/utils/failure-signature.ts`, `packages/shared/src/utils/function-boundary.ts` (β: `acorn-typescript` plugin) |
 | Phase-transition validator (2.0.0-α) | `packages/shared/src/utils/validate-phase-transition.ts` |
+| Reporter failure-signature wiring (2.0.0-β) | `packages/reporter/src/utils/process-failure.ts`, called from `packages/reporter/src/reporter.ts` |
+| `record` CLI subcommand (2.0.0-β) | `packages/cli/src/commands/record.ts`, `packages/cli/src/lib/record-turn.ts`, `packages/cli/src/lib/record-session.ts` |
+| Plugin record hooks (2.0.0-β) | `plugin/hooks/{session-start-record,user-prompt-submit-record,pre-tool-use-record,post-tool-use-record,session-end-record,pre-compact-record}.sh` |
+| β read-only MCP tools | `packages/mcp/src/tools/{session-list,session-get,turn-search,failure-signature-get,tdd-session-get,hypothesis-list,acceptance-metrics}.ts` |
 | Claude Code Plugin | `plugin/` (manifest + zero-deps PM-detect loader at `plugin/bin/mcp-server.mjs`) |
 
 ---

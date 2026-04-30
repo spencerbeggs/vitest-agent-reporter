@@ -20,6 +20,7 @@ import type {
 	AgentReporterOptions,
 	CoverageBaselines,
 	ResolvedThresholds,
+	TestErrorInput,
 	TestOutcome,
 	VitestTestModule,
 } from "vitest-agent-reporter-shared";
@@ -47,6 +48,7 @@ import { ReporterLive } from "./layers/ReporterLive.js";
 import { CoverageAnalyzer } from "./services/CoverageAnalyzer.js";
 import { captureEnvVars } from "./utils/capture-env.js";
 import { captureSettings, hashSettings } from "./utils/capture-settings.js";
+import { processFailure } from "./utils/process-failure.js";
 import { resolveThresholds } from "./utils/resolve-thresholds.js";
 
 /**
@@ -537,20 +539,36 @@ export class AgentReporter {
 						const result = testCase.result();
 						if (result?.errors && result.errors.length > 0) {
 							const testCaseId = testCaseIds[testIdx];
-							yield* store.writeErrors(
-								runId,
-								result.errors.map((err, ordinal) => {
-									const e = err as { message: string; diff?: string; stack?: string };
-									return {
-										testCaseId,
-										scope: "test" as const,
-										message: e.message,
-										...(e.diff !== undefined && { diff: e.diff }),
-										...(e.stack !== undefined && { stack: e.stack }),
-										ordinal,
-									};
-								}),
-							);
+							const inputs: TestErrorInput[] = [];
+							for (let ordinal = 0; ordinal < result.errors.length; ordinal++) {
+								const e = result.errors[ordinal] as {
+									name?: string;
+									message: string;
+									diff?: string;
+									stack?: string;
+									stacks?: ReadonlyArray<{ file?: string; line?: number; column?: number; method?: string }>;
+								};
+								const { frames, signatureHash } = processFailure(e);
+								if (signatureHash !== null) {
+									yield* store.writeFailureSignature({
+										signatureHash,
+										runId,
+										seenAt: baseReport.timestamp,
+									});
+								}
+								inputs.push({
+									testCaseId,
+									scope: "test" as const,
+									message: e.message,
+									...(e.name !== undefined && { name: e.name }),
+									...(e.diff !== undefined && { diff: e.diff }),
+									...(e.stack !== undefined && { stack: e.stack }),
+									...(signatureHash !== null && { signatureHash }),
+									...(frames.length > 0 && { frames }),
+									ordinal,
+								});
+							}
+							yield* store.writeErrors(runId, inputs);
 						}
 						testIdx++;
 					}
@@ -558,33 +576,66 @@ export class AgentReporter {
 					// Write module-level errors
 					const modErrors = mod.errors();
 					if (modErrors.length > 0) {
-						yield* store.writeErrors(
-							runId,
-							modErrors.map((err, ordinal) => {
-								const e = err as { message: string; stack?: string };
-								return {
-									moduleId,
-									scope: "module" as const,
-									message: e.message,
-									...(e.stack !== undefined && { stack: e.stack }),
-									ordinal,
-								};
-							}),
-						);
+						const inputs: TestErrorInput[] = [];
+						for (let ordinal = 0; ordinal < modErrors.length; ordinal++) {
+							const e = modErrors[ordinal] as {
+								name?: string;
+								message: string;
+								stack?: string;
+								stacks?: ReadonlyArray<{ file?: string; line?: number; column?: number; method?: string }>;
+							};
+							const { frames, signatureHash } = processFailure(e);
+							if (signatureHash !== null) {
+								yield* store.writeFailureSignature({
+									signatureHash,
+									runId,
+									seenAt: baseReport.timestamp,
+								});
+							}
+							inputs.push({
+								moduleId,
+								scope: "module" as const,
+								message: e.message,
+								...(e.name !== undefined && { name: e.name }),
+								...(e.stack !== undefined && { stack: e.stack }),
+								...(signatureHash !== null && { signatureHash }),
+								...(frames.length > 0 && { frames }),
+								ordinal,
+							});
+						}
+						yield* store.writeErrors(runId, inputs);
 					}
 				}
 
 				// Write unhandled errors
 				if (errors.length > 0) {
-					yield* store.writeErrors(
-						runId,
-						errors.map((err, ordinal) => ({
+					const inputs: TestErrorInput[] = [];
+					for (let ordinal = 0; ordinal < errors.length; ordinal++) {
+						const e = errors[ordinal] as {
+							name?: string;
+							message: string;
+							stack?: string;
+							stacks?: ReadonlyArray<{ file?: string; line?: number; column?: number; method?: string }>;
+						};
+						const { frames, signatureHash } = processFailure(e);
+						if (signatureHash !== null) {
+							yield* store.writeFailureSignature({
+								signatureHash,
+								runId,
+								seenAt: baseReport.timestamp,
+							});
+						}
+						inputs.push({
 							scope: "unhandled" as const,
-							message: err.message,
-							...(err.stack !== undefined && { stack: err.stack }),
+							message: e.message,
+							...(e.name !== undefined && { name: e.name }),
+							...(e.stack !== undefined && { stack: e.stack }),
+							...(signatureHash !== null && { signatureHash }),
+							...(frames.length > 0 && { frames }),
 							ordinal,
-						})),
-					);
+						});
+					}
+					yield* store.writeErrors(runId, inputs);
 				}
 
 				// Extract test outcomes for history classification
