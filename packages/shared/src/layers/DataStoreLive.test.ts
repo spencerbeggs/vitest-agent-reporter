@@ -263,6 +263,36 @@ describe("DataStoreLive", () => {
 				}),
 			);
 		});
+
+		it("persists signature_hash on test_errors when provided", async () => {
+			await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					yield* store.writeSettings("sig-hash", settingsInput, {});
+					const runId = yield* store.writeRun({ ...runInput, settingsHash: "sig-hash" });
+
+					// Seed failure_signatures so the FK resolves; writeFailureSignature lands in Task 5.
+					yield* sql`INSERT INTO failure_signatures (signature_hash, first_seen_run_id, first_seen_at, occurrence_count) VALUES ('abcdef0123456789', ${runId}, '2026-04-29T00:00:00Z', 1)`;
+
+					yield* store.writeErrors(runId, [
+						{
+							scope: "unhandled",
+							message: "boom",
+							signatureHash: "abcdef0123456789",
+							ordinal: 0,
+						},
+					]);
+
+					const rows = yield* sql<{ signature_hash: string | null }>`
+						SELECT signature_hash FROM test_errors WHERE run_id = ${runId}
+					`;
+					expect(rows).toHaveLength(1);
+					expect(rows[0].signature_hash).toBe("abcdef0123456789");
+				}),
+			);
+		});
 	});
 
 	describe("writeCoverage", () => {
