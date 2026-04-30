@@ -50,8 +50,9 @@ tdd_session_get
 hypothesis_list
 acceptance_metrics
 
-# === β: Orientation triage ===
+# === RC: Orientation triage / wrap-up reads ===
 triage_brief
+wrapup_prompt
 
 # === RC: Hypothesis writes ===
 hypothesis_record

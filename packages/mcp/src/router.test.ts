@@ -337,13 +337,24 @@ describe("MCP Router", () => {
 			);
 
 			const caller = createTestCaller();
-			const result = await caller.hypothesis_record({
+			const first = await caller.hypothesis_record({
 				sessionId,
 				content: "The failure is caused by a missing null guard in the parser.",
 			});
 
-			expect(result).toHaveProperty("id");
-			expect((result as { id: number }).id).toBeGreaterThan(0);
+			expect(first).toHaveProperty("id");
+			expect((first as { id: number }).id).toBeGreaterThan(0);
+			// Fresh insert must NOT carry the replay marker.
+			expect((first as { _idempotentReplay?: true })._idempotentReplay).toBeUndefined();
+
+			// Second call with the same key replays the cached response with
+			// the _idempotentReplay marker attached.
+			const replay = await caller.hypothesis_record({
+				sessionId,
+				content: "The failure is caused by a missing null guard in the parser.",
+			});
+			expect((replay as { id: number }).id).toBe((first as { id: number }).id);
+			expect((replay as { _idempotentReplay?: true })._idempotentReplay).toBe(true);
 		});
 
 		it("hypothesis_validate updates the validation outcome to confirmed", async () => {

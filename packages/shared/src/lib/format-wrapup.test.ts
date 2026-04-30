@@ -59,7 +59,7 @@ describe("formatWrapupEffect", () => {
 	});
 
 	describe("session_end", () => {
-		it("returns 'no recent activity' message for an empty session", async () => {
+		it("returns empty string for a quiet session (no edits, no hypotheses)", async () => {
 			const result = await run(
 				Effect.gen(function* () {
 					const ds = yield* DataStore;
@@ -73,7 +73,7 @@ describe("formatWrapupEffect", () => {
 					return yield* formatWrapupEffect({ sessionId, kind: "session_end" });
 				}),
 			);
-			expect(result).toMatch(/no recent activity/i);
+			expect(result).toBe("");
 		});
 
 		it("nudges for hypothesis recording when recent file_edits exist", async () => {
@@ -203,7 +203,7 @@ describe("formatWrapupEffect", () => {
 			expect(result).toContain("/tdd resume:1");
 		});
 
-		it("falls back to a 'no metadata' message when no tdd session is recorded", async () => {
+		it("returns empty string when no tdd session metadata is recorded (skip injection)", async () => {
 			const result = await run(
 				Effect.gen(function* () {
 					const ds = yield* DataStore;
@@ -218,7 +218,7 @@ describe("formatWrapupEffect", () => {
 					return yield* formatWrapupEffect({ sessionId, kind: "tdd_handoff" });
 				}),
 			);
-			expect(result).toMatch(/No TDD session metadata recorded/i);
+			expect(result).toBe("");
 		});
 	});
 });

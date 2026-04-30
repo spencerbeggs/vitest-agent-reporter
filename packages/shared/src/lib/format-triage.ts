@@ -4,7 +4,6 @@ import { DataReader } from "../services/DataReader.js";
 export interface FormatTriageOptions {
 	readonly project?: string;
 	readonly maxLines?: number;
-	readonly since?: string;
 }
 
 /**

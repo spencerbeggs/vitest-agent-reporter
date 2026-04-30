@@ -11,13 +11,19 @@ import {
 	OutputPipelineLive,
 	ProjectDiscoveryLive,
 	migration0001,
+	migration0002,
+	migration0003,
 } from "vitest-agent-reporter-shared";
 
 export const McpLive = (dbPath: string, logLevel?: LogLevel.LogLevel, logFile?: string) => {
 	const SqliteLayer = sqliteClientLayer({ filename: dbPath });
 	const PlatformLayer = NodeContext.layer;
 	const MigratorLayer = SqliteMigrator.layer({
-		loader: SqliteMigrator.fromRecord({ "0001_initial": migration0001 }),
+		loader: SqliteMigrator.fromRecord({
+			"0001_initial": migration0001,
+			"0002_comprehensive": migration0002,
+			"0003_idempotent_responses": migration0003,
+		}),
 	}).pipe(Layer.provide(Layer.merge(SqliteLayer, PlatformLayer)));
 
 	return Layer.mergeAll(DataReaderLive, DataStoreLive, ProjectDiscoveryLive, OutputPipelineLive).pipe(

@@ -827,13 +827,14 @@ interface IdempotentResponseInput {
 // Backs DataStore.writeHypothesis. Carries the hypothesis content
 // and optional cited evidence FKs (test_errors, stack_frames,
 // turns) so hypotheses link back to specific captured failures.
+// The created_at column on the hypotheses row is set by SQLite
+// via a DEFAULT clause; the input shape does not carry it.
 interface HypothesisInput {
   sessionId: number;            // FK to sessions.id
   content: string;
-  citedTestErrorId?: number | null;
-  citedStackFrameId?: number | null;
-  createdTurnId?: number | null;
-  createdAt: string;            // ISO 8601
+  citedTestErrorId?: number;
+  citedStackFrameId?: number;
+  createdTurnId?: number;
 }
 
 // Backs DataStore.validateHypothesis. The outcome discriminator
@@ -843,7 +844,7 @@ interface ValidateHypothesisInput {
                                 // raises DataStoreError otherwise)
   outcome: "confirmed" | "refuted" | "abandoned";
   validatedAt: string;          // ISO 8601
-  validatedTurnId?: number | null;
+  validatedTurnId?: number;
 }
 ```
 

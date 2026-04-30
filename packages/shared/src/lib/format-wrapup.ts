@@ -31,7 +31,10 @@ export interface FormatWrapupOptions {
 	readonly userPromptHint?: string;
 }
 
-const FAILURE_PROMPT_PATTERN = /test fail|fix.*test|why.*failing|why.*fail|broken test/i;
+// Anchored alternation with bounded character classes — no `.*` backtracking,
+// linear-time match guaranteed even on adversarial inputs (the userPromptHint
+// flows directly from the Claude Code envelope).
+const FAILURE_PROMPT_PATTERN = /\b(?:test fail|fix\b[^.]*\btest|why\b[^.]*\bfail(?:ing)?|broken test)\b/i;
 
 export const formatWrapupEffect = (options: FormatWrapupOptions): Effect.Effect<string, never, DataReader> =>
 	Effect.gen(function* () {
@@ -60,12 +63,12 @@ export const formatWrapupEffect = (options: FormatWrapupOptions): Effect.Effect<
 
 		// TDD handoff: pull the subagent's tdd_session and summarize.
 		if (options.kind === "tdd_handoff") {
-			if (sessionId === null) return "Subagent finished. No TDD session metadata recorded.";
+			if (sessionId === null) return "";
 			// Forward-compat probe — same magic id as format-triage. RC adds
 			// a list-open-tdd-sessions reader in a later phase.
 			const tddOpt = yield* reader.getTddSessionById(1).pipe(Effect.orElseSucceed(() => Option.none()));
 			if (Option.isNone(tddOpt) || tddOpt.value.sessionId !== sessionId) {
-				return `Subagent finished (session ${sessionId}). No TDD session metadata recorded.`;
+				return "";
 			}
 			const tdd = tddOpt.value;
 			return [
@@ -77,7 +80,7 @@ export const formatWrapupEffect = (options: FormatWrapupOptions): Effect.Effect<
 			].join("\n");
 		}
 
-		if (sessionId === null) return "no recent activity to wrap up.";
+		if (sessionId === null) return "";
 
 		// Pull the session's recent turns and hypotheses.
 		const turns = yield* reader.searchTurns({ sessionId, limit: 50 }).pipe(Effect.orElseSucceed(() => []));
@@ -86,7 +89,7 @@ export const formatWrapupEffect = (options: FormatWrapupOptions): Effect.Effect<
 		const openHypotheses = hypotheses.filter((h) => h.validationOutcome === null);
 
 		if (fileEditCount === 0 && openHypotheses.length === 0) {
-			return `no recent activity to wrap up (session ${sessionId}).`;
+			return "";
 		}
 
 		const lines: string[] = [];

@@ -24,8 +24,11 @@ fi
 pm_exec=$(detect_pm_exec "$cwd")
 
 # 1. Record the prompt as a user_prompt turn.
-payload=$(jq -nc --arg p "$prompt" --arg cc "$cc_session_id" \
-	'{type: "user_prompt", prompt: $p, cc_message_id: $cc}')
+# cc_message_id is intentionally omitted: the Claude Code envelope does not
+# expose a per-message id, and stuffing the session id there breaks downstream
+# "find the message that started this thread" queries against the
+# UserPromptPayload schema's contract.
+payload=$(jq -nc --arg p "$prompt" '{type: "user_prompt", prompt: $p}')
 cd "$cwd" && $pm_exec vitest-agent-reporter record turn \
 	--cc-session-id "$cc_session_id" \
 	"$payload" \

@@ -117,11 +117,17 @@ const idempotent = middleware(async (opts) => {
 	);
 
 	if (Option.isSome(cached)) {
-		// Return the cached result as if the handler ran.
+		// Return the cached result with the _idempotentReplay marker so callers
+		// can distinguish a fresh result from a replay. Object payloads get the
+		// flag merged in; non-object payloads pass through unchanged.
 		const parsed: unknown = JSON.parse(cached.value);
+		const dataWithMarker =
+			parsed !== null && typeof parsed === "object"
+				? { ...(parsed as Record<string, unknown>), _idempotentReplay: true }
+				: parsed;
 		return {
 			ok: true as const,
-			data: parsed,
+			data: dataWithMarker,
 			marker: "middlewareMarker" as never,
 			ctx,
 		};
