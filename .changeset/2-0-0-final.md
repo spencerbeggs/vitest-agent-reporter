@@ -42,10 +42,6 @@ Six new tools registered with the MCP server (41 total, up from RC's 35):
 
 New `terminal` output format (and matching `OutputFormat` literal) renders aggregated multi-project test results as plain text plus ANSI styling — no markdown headings, code fences, or backticks. The agent strategy in "own" mode now defaults to `terminal` (was `markdown`), since the rendering target is a shell, not a markdown viewer. MCP responses and the GFM target are unchanged. Multi-project runs render once via a Vitest-instance-keyed `WeakSet` guard rather than once per project.
 
-### node:sqlite experimental warning suppression
-
-The plugin auto-injects a setupFile into `vitest.config.setupFiles` that swallows Node's `ExperimentalWarning: SQLite is an experimental feature` emission in each Vitest worker. The suppressor is a plain JS file copied verbatim into the dist via rslib `copyPatterns` so ESM module-evaluation order is preserved. `vitest-agent-reporter-shared` also exports a `suppressSqliteExperimentalWarning` helper for callers that want to install the interceptor explicitly (e.g. directly from a user `vitest.config.ts`).
-
 ### Anti-pattern detection
 
 - PostToolUse hooks on test-file edits scan for escape-hatch tokens (`it.skip`, `it.todo`, `it.fails`, `it.concurrent`, `.skipIf`, `.todoIf`) and record `tdd_artifacts(kind='test_weakened')`.

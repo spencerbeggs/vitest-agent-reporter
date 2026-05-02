@@ -7,7 +7,6 @@
  * @packageDocumentation
  */
 
-import { fileURLToPath } from "node:url";
 import type { Layer } from "effect";
 import { Effect } from "effect";
 import type { VitestPluginContext } from "vitest/node";
@@ -21,22 +20,6 @@ import {
 import { AgentReporter } from "./reporter.js";
 import { resolveThresholds } from "./utils/resolve-thresholds.js";
 import { stripConsoleReporters } from "./utils/strip-console-reporters.js";
-
-/**
- * Absolute path to the shipped sqlite-warning suppressor module. The
- * file is copied verbatim into this package's dist (next to plugin.js)
- * via `copyPatterns` in rslib.config.ts — keeping it out of the bundle
- * preserves ESM's module-evaluation order when something imports it.
- * The plugin appends this path to `vitest.config.setupFiles` so each
- * Vitest worker installs the interceptor before any test file imports
- * `node:sqlite`. Resolved via `import.meta.url` so it works regardless
- * of which package manager hoisted us where.
- *
- * @internal
- */
-const SQLITE_WARNING_SUPPRESSOR_PATH = fileURLToPath(
-	new URL("./install-sqlite-warning-suppressor.js", import.meta.url),
-);
 
 /**
  * Map strategy to output format for backward compatibility.
@@ -136,23 +119,6 @@ export function AgentPlugin(options: AgentPluginOptions = {}, _layer?: Layer.Lay
 				// Map strategy + environment to format
 				const format = resolveFormat(strategy, env, options.format);
 				log("format:", format);
-
-				// Inject the SQLite-warning suppressor as a setupFile so each
-				// Vitest worker installs the interceptor before its test
-				// files import `node:sqlite` (e.g. our own reporter.test.ts,
-				// or any consumer test that touches the experimental
-				// built-in). Idempotent: skip if already present, and the
-				// suppressor file itself is also idempotent via a
-				// Symbol.for flag on globalThis. The main process is
-				// covered by the side-effect import at the top of this
-				// file; this block extends the same protection to workers.
-				const cfg = vitest.config as { setupFiles?: string | string[] };
-				const existing =
-					cfg.setupFiles === undefined ? [] : Array.isArray(cfg.setupFiles) ? cfg.setupFiles : [cfg.setupFiles];
-				if (!existing.includes(SQLITE_WARNING_SUPPRESSOR_PATH)) {
-					cfg.setupFiles = [SQLITE_WARNING_SUPPRESSOR_PATH, ...existing];
-					log("injected sqlite-warning suppressor into setupFiles");
-				}
 
 				// Determine if this is an agent environment (for reporter stripping)
 				const isAgentEnv = env === "agent-shell";

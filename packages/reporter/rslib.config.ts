@@ -11,11 +11,6 @@ export default NodeLibraryBuilder.create({
 		"vitest/node",
 		"vitest-agent-reporter-shared",
 	],
-	// Copy the SQLite-warning suppressor verbatim. It must remain a
-	// separate file (not bundled) so the ESM module-evaluation order
-	// is preserved when Vitest workers load it via setupFiles — the
-	// suppressor's body runs before any test file imports `node:sqlite`.
-	copyPatterns: [{ from: "src/install-sqlite-warning-suppressor.js", to: "install-sqlite-warning-suppressor.js" }],
 	apiModel: {
 		suppressWarnings: [{ messageId: "ae-forgotten-export", pattern: "_base" }],
 	},

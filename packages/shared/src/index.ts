@@ -94,7 +94,4 @@ export * from "./utils/resolve-data-path.js";
 export * from "./utils/resolve-workspace-key.js";
 export * from "./utils/safe-filename.js";
 export * from "./utils/split-project.js";
-// Side-effecting utilities (export the function so callers can also
-// invoke it explicitly from a more aggressive entry point).
-export * from "./utils/suppress-experimental-warnings.js";
 export * from "./utils/validate-phase-transition.js";
