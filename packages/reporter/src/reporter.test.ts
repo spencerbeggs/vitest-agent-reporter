@@ -7,7 +7,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { VitestTestCase, VitestTestModule } from "vitest-agent-reporter-shared";
 import { AgentReporter } from "./reporter.js";
@@ -407,7 +407,7 @@ describe("AgentReporter", () => {
 
 			// Query the source_test_map table directly to verify the mapping
 			const dbPath = path.join(tmpDir, "data.db");
-			const db = new DatabaseSync(dbPath, { readOnly: true });
+			const db = new Database(dbPath, { readonly: true });
 			const rows = db
 				.prepare(
 					`SELECT f_src.path AS source_path, f_test.path AS test_path, stm.mapping_type
@@ -439,7 +439,7 @@ describe("AgentReporter", () => {
 			await reporter.onTestRunEnd([testModule], [], "passed");
 
 			const dbPath = path.join(tmpDir, "data.db");
-			const db = new DatabaseSync(dbPath, { readOnly: true });
+			const db = new Database(dbPath, { readonly: true });
 			const rows = db
 				.prepare(
 					`SELECT f_src.path AS source_path, stm.mapping_type
@@ -468,7 +468,7 @@ describe("AgentReporter", () => {
 			await reporter.onTestRunEnd([testModule], [], "passed");
 
 			const dbPath = path.join(tmpDir, "data.db");
-			const db = new DatabaseSync(dbPath, { readOnly: true });
+			const db = new Database(dbPath, { readonly: true });
 			const rows = db.prepare("SELECT COUNT(*) AS cnt FROM source_test_map").all() as Array<{ cnt: number }>;
 			db.close();
 
@@ -619,7 +619,7 @@ describe("AgentReporter", () => {
 
 			await reporter.onTestRunEnd([makeTestModule({ state: "failed", tests: [failingTest] })], [], "failed");
 
-			const db = new DatabaseSync(path.join(tmpDir, "data.db"));
+			const db = new Database(path.join(tmpDir, "data.db"));
 			const sigRows = db.prepare("SELECT signature_hash FROM failure_signatures").all() as Array<{
 				signature_hash: string;
 			}>;
