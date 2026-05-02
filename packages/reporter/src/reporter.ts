@@ -139,7 +139,7 @@ interface ResolvedOptions {
 	includeBareZero: boolean;
 	githubActions: boolean | undefined;
 	githubSummaryFile: string | undefined;
-	format?: "markdown" | "json" | "vitest-bypass" | "silent" | "ci-annotations";
+	format?: "terminal" | "markdown" | "json" | "vitest-bypass" | "silent" | "ci-annotations";
 	detail?: "minimal" | "neutral" | "standard" | "verbose";
 	mode?: "auto" | "agent" | "silent";
 	logLevel?: LogLevel.LogLevel;
@@ -198,6 +198,17 @@ interface ResolvedOptions {
 export class AgentReporter {
 	private options: ResolvedOptions;
 	private dbPath: string | null = null;
+	/**
+	 * Set to `true` after the first `onTestRunEnd` invocation completes.
+	 *
+	 * Vitest can fire `onTestRunEnd` more than once per `vitest run` in
+	 * some multi-project configurations (e.g., once per project group, with
+	 * the same `testModules` array each time). The plugin pushes only ONE
+	 * AgentReporter per run, so a fresh instance always starts with this
+	 * flag `false`; the first call does the work and the flag prevents
+	 * subsequent invocations from re-rendering and re-writing to the DB.
+	 */
+	private rendered = false;
 
 	/**
 	 * Stored Vitest instance from {@link AgentReporter.onInit | onInit}.
@@ -329,6 +340,14 @@ export class AgentReporter {
 		unhandledErrors: ReadonlyArray<unknown>,
 		reason: "passed" | "failed" | "interrupted",
 	): Promise<void> {
+		// Idempotence: in some multi-project configs Vitest fires
+		// onTestRunEnd more than once per `vitest run` against the same
+		// reporter instance. The first invocation writes the DB and renders
+		// the output; subsequent ones must no-op or we'll double-write
+		// trend rows and duplicate the stdout block.
+		if (this.rendered) return;
+		this.rendered = true;
+
 		const modules = testModules as ReadonlyArray<VitestTestModule>;
 		const errors = unhandledErrors as ReadonlyArray<{ message: string; stack?: string }>;
 

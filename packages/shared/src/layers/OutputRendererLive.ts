@@ -4,10 +4,12 @@ import { GfmFormatter } from "../formatters/gfm.js";
 import { JsonFormatter } from "../formatters/json.js";
 import { MarkdownFormatter } from "../formatters/markdown.js";
 import { SilentFormatter } from "../formatters/silent.js";
+import { TerminalFormatter } from "../formatters/terminal.js";
 import type { Formatter } from "../formatters/types.js";
 import { OutputRenderer } from "../services/OutputRenderer.js";
 
 const formatters = new Map<string, Formatter>([
+	["terminal", TerminalFormatter],
 	["markdown", MarkdownFormatter],
 	["gfm", GfmFormatter],
 	["json", JsonFormatter],

@@ -4,6 +4,7 @@ import { AgentPlugin } from "vitest-agent-reporter";
 export default defineConfig({
 	plugins: [
 		AgentPlugin({
+			mode: "agent",
 			strategy: "own",
 			mcp: true,
 			reporter: {
@@ -62,7 +63,7 @@ export default defineConfig({
 			// ~20% wall-clock on this suite; flipping the default keeps
 			// `pnpm run test` lean. Pass `--coverage` (or run `pnpm run
 			// ci:test`) when you actually need a coverage report.
-			enabled: false,
+			enabled: true,
 			provider: "v8",
 			include: [
 				"packages/reporter/src/**/*.ts",

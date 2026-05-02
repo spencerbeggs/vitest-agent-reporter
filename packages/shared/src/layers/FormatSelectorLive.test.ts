@@ -7,9 +7,9 @@ const run = <A, E>(effect: Effect.Effect<A, E, FormatSelector>) =>
 	Effect.runPromise(Effect.provide(effect, FormatSelectorLive));
 
 describe("FormatSelectorLive", () => {
-	it("agent -> markdown by default", async () => {
+	it("agent -> terminal by default (plain text + ANSI for stdout)", async () => {
 		const result = await run(Effect.flatMap(FormatSelector, (s) => s.select("agent")));
-		expect(result).toBe("markdown");
+		expect(result).toBe("terminal");
 	});
 
 	it("human -> silent by default", async () => {
@@ -17,9 +17,14 @@ describe("FormatSelectorLive", () => {
 		expect(result).toBe("silent");
 	});
 
-	it("ci -> markdown by default", async () => {
+	it("ci -> terminal by default (when not GitHub Actions)", async () => {
 		const result = await run(Effect.flatMap(FormatSelector, (s) => s.select("ci")));
-		expect(result).toBe("markdown");
+		expect(result).toBe("terminal");
+	});
+
+	it("ci + ci-github -> ci-annotations", async () => {
+		const result = await run(Effect.flatMap(FormatSelector, (s) => s.select("ci", undefined, "ci-github")));
+		expect(result).toBe("ci-annotations");
 	});
 
 	it("explicit format overrides default", async () => {

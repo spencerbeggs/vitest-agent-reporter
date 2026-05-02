@@ -90,11 +90,16 @@ export type Executor = typeof Executor.Type;
 /**
  * Output format for the reporter pipeline.
  */
-export const OutputFormat = Schema.Literal("markdown", "json", "vitest-bypass", "silent", "ci-annotations").annotations(
-	{
-		identifier: "OutputFormat",
-	},
-);
+export const OutputFormat = Schema.Literal(
+	"terminal",
+	"markdown",
+	"json",
+	"vitest-bypass",
+	"silent",
+	"ci-annotations",
+).annotations({
+	identifier: "OutputFormat",
+});
 export type OutputFormat = typeof OutputFormat.Type;
 
 /**

@@ -20,6 +20,7 @@ export * from "./formatters/gfm.js";
 export * from "./formatters/json.js";
 export * from "./formatters/markdown.js";
 export * from "./formatters/silent.js";
+export * from "./formatters/terminal.js";
 export * from "./formatters/types.js";
 
 // Layers
