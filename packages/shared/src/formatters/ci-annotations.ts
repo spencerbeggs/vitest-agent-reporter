@@ -18,10 +18,12 @@ const escapeData = (s: string): string => s.replace(/%/g, "%25").replace(/\n/g, 
 const escapeProperty = (s: string): string =>
 	s.replace(/%/g, "%25").replace(/\n/g, "%0A").replace(/\r/g, "%0D").replace(/:/g, "%3A").replace(/,/g, "%2C");
 
-// Excluding `:` from the file-path character class keeps the match linear:
-// the engine never crosses the `:line:col` delimiter and never has to
-// backtrack across it (CodeQL polynomial-regex finding).
-const STACK_FILE_LINE = /\(([^):\s]+):(\d+):\d+\)/;
+// Both `:` and `(` are excluded from the file-path character class to keep
+// the match linear. Excluding `:` stops the engine from crossing the
+// `:line:col` delimiter; excluding `(` stops a pathological input like
+// `(((!((!((!` from triggering O(n²) backtracking, where the regex would
+// retry the capture at every `(` position. CodeQL polynomial-regex finding.
+const STACK_FILE_LINE = /\(([^():\s]+):(\d+):\d+\)/;
 
 function extractFileAndLine(error: ReportError, fallbackFile: string): { file: string; line: number } {
 	if (error.stack !== undefined) {
