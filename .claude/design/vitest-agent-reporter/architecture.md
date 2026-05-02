@@ -54,7 +54,7 @@ schema/data-layer contract:
 | `vitest-agent-reporter-shared` | `packages/shared/` | Effect Schema, SQLite migrations, errors, `DataStore`/`DataReader` services + live layers, all pipeline services (Environment/Executor/Format/Detail/OutputRenderer) and live layers, History/ProjectDiscovery, Logger, formatters, utilities, **and the new XDG path-resolution stack** (`AppDirs`, ConfigFile, WorkspaceDiscovery, `resolveDataPath`). No internal dependencies. |
 | `vitest-agent-reporter` | `packages/reporter/` | The Vitest reporter + plugin + `ReporterLive` + `CoverageAnalyzer`. Depends on shared. Declares the CLI and MCP packages as required `peerDependencies`. No bin entries. |
 | `vitest-agent-reporter-cli` | `packages/cli/` | `vitest-agent-reporter` bin (`@effect/cli`-based) with `status`, `overview`, `coverage`, `history`, `trends`, `cache` (β: + `prune`), `doctor`, (β) `record`, and (RC) `triage` + `wrapup` subcommands. Final adds two more `record` subcommands (`tdd-artifact`, `run-workspace-changes`). Depends on shared. Owns `CliLive`. |
-| `vitest-agent-reporter-mcp` | `packages/mcp/` | `vitest-agent-reporter-mcp` bin (`@modelcontextprotocol/sdk` + tRPC). Depends on shared. Owns `McpLive`. β adds seven read-only tools over the α schema substrate; RC adds four more (`triage_brief`, `wrapup_prompt`, `hypothesis_record`, `hypothesis_validate`) plus a tRPC idempotency middleware. Final adds six more (`tdd_session_start`, `tdd_session_end`, `tdd_session_resume`, `decompose_goal_into_behaviors`, `tdd_phase_transition_request`, `commit_changes`) for 43 tools total. |
+| `vitest-agent-reporter-mcp` | `packages/mcp/` | `vitest-agent-reporter-mcp` bin (`@modelcontextprotocol/sdk` + tRPC). Depends on shared. Owns `McpLive`. β adds seven read-only tools over the α schema substrate; RC adds four more (`triage_brief`, `wrapup_prompt`, `hypothesis_record`, `hypothesis_validate`) plus a tRPC idempotency middleware. Final adds six more (`tdd_session_start`, `tdd_session_end`, `tdd_session_resume`, `decompose_goal_into_behaviors`, `tdd_phase_transition_request`, `commit_changes`) for 41 tools total. |
 
 Examples live under `examples/*` (not pnpm workspaces by name, but
 included as a fifth Vitest project for integration coverage). The
@@ -100,7 +100,7 @@ pnpm workspace.
   DetailResolver -> OutputRenderer) with 4 built-in formatters
   (`markdown`, `gfm`, `json`, `silent`).
 
-- **MCP server and Claude Code plugin** -- 43 MCP tools via tRPC
+- **MCP server and Claude Code plugin** -- 41 MCP tools via tRPC
   router (24 from Phase 5/6 plus 7 read-only β tools:
   `session_list`, `session_get`, `turn_search`,
   `failure_signature_get`, `tdd_session_get`, `hypothesis_list`,
@@ -128,7 +128,7 @@ pnpm workspace.
   `/tdd <goal>` slash command (`plugin/commands/tdd.md`), the
   9 sub-skill primitives under `plugin/skills/tdd-primitives/`
   (Decision D6 standalone reuse), and a `PreToolUse` hook that
-  auto-allows all 43 MCP tools.
+  auto-allows all 41 MCP tools.
 
 For implementation history see [phase-history.md](./phase-history.md).
 
@@ -219,7 +219,7 @@ Vitest projects (one per package plus `example-basic`).
   for JSON encode/decode
 - **Duck-type istanbul** -- structural interface avoids hard peer dependency;
   works with both `v8` and `istanbul` coverage providers
-- **MCP-first agent integration** -- MCP server exposes 43 tools via
+- **MCP-first agent integration** -- MCP server exposes 41 tools via
   tRPC router (24 from Phase 5/6 plus 7 β read-only tools surfacing
   α's session/turn/TDD/hypothesis/failure-signature substrate, plus
   4 RC tools, plus 6 final tools for TDD lifecycle reads/writes and
@@ -370,7 +370,7 @@ Package layout (the four pnpm workspaces under `packages/`):
      post-tool-use-test-quality.sh (test_weakened detection).
      One repo-scoped hook: post-tool-use-git-commit.sh (writes
      commits + run_changed_files). MCP adds 6 more tools (TDD
-     lifecycle reads/writes + commit_changes) for 43 total.
+     lifecycle reads/writes + commit_changes) for 41 total.
 ```
 
 XDG data path resolution (`resolveDataPath`, `packages/shared`).

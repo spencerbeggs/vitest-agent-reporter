@@ -36,7 +36,7 @@ covers one package; load only the section you need:
 - **Shared package** -- the no-internal-deps base: schemas, services,
   layers, formatters, errors, migrations, utilities, XDG path stack
 - **CLI package** -- `vitest-agent-reporter` bin and `CliLive`
-- **MCP package** -- `vitest-agent-reporter-mcp` bin, tRPC router, 43
+- **MCP package** -- `vitest-agent-reporter-mcp` bin, tRPC router, 41
   tools (24 from Phase 5/6 plus 7 read-only β tools over the α
   schema substrate plus 4 RC tools: `triage_brief`, `wrapup_prompt`,
   `hypothesis_record`, `hypothesis_validate`, plus 6 final tools:
@@ -1471,7 +1471,7 @@ Used by the CLI bin via `NodeRuntime.runMain`.
 
 ## MCP package (vitest-agent-reporter-mcp)
 
-Model Context Protocol server providing 43 tools for agent
+Model Context Protocol server providing 41 tools for agent
 integration (24 from Phase 5/6 plus 7 new read-only β tools over
 α's session/turn/TDD/hypothesis/failure-signature schema substrate
 plus 4 RC tools: `triage_brief`, `wrapup_prompt`,
@@ -1521,7 +1521,7 @@ coordination without bundling the dependency tree.
   (`middleware`, `router`, `publicProcedure`) so the
   idempotency middleware can share it rather than constructing a
   parallel `t`
-- `router.ts` -- tRPC router aggregating all 43 tool procedures
+- `router.ts` -- tRPC router aggregating all 41 tool procedures
   (24 from Phase 5/6 plus 7 read-only β additions plus 4 RC
   additions plus 6 final additions)
 - `server.ts` -- `startMcpServer()` registers all tools with the MCP
@@ -1541,7 +1541,7 @@ coordination without bundling the dependency tree.
   `plugin.json`, which spawns the bin through the user's package
   manager), and any MCP-compatible agent
 
-### tRPC Router & Tools (43 tools)
+### tRPC Router & Tools (41 tools)
 
 **Locations:**
 
@@ -1550,7 +1550,7 @@ coordination without bundling the dependency tree.
 - `packages/mcp/src/middleware/idempotency.ts` (2.0.0-RC) --
   see the **Idempotency middleware** subsection
 
-The tRPC router aggregates all 43 MCP tool procedures (24 from
+The tRPC router aggregates all 41 MCP tool procedures (24 from
 Phase 5/6 plus 7 read-only β additions plus 4 RC additions plus
 6 final additions). The context carries a `ManagedRuntime` for
 Effect service access, allowing tRPC procedures to call Effect
@@ -1670,14 +1670,14 @@ interface McpContext {
   tool lists `commit_changes` under a new "Workspace history
   (final)" section
 
-The 6 final tools bring the total to 43. Of the 6, 5 are
+The 6 final tools bring the total to 41. Of the 6, 5 are
 mutations and 1 is read-only. Idempotency-key registry on
 final has 5 entries: `hypothesis_record`, `hypothesis_validate`
 (both RC), plus `tdd_session_start`, `tdd_session_end`, and
 `decompose_goal_into_behaviors` (all final).
 `tdd_phase_transition_request` is intentionally **not** in the
 registry -- see Phase 10 / final notes in decisions.md. The
-`help` tool's tool count moves from 37 (RC) to 43 (final) and
+`help` tool's tool count moves from 35 (RC) to 41 (final) and
 the help text gains "TDD lifecycle (final)" and "Workspace
 history (final)" sections.
 

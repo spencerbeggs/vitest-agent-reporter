@@ -19,7 +19,7 @@ The 2.0 line ships. This release rolls up the work from the four pre-release bra
 
 ### W6 TDD lifecycle MCP write tools
 
-Six new tools registered with the MCP server (43 total, up from RC's 37):
+Six new tools registered with the MCP server (41 total, up from RC's 35):
 
 - `tdd_session_start` — open a session (idempotent on `(sessionId, goal)`).
 - `tdd_session_end` — close with succeeded/blocked/abandoned (idempotent on `(tddSessionId, outcome)`).

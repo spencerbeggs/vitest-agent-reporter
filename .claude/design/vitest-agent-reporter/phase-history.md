@@ -846,7 +846,7 @@ The release covers the seven workstreams from the spec:
   `0003_idempotent_responses`, `0004_test_cases_created_turn_id`)
 - **Database tables**: 41 total + `notes_fts` (unchanged from
   RC -- `0004` is column-additive)
-- **MCP tools**: 43 total (24 original + 7 β + 4 RC + 6 final)
+- **MCP tools**: 41 total (24 original + 7 β + 4 RC + 6 final)
 - **Plugin hook scripts**: 12 total (excluding `lib/`):
   `session-start`, `pre-tool-use-mcp`, `post-test-run`
   (Phase 5d); `pre-tool-use-record`, `post-tool-use-record`,

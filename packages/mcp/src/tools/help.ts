@@ -2,7 +2,7 @@ import { publicProcedure } from "../context.js";
 
 const HELP_TEXT = `# vitest-agent-reporter MCP Tools
 
-> 43 tools total.
+> 41 tools total.
 
 ## General
 

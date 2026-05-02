@@ -109,7 +109,7 @@ packages/
       middleware/  -- (2.0.0-RC) idempotency.ts (idempotentProcedure
                       drop-in for publicProcedure + idempotencyKeys
                       registry)
-      tools/       -- 43 tool implementations: 24 from Phase 5/6
+      tools/       -- 41 tool implementations: 24 from Phase 5/6
                       (help, status, overview, coverage, history,
                       trends, errors, test-for-file, test-get,
                       test-list, file-coverage, run-tests,
@@ -142,7 +142,7 @@ plugin/      -- file-based Claude Code plugin (NOT a pnpm workspace)
   hooks/       -- hooks.json + session-start.sh (RC: rewritten
                   to call triage CLI + write sessions row;
                   β session-start-record.sh deleted, folded in)
-                  + pre-tool-use-mcp.sh (auto-allows the 43 MCP
+                  + pre-tool-use-mcp.sh (auto-allows the 41 MCP
                   tools enumerated in lib/safe-mcp-vitest-agent-
                   reporter-ops.txt) + post-test-run.sh; (β) five
                   *-record.sh scripts (user-prompt-submit-record,
@@ -1489,7 +1489,7 @@ GFM content is appended (not overwritten) to support multiple steps.
 ### Integration 4: Consumer LLM Agents
 
 **MCP pattern (preferred):** Agents connect via MCP stdio transport and
-use the 43 tools for structured data access (24 from Phase 5/6 plus
+use the 41 tools for structured data access (24 from Phase 5/6 plus
 7 read-only β tools surfacing α's session/turn/TDD/hypothesis/
 failure-signature substrate plus 4 RC tools: `triage_brief`,
 `wrapup_prompt`, `hypothesis_record`, `hypothesis_validate` -- the
