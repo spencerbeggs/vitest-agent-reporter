@@ -290,17 +290,33 @@ const aggregateCoverage = (
 	let hasCoverage = false;
 	let thresholdsGlobal: MetricThresholds | undefined;
 	let targetsGlobal: MetricThresholds | undefined;
-	const belowTargetFiles: FileCoverageReport[] = [];
-	let belowThresholdCount = 0;
+	// Coverage data is global, not per-project: the istanbul CoverageMap
+	// is processed once and the resulting CoverageReport is attached to
+	// every project's report. Naively concatenating across reports
+	// inflates counts by N (the project count) -- an N-project monorepo
+	// with 10 below-target files would surface "50 files below targets"
+	// in the headline. Dedupe on file path.
+	const belowTargetByFile = new Map<string, FileCoverageReport>();
+	const belowThresholdByFile = new Map<string, FileCoverageReport>();
 	for (const r of reports) {
 		const cov = r.coverage;
 		if (!cov) continue;
 		hasCoverage = true;
 		thresholdsGlobal ??= cov.thresholds.global;
 		targetsGlobal ??= cov.targets?.global;
-		if (cov.lowCoverage) belowThresholdCount += cov.lowCoverage.length;
-		if (cov.belowTarget) belowTargetFiles.push(...cov.belowTarget);
+		if (cov.lowCoverage) {
+			for (const f of cov.lowCoverage) {
+				if (!belowThresholdByFile.has(f.file)) belowThresholdByFile.set(f.file, f);
+			}
+		}
+		if (cov.belowTarget) {
+			for (const f of cov.belowTarget) {
+				if (!belowTargetByFile.has(f.file)) belowTargetByFile.set(f.file, f);
+			}
+		}
 	}
+	const belowTargetFiles: ReadonlyArray<FileCoverageReport> = [...belowTargetByFile.values()];
+	const belowThresholdCount = belowThresholdByFile.size;
 	return {
 		hasCoverage,
 		thresholdsMet: belowThresholdCount === 0,
