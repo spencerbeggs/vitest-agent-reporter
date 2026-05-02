@@ -41,14 +41,26 @@ export const tddPhaseTransitionRequest = publicProcedure
 				// 2. Resolve cited artifact + binding-rule context.
 				const artifactOpt = yield* reader.getTddArtifactWithContext(input.citedArtifactId);
 				if (Option.isNone(artifactOpt)) {
+					// Per Decision D7, artifact writes are CLI-only — there
+					// is no `tdd_artifact_record` MCP tool. The plugin's
+					// PostToolUse hooks shell out to `vitest-agent-reporter
+					// record tdd-artifact` on the orchestrator's behalf
+					// after observing the side effect (test run, edit).
+					// Steer the agent to make the side effect happen,
+					// rather than to a tool that does not exist.
 					return {
 						accepted: false as const,
 						phase: currentPhase,
 						denialReason: "missing_artifact_evidence" as const,
 						remediation: {
-							suggestedTool: "tdd_artifact_record",
+							suggestedTool: "run_tests",
 							suggestedArgs: {},
-							humanHint: `Cited artifact id ${input.citedArtifactId} does not exist. Record an artifact via the CLI first.`,
+							humanHint:
+								`Cited artifact id ${input.citedArtifactId} does not exist. ` +
+								"Artifacts are recorded by hooks observing your tool calls (Decision D7), " +
+								"so run the test (e.g. via the run_tests MCP tool) or make the file edit " +
+								"first; the post-tool-use hook will write the matching tdd_artifacts row " +
+								"and return its id, which can then be cited here.",
 						},
 					};
 				}

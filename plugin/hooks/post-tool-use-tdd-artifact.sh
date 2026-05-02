@@ -49,6 +49,31 @@ case "$tool_name" in
 				|| echo "record tdd-artifact ($kind) failed (non-fatal)" >&2
 		fi
 		;;
+	mcp__vitest-agent-reporter__run_tests)
+		# The orchestrator runs tests primarily through the run_tests
+		# MCP tool, so a Bash-only matcher would silently miss every
+		# real test execution and break evidence-based phase
+		# transitions. The MCP tool returns markdown whose headline
+		# starts with `## ❌ Vitest -- N failed, ...` on failure and
+		# `## ✅ Vitest -- N passed ...` on success; classify the
+		# response on that prefix.
+		response_text=$(echo "$hook_json" | jq -r '
+			(.tool_response.content // [])
+			| map(select(.type == "text") | .text)
+			| join("\n")
+			// (.tool_response | tostring)
+		')
+		kind="test_passed_run"
+		if echo "$response_text" | grep -q -E '^##[[:space:]]*❌|^##[[:space:]]*[^✅]*[0-9]+ failed,'; then
+			kind="test_failed_run"
+		fi
+		cd "$cwd" && $pm_exec vitest-agent-reporter record tdd-artifact \
+			--cc-session-id "$cc_session_id" \
+			--artifact-kind "$kind" \
+			--recorded-at "$recorded_at" \
+			>/dev/null 2>&1 \
+			|| echo "record tdd-artifact ($kind) failed (non-fatal)" >&2
+		;;
 	Edit|Write|MultiEdit)
 		file_path=$(echo "$hook_json" | jq -r '.tool_input.file_path // .tool_input.path // ""')
 		if [ -z "$file_path" ]; then

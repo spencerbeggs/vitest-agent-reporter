@@ -51,15 +51,27 @@ export const recordTddArtifactEffect = (
 			);
 		}
 
+		// A brand-new TDD session has no open phase. The orchestrator
+		// can't bootstrap one via `tdd_phase_transition_request`
+		// either, because that endpoint requires a cited artifact id —
+		// and recording the first artifact requires an open phase. Open
+		// a `spike` phase on demand to break the deadlock. Per α D11,
+		// `spike` is the entry point for every TDD cycle and is
+		// accepted by the validator unconditionally, so this matches
+		// what the orchestrator would have done as its first formal
+		// transition once the cycle is running.
 		const phaseOpt = yield* reader.getCurrentTddPhase(openTdd.id);
-		if (Option.isNone(phaseOpt)) {
-			return yield* Effect.fail(
-				new Error(`TDD session ${openTdd.id} has no open phase. Call tdd_phase_transition_request first.`),
-			);
-		}
+		const phaseId = Option.isSome(phaseOpt)
+			? phaseOpt.value.id
+			: (yield* store.writeTddPhase({
+					tddSessionId: openTdd.id,
+					phase: "spike",
+					startedAt: input.recordedAt,
+					transitionReason: "auto-opened by record tdd-artifact (no prior phase)",
+				})).id;
 
 		const id = yield* store.writeTddArtifact({
-			phaseId: phaseOpt.value.id,
+			phaseId,
 			artifactKind: input.artifactKind,
 			...(input.fileId !== undefined && { fileId: input.fileId }),
 			...(input.testCaseId !== undefined && { testCaseId: input.testCaseId }),
@@ -71,5 +83,5 @@ export const recordTddArtifactEffect = (
 			recordedAt: input.recordedAt,
 		});
 
-		return { id, phaseId: phaseOpt.value.id };
+		return { id, phaseId };
 	});

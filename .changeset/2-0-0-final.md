@@ -44,10 +44,16 @@ New `terminal` output format (and matching `OutputFormat` literal) renders aggre
 
 ### Anti-pattern detection
 
-- PostToolUse hooks on test-file edits scan for escape-hatch tokens (`it.skip`, `it.todo`, `it.fails`, `it.concurrent`, `.skipIf`, `.todoIf`) and record `tdd_artifacts(kind='test_weakened')`.
-- PostToolUse hook on Bash test runs records `test_failed_run` / `test_passed_run` artifacts.
+- PostToolUse hooks on test-file edits scan for escape-hatch tokens (`it.skip`, `it.todo`, `it.fails`, `it.concurrent`, `.skipIf`, `.todoIf`, plus the `test.*` and `describe.*` equivalents) and record `tdd_artifacts(kind='test_weakened')`. Patterns use ERE-compatible word boundaries so they work portably on both BSD and GNU grep.
+- PostToolUse hook on Bash test runs records `test_failed_run` / `test_passed_run` artifacts. The same hook also recognizes the `run_tests` MCP tool, which is the orchestrator's primary path for running tests; without that branch no test-run artifacts would be recorded for the orchestrator's actual executions.
 - PostToolUse hook on Edit/Write to non-test files records `code_written`; on test files, `test_written`.
 - All anti-pattern hooks are scoped via `agent_type='tdd-orchestrator'` so the main agent is unaffected.
+
+### TDD lifecycle bootstrap
+
+The `record tdd-artifact` CLI auto-opens a `spike` phase on a fresh TDD session that has no prior phase. This breaks the chicken-and-egg between recording the first artifact (which needs an open phase) and `tdd_phase_transition_request` (which needs a cited artifact id). `spike` is unconditionally accepted by the validator per α D11, so the auto-open matches what the orchestrator would have done as its first formal transition.
+
+The `tdd_phase_transition_request` denial path on missing artifact evidence now points the agent at `run_tests` (and explains the hook-driven evidence flow) rather than at `tdd_artifact_record`, which is intentionally not registered as an MCP tool per Decision D7.
 
 ## Breaking Changes
 

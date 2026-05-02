@@ -49,7 +49,6 @@ export { default as migration0001 } from "./migrations/0001_initial.js";
 export { default as migration0002 } from "./migrations/0002_comprehensive.js";
 export { default as migration0003 } from "./migrations/0003_idempotent_responses.js";
 export { default as migration0004 } from "./migrations/0004_test_cases_created_turn_id.js";
-export { default as migration0005 } from "./migrations/0005_file_coverage_tier.js";
 // Schemas
 export * from "./schemas/AgentReport.js";
 export * from "./schemas/Baselines.js";

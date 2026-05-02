@@ -48,19 +48,26 @@ if [ -z "$new_content" ]; then
 	new_content=$(echo "$hook_json" | jq -r '[.tool_input.edits[]?.new_string // empty] | join("\n")')
 fi
 
-# Anti-pattern token scan.
+# Anti-pattern token scan. ERE doesn't recognize `\b`, so the
+# previous `\bit\.skip\b` patterns never matched anything — the
+# escape-hatch detection was a silent no-op. Use explicit character-
+# class boundaries `(^|[^A-Za-z0-9_])...([^A-Za-z0-9_]|$)` which
+# behave the same as `\b` on every BSD/GNU grep without needing the
+# non-portable `-P` (PCRE) flag (macOS BSD grep does not ship `-P`).
+# The two `.skipIf(` / `.todoIf(` patterns already had a literal `(`
+# trailing them so they only need a leading boundary.
 weakened_patterns=(
-	'\bit\.skip\b'
-	'\bit\.todo\b'
-	'\bit\.fails\b'
-	'\bit\.concurrent\b'
-	'\btest\.skip\b'
-	'\btest\.todo\b'
-	'\btest\.fails\b'
-	'\bdescribe\.skip\b'
-	'\bdescribe\.todo\b'
-	'\.skipIf\('
-	'\.todoIf\('
+	'(^|[^A-Za-z0-9_])it\.skip([^A-Za-z0-9_]|$)'
+	'(^|[^A-Za-z0-9_])it\.todo([^A-Za-z0-9_]|$)'
+	'(^|[^A-Za-z0-9_])it\.fails([^A-Za-z0-9_]|$)'
+	'(^|[^A-Za-z0-9_])it\.concurrent([^A-Za-z0-9_]|$)'
+	'(^|[^A-Za-z0-9_])test\.skip([^A-Za-z0-9_]|$)'
+	'(^|[^A-Za-z0-9_])test\.todo([^A-Za-z0-9_]|$)'
+	'(^|[^A-Za-z0-9_])test\.fails([^A-Za-z0-9_]|$)'
+	'(^|[^A-Za-z0-9_])describe\.skip([^A-Za-z0-9_]|$)'
+	'(^|[^A-Za-z0-9_])describe\.todo([^A-Za-z0-9_]|$)'
+	'(^|[^A-Za-z0-9_])\.skipIf\('
+	'(^|[^A-Za-z0-9_])\.todoIf\('
 )
 
 matched=""
