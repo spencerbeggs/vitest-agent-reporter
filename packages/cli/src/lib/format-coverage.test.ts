@@ -45,10 +45,11 @@ describe("formatCoverage", () => {
 		const result = formatCoverage([{ project: "core", report }]);
 
 		expect(result).toContain("## Coverage Gaps");
-		expect(result).toContain("**Threshold:** lines: 80%, functions: 80%, branches: 80%, statements: 80%");
+		expect(result).toContain("**Minimum thresholds:** lines: 80%, functions: 80%, branches: 80%, statements: 80%");
 		expect(result).toContain("### core");
-		expect(result).toContain("| File | Lines | Branches | Uncovered |");
-		expect(result).toContain("| src/utils.ts | 55% | 50% | 42-50,99 |");
+		expect(result).toContain("#### Files below minimum thresholds");
+		expect(result).toContain("| File | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s |");
+		expect(result).toContain("| src/utils.ts | 60 | 50 | 70 | 55 | 42-50,99 |");
 	});
 
 	it("renders multiple files in coverage table", () => {
@@ -153,9 +154,9 @@ describe("formatCoverage", () => {
 		]);
 
 		expect(result).toContain("### core");
-		expect(result).toContain("**Threshold:** lines: 80%");
+		expect(result).toContain("**Minimum thresholds:** lines: 80%");
 		expect(result).toContain("### utils");
-		expect(result).toContain("**Threshold:** lines: 90%, branches: 90%");
+		expect(result).toContain("**Minimum thresholds:** lines: 90%, branches: 90%");
 		expect(result).toContain("| src/a.ts |");
 		expect(result).toContain("| src/b.ts |");
 	});

@@ -202,7 +202,8 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 			Effect.gen(function* () {
 				yield* Effect.logDebug("writeCoverage").pipe(Effect.annotateLogs({ runId, count: coverage.length }));
 				for (const cov of coverage) {
-					yield* sql`INSERT INTO file_coverage (run_id, file_id, statements, branches, functions, lines, uncovered_lines) VALUES (${runId}, ${cov.fileId}, ${cov.statements}, ${cov.branches}, ${cov.functions}, ${cov.lines}, ${cov.uncoveredLines ?? null})`;
+					const tier = cov.tier ?? "below_threshold";
+					yield* sql`INSERT INTO file_coverage (run_id, file_id, statements, branches, functions, lines, uncovered_lines, tier) VALUES (${runId}, ${cov.fileId}, ${cov.statements}, ${cov.branches}, ${cov.functions}, ${cov.lines}, ${cov.uncoveredLines ?? null}, ${tier})`;
 				}
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),

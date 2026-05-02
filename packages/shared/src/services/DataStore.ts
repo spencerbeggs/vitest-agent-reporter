@@ -130,6 +130,16 @@ export interface FileCoverageInput {
 	readonly functions: number;
 	readonly lines: number;
 	readonly uncoveredLines?: string;
+	/**
+	 * Coverage tier this row represents. `'below_threshold'` is the
+	 * build-failing tier (file falls below the configured minimum
+	 * coverage thresholds). `'below_target'` is the warning tier (file
+	 * is above thresholds but below the aspirational target).
+	 *
+	 * Defaults to `'below_threshold'` when omitted, matching the only
+	 * tier that existed before migration 0005.
+	 */
+	readonly tier?: "below_threshold" | "below_target";
 }
 
 export interface SuiteInput {

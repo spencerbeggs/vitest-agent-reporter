@@ -197,6 +197,91 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 
 				const projectName = run.sub_project ? `${run.project}:${run.sub_project}` : run.project;
 
+				// Per-file coverage rows for this run, split into the two
+				// tiers introduced by migration 0005. `lowCoverage`
+				// surfaces threshold violations; `belowTarget` surfaces
+				// aspirational-target gaps. Without this assembly, the
+				// CLI's `coverage` subcommand had no per-file data to
+				// render even though the rows were on disk.
+				const fileCovRows = yield* sql<{
+					file_path: string;
+					statements: number;
+					branches: number;
+					functions: number;
+					lines: number;
+					uncovered_lines: string | null;
+					tier: string;
+				}>`SELECT f.path AS file_path, fc.statements, fc.branches, fc.functions, fc.lines,
+					   fc.uncovered_lines, fc.tier
+					FROM file_coverage fc
+					JOIN files f ON f.id = fc.file_id
+					WHERE fc.run_id = ${run.id}`;
+
+				const lowCoverage = fileCovRows
+					.filter((r) => r.tier === "below_threshold")
+					.map((r) => ({
+						file: r.file_path,
+						summary: {
+							statements: r.statements,
+							branches: r.branches,
+							functions: r.functions,
+							lines: r.lines,
+						},
+						uncoveredLines: r.uncovered_lines ?? "",
+					}));
+				const belowTarget = fileCovRows
+					.filter((r) => r.tier === "below_target")
+					.map((r) => ({
+						file: r.file_path,
+						summary: {
+							statements: r.statements,
+							branches: r.branches,
+							functions: r.functions,
+							lines: r.lines,
+						},
+						uncoveredLines: r.uncovered_lines ?? "",
+					}));
+
+				const trendRows = yield* sql<{
+					statements: number;
+					branches: number;
+					functions: number;
+					lines: number;
+				}>`SELECT statements, branches, functions, lines FROM coverage_trends WHERE run_id = ${run.id} LIMIT 1`;
+				const totals = trendRows[0]
+					? {
+							statements: trendRows[0].statements,
+							branches: trendRows[0].branches,
+							functions: trendRows[0].functions,
+							lines: trendRows[0].lines,
+						}
+					: { statements: 0, branches: 0, functions: 0, lines: 0 };
+
+				const baselineRows = yield* sql<{
+					metric: string;
+					value: number;
+				}>`SELECT metric, value FROM coverage_baselines
+					WHERE project = '__global__' AND sub_project IS NULL AND pattern IS NULL`;
+				const thresholds: { lines?: number; functions?: number; branches?: number; statements?: number } = {};
+				for (const b of baselineRows) {
+					if (b.metric === "lines") thresholds.lines = b.value;
+					else if (b.metric === "functions") thresholds.functions = b.value;
+					else if (b.metric === "branches") thresholds.branches = b.value;
+					else if (b.metric === "statements") thresholds.statements = b.value;
+				}
+
+				const coverage =
+					fileCovRows.length > 0 || trendRows.length > 0
+						? {
+								totals,
+								thresholds: { global: thresholds, patterns: [] as Array<[string, typeof thresholds]> },
+								scoped: false,
+								lowCoverage,
+								lowCoverageFiles: lowCoverage.map((f) => f.file),
+								...(belowTarget.length > 0 ? { belowTarget, belowTargetFiles: belowTarget.map((f) => f.file) } : {}),
+							}
+						: undefined;
+
 				const report: AgentReport = {
 					timestamp: run.timestamp,
 					project: projectName,
@@ -215,6 +300,7 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 						...(e.diff != null ? { diff: e.diff } : {}),
 					})),
 					failedFiles,
+					...(coverage ? { coverage } : {}),
 				};
 
 				return Option.some(report);

@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import migration0001 from "../migrations/0001_initial.js";
 import migration0002 from "../migrations/0002_comprehensive.js";
 import migration0004 from "../migrations/0004_test_cases_created_turn_id.js";
+import migration0005 from "../migrations/0005_file_coverage_tier.js";
 import { DataStore } from "../services/DataStore.js";
 import { DataStoreLive } from "./DataStoreLive.js";
 
@@ -18,6 +19,7 @@ const MigratorLayer = SqliteMigrator.layer({
 		"0001_initial": migration0001,
 		"0002_comprehensive": migration0002,
 		"0004_test_cases_created_turn_id": migration0004,
+		"0005_file_coverage_tier": migration0005,
 	}),
 }).pipe(Layer.provide(Layer.merge(SqliteLayer, PlatformLayer)));
 

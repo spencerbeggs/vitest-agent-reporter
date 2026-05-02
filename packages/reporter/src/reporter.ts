@@ -756,21 +756,46 @@ export class AgentReporter {
 
 				reports.push(report);
 
-				// Write coverage data to DB if available
-				if (coverageReport && coverageReport.lowCoverage.length > 0) {
-					const coverageInputs = [];
-					for (const fc of coverageReport.lowCoverage) {
-						const fileId = yield* store.ensureFile(fc.file);
-						coverageInputs.push({
-							fileId,
-							statements: fc.summary.statements,
-							branches: fc.summary.branches,
-							functions: fc.summary.functions,
-							lines: fc.summary.lines,
-							uncoveredLines: fc.uncoveredLines,
-						});
+				// Write coverage data to DB. Two tiers persisted:
+				//
+				// - lowCoverage entries are failures against the minimum
+				//   threshold (build-blocking).
+				// - belowTarget entries are warnings: above threshold but
+				//   below the aspirational target.
+				//
+				// The two sets can overlap when the build is failing.
+				// Dedupe on file path so each file produces a single row;
+				// tier resolves to "below_threshold" whenever a file is in
+				// lowCoverage (the more severe classification wins).
+				if (coverageReport) {
+					const tierByFile = new Map<string, "below_threshold" | "below_target">();
+					const sourceByFile = new Map<string, (typeof coverageReport.lowCoverage)[number]>();
+					for (const fc of coverageReport.belowTarget ?? []) {
+						tierByFile.set(fc.file, "below_target");
+						sourceByFile.set(fc.file, fc);
 					}
-					yield* store.writeCoverage(runId, coverageInputs);
+					for (const fc of coverageReport.lowCoverage) {
+						tierByFile.set(fc.file, "below_threshold");
+						sourceByFile.set(fc.file, fc);
+					}
+					if (tierByFile.size > 0) {
+						const coverageInputs = [];
+						for (const [file, tier] of tierByFile) {
+							const fc = sourceByFile.get(file);
+							if (!fc) continue;
+							const fileId = yield* store.ensureFile(fc.file);
+							coverageInputs.push({
+								fileId,
+								statements: fc.summary.statements,
+								branches: fc.summary.branches,
+								functions: fc.summary.functions,
+								lines: fc.summary.lines,
+								uncoveredLines: fc.uncoveredLines,
+								tier,
+							});
+						}
+						yield* store.writeCoverage(runId, coverageInputs);
+					}
 				}
 
 				// Record coverage trend (full runs only)
