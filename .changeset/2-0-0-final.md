@@ -38,6 +38,14 @@ Six new tools registered with the MCP server (41 total, up from RC's 35):
 - New `--format=ci-annotations` formatter emits GitHub Actions `::error file=...,line=...::` syntax. Auto-selected when running in `ci-github`.
 - Terminal OSC-8 hyperlinks in CLI/console output (markdown formatter, stdout target only). Never emitted in MCP responses.
 
+### Terminal formatter for agent stdout
+
+New `terminal` output format (and matching `OutputFormat` literal) renders aggregated multi-project test results as plain text plus ANSI styling — no markdown headings, code fences, or backticks. The agent strategy in "own" mode now defaults to `terminal` (was `markdown`), since the rendering target is a shell, not a markdown viewer. MCP responses and the GFM target are unchanged. Multi-project runs render once via a Vitest-instance-keyed `WeakSet` guard rather than once per project.
+
+### node:sqlite experimental warning suppression
+
+The plugin auto-injects a setupFile into `vitest.config.setupFiles` that swallows Node's `ExperimentalWarning: SQLite is an experimental feature` emission in each Vitest worker. The suppressor is a plain JS file copied verbatim into the dist via rslib `copyPatterns` so ESM module-evaluation order is preserved. `vitest-agent-reporter-shared` also exports a `suppressSqliteExperimentalWarning` helper for callers that want to install the interceptor explicitly (e.g. directly from a user `vitest.config.ts`).
+
 ### Anti-pattern detection
 
 - PostToolUse hooks on test-file edits scan for escape-hatch tokens (`it.skip`, `it.todo`, `it.fails`, `it.concurrent`, `.skipIf`, `.todoIf`) and record `tdd_artifacts(kind='test_weakened')`.
@@ -58,6 +66,14 @@ This is the cumulative 2.0 break from 1.x. Highlights from earlier pre-releases:
 - `debug: boolean` plugin option replaced by `logLevel`/`logFile` plus env-var fallback.
 
 See the per-pre-release changesets in this directory for the detailed breakdown of alpha/beta/RC work.
+
+## Performance
+
+`PathResolutionLive` now uses the minimal `WorkspaceDiscoveryLive + WorkspaceRootLive` slice from `workspaces-effect` instead of the full `WorkspacesLive` aggregate, which transitively pulled `LockfileReaderLive` and read every workspace lockfile at layer construction. The reporter also memoizes the resolved `dbPath` at the module level so the per-project reporter instances created by multi-project Vitest configs don't each pay the resolution cost. On a 5-project monorepo this drops `pnpm test` wall time from ~44s to ~4.3s (10× speedup) without changing observable behavior.
+
+## Bug Fixes
+
+Hardened the stack-frame parsing regex (`STACK_FILE_LINE` in the markdown formatter) against polynomial ReDoS. The previous character class allowed `(` inside the file-path segment, which combined with the trailing `:line:column` group produced exponential backtracking on pathological inputs. The fix excludes both `(` and `:` from the path segment; included a regression test that asserts a 50000-char hostile stack renders in under 500ms.
 
 ## Build System
 
