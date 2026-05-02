@@ -5,11 +5,11 @@ import type { Formatter, RenderedOutput } from "./types.js";
  * Markdown formatter for surfaces that *render* markdown.
  *
  * Stdout output goes through {@link TerminalFormatter} (plain text +
- * ANSI), not this formatter — markdown syntax (`## `, backticks, list
- * dashes) is visual noise in a terminal that doesn't render it. This
- * formatter remains for callers that explicitly request `format:
- * "markdown"`, e.g. when piping the rendered output into a Markdown-
- * aware sink.
+ * ANSI), not this formatter — markdown syntax (e.g. heading prefixes,
+ * backticks, list dashes) is visual noise in a terminal that doesn't
+ * render it. This formatter remains for callers that explicitly request
+ * `format: "markdown"`, e.g. when piping the rendered output into a
+ * Markdown-aware sink.
  */
 export const MarkdownFormatter: Formatter = {
 	format: "markdown",

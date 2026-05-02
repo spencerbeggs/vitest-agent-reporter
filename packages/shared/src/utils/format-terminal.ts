@@ -34,9 +34,9 @@ import { relativePath } from "./format-console.js";
 /**
  * Compress a comma-separated line list into ranges where consecutive
  * numbers run together. Defensive: callers may pass already-compressed
- * strings (`"29-32, 34-38"`) or uncompressed (`"29,30,31,32,34,35,36,
- * 37,38"`); both are handled. If parsing fails, the original string is
- * returned unchanged.
+ * strings (e.g. "29-32, 34-38") or uncompressed (e.g. "29,30,31,32") —
+ * both are handled. If parsing fails, the original string is returned
+ * unchanged.
  *
  * @internal
  */
@@ -79,9 +79,9 @@ const METRICS = [
 /**
  * Format a duration in milliseconds as a short human string.
  *
- * Sub-second durations stay in ms (`"328ms"`); >=1s switch to seconds
- * with one decimal (`"5.6s"`). Avoids the noise of "5577ms" in summary
- * rows where second-level precision is plenty.
+ * Sub-second durations stay in ms (`"328ms"`); 1s and longer switch to
+ * seconds with one decimal (`"5.6s"`). Avoids the noise of "5577ms" in
+ * summary rows where second-level precision is plenty.
  *
  * @internal
  */

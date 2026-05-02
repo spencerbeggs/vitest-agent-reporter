@@ -25,7 +25,7 @@ import type { Formatter, FormatterContext, RenderedOutput } from "./types.js";
  * unset; MCP responses never reach this formatter so they cannot
  * accidentally pick up escape sequences.
  *
- * Conservative pattern: a 4-space-indented cross + " " + path + " > "
+ * Conservative pattern: a 4-space-indented cross + " " + path + " \> "
  * (the failing-test row format from `format-terminal.ts`). All other
  * paths in the output (project rows, coverage rows, etc.) are left
  * plain — the link is only useful where a click-to-open IDE
