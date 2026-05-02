@@ -57,7 +57,12 @@ export default defineConfig({
 			},
 		],
 		coverage: {
-			enabled: true,
+			// Off by default for the dev inner loop. Enable via `--coverage`
+			// (the `ci:test` script does this). Coverage instrumentation adds
+			// ~20% wall-clock on this suite; flipping the default keeps
+			// `pnpm run test` lean. Pass `--coverage` (or run `pnpm run
+			// ci:test`) when you actually need a coverage report.
+			enabled: false,
 			provider: "v8",
 			include: [
 				"packages/reporter/src/**/*.ts",

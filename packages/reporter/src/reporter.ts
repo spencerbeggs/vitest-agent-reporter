@@ -52,6 +52,40 @@ import { processFailure } from "./utils/process-failure.js";
 import { resolveThresholds } from "./utils/resolve-thresholds.js";
 
 /**
+ * Cache of in-flight `resolveDataPath` promises, keyed by `projectDir`.
+ *
+ * Multi-project Vitest configs construct one `AgentReporter` instance per
+ * project (typical: 4-5 reporters per repo). Each instance's `ensureDbPath`
+ * runs `resolveDataPath(projectDir)` under `PathResolutionLive`, which
+ * pulls in `WorkspacesLive` — a layer that eagerly scans lockfiles and
+ * walks the workspace package graph. Without this cache, that scan
+ * happens N times in serial during reporter init, adding seconds of
+ * overhead to every `vitest run`.
+ *
+ * The cache is module-local: one entry per `projectDir` (in practice,
+ * always `process.cwd()` for a single Vitest invocation), shared across
+ * all reporter instances within the same Node process. Sufficient
+ * because reporter instances are created in the main Vitest process,
+ * not in worker forks.
+ *
+ * @internal
+ */
+const dbPathCache = new Map<string, Promise<string>>();
+
+function resolveDataPathCached(projectDir: string): Promise<string> {
+	const cached = dbPathCache.get(projectDir);
+	if (cached !== undefined) return cached;
+	const promise = Effect.runPromise(
+		resolveDataPath(projectDir).pipe(Effect.provide(PathResolutionLive(projectDir)), Effect.provide(NodeContext.layer)),
+	);
+	dbPathCache.set(projectDir, promise);
+	// Surface rejection to callers without leaving an unhandled-rejection
+	// warning attached to the cached reference.
+	promise.catch(() => undefined);
+	return promise;
+}
+
+/**
  * Compute updated baselines using ratchet logic: take the max of actual vs previous,
  * capped by targets if set.
  *
@@ -243,13 +277,11 @@ export class AgentReporter {
 			this.dbPath = `${this.options.cacheDir}/data.db`;
 			return this.dbPath;
 		}
+		// Memoized across reporter instances for the same projectDir so
+		// multi-project Vitest configs don't run WorkspacesLive's lockfile
+		// scan once per reporter (5+ scans in typical monorepos).
 		const projectDir = process.cwd();
-		this.dbPath = await Effect.runPromise(
-			resolveDataPath(projectDir).pipe(
-				Effect.provide(PathResolutionLive(projectDir)),
-				Effect.provide(NodeContext.layer),
-			),
-		);
+		this.dbPath = await resolveDataPathCached(projectDir);
 		return this.dbPath;
 	}
 
