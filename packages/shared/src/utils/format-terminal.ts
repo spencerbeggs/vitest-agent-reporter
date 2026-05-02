@@ -267,23 +267,47 @@ const renderCoverageSection = (
 
 	const lines: string[] = [];
 
-	// Summary line
+	// Summary line(s). Three states:
+	//
+	// 1. Thresholds NOT met -> single red line. Build is failing.
+	// 2. Thresholds met but aspirational targets NOT met -> two
+	//    lines so the agent sees a clear distinction: a green
+	//    confirmation that the floor is satisfied, and a yellow
+	//    warning calling out that there is still ground to cover
+	//    toward the target. The split keeps the green-check signal
+	//    from masking the warning at a glance.
+	// 3. Thresholds AND aspirational targets met -> single green
+	//    line collapsing both signals.
+	const thresholdSpec = agg.thresholdsGlobal ? formatTargetSpec(agg.thresholdsGlobal) : "";
+	const targetSpec = agg.targetsGlobal ? formatTargetSpec(agg.targetsGlobal) : "";
+
 	if (!agg.thresholdsMet) {
-		const spec = agg.thresholdsGlobal ? formatTargetSpec(agg.thresholdsGlobal) : "";
 		const cross = ansi("✗", "red", ao);
+		const fileWord = agg.belowThresholdCount === 1 ? "file" : "files";
 		lines.push(
-			`Coverage: ${cross} ${agg.belowThresholdCount} file${agg.belowThresholdCount === 1 ? "" : "s"} below thresholds${spec ? ` (${spec})` : ""}`,
+			`Coverage: ${cross} ${agg.belowThresholdCount} ${fileWord} below minimum thresholds${
+				thresholdSpec ? ` (${thresholdSpec})` : ""
+			}`,
 		);
 	} else if (agg.belowTargetFiles.length > 0) {
-		const spec = agg.targetsGlobal ? formatTargetSpec(agg.targetsGlobal) : "";
 		const tick = ansi("✓", "green", ao);
+		const warn = ansi("⚠", "yellow", ao);
+		const fileWord = agg.belowTargetFiles.length === 1 ? "file" : "files";
+		lines.push(`Coverage: ${tick} minimum thresholds met${thresholdSpec ? ` (${thresholdSpec})` : ""}`);
 		lines.push(
-			`Coverage: ${tick} thresholds met, ${agg.belowTargetFiles.length} file${agg.belowTargetFiles.length === 1 ? "" : "s"} below targets${spec ? ` (${spec})` : ""}`,
+			`Coverage: ${warn} ${agg.belowTargetFiles.length} ${fileWord} below aspirational targets${
+				targetSpec ? ` (${targetSpec})` : ""
+			}`,
 		);
 	} else {
 		const tick = ansi("✓", "green", ao);
-		const spec = agg.targetsGlobal ? formatTargetSpec(agg.targetsGlobal) : "";
-		lines.push(`Coverage: ${tick} all targets met${spec ? ` (${spec})` : ""}`);
+		if (agg.targetsGlobal) {
+			lines.push(
+				`Coverage: ${tick} minimum thresholds + aspirational targets met${targetSpec ? ` (${targetSpec})` : ""}`,
+			);
+		} else {
+			lines.push(`Coverage: ${tick} minimum thresholds met${thresholdSpec ? ` (${thresholdSpec})` : ""}`);
+		}
 	}
 
 	// Trend line (separate from summary so it groups with coverage)
@@ -295,7 +319,7 @@ const renderCoverageSection = (
 	// Per-file below-target rows
 	if (agg.belowTargetFiles.length > 0 && agg.targetsGlobal) {
 		lines.push("");
-		lines.push("Files below target:");
+		lines.push("Files below aspirational target:");
 		const limit = options.coverageConsoleLimit;
 		const shown = agg.belowTargetFiles.slice(0, limit);
 		for (const f of shown) {

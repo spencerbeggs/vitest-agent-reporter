@@ -128,7 +128,7 @@ describe("formatTerminal", () => {
 		expect(out).toContain("Re-run: pnpm vitest run src/foo.test.ts");
 	});
 
-	it("collapses coverage to 'all targets met' when nothing is below", () => {
+	it("collapses coverage to a single met-line when thresholds and targets are both satisfied", () => {
 		const out = formatTerminal(
 			[
 				baseReport({
@@ -141,8 +141,10 @@ describe("formatTerminal", () => {
 			],
 			baseOptions,
 		);
-		expect(out).toContain("Coverage: ✓ all targets met (lines, branches, funcs, stmts ≥ 80%)");
-		expect(out).not.toContain("Files below target:");
+		expect(out).toContain(
+			"Coverage: ✓ minimum thresholds + aspirational targets met (lines, branches, funcs, stmts ≥ 80%)",
+		);
+		expect(out).not.toContain("Files below aspirational target:");
 	});
 
 	it("renders Files below target rows with all below-target metrics, sorted worst-first", () => {
@@ -166,8 +168,9 @@ describe("formatTerminal", () => {
 			],
 			{ ...baseOptions },
 		);
-		expect(out).toContain("Coverage: ✓ thresholds met, 1 file below targets");
-		expect(out).toContain("Files below target:");
+		expect(out).toContain("Coverage: ✓ minimum thresholds met");
+		expect(out).toContain("Coverage: ⚠ 1 file below aspirational targets");
+		expect(out).toContain("Files below aspirational target:");
 		expect(out).toContain("record-turn.ts");
 		// Worst-first: funcs (33) before stmts (67) before lines (67) before branches (75).
 		const idxFuncs = out.indexOf("funcs 33%");
@@ -199,8 +202,8 @@ describe("formatTerminal", () => {
 			],
 			baseOptions,
 		);
-		expect(out).toContain("Coverage: ✗ 1 file below thresholds");
-		expect(out).not.toContain("all targets met");
+		expect(out).toContain("Coverage: ✗ 1 file below minimum thresholds");
+		expect(out).not.toContain("aspirational targets met");
 	});
 
 	it("includes a Trend line when trendSummary is provided", () => {
