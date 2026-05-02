@@ -60,40 +60,67 @@ function renderCoverageTable(files: ReadonlyArray<FileCoverageReport>): string[]
  * Format coverage gap analysis as markdown for the CLI's `coverage`
  * subcommand.
  *
+ * Coverage data is global across the workspace, not per-project: the
+ * reporter runs the istanbul `CoverageMap` exactly once and attaches
+ * the same result to every project's report (see the architecture
+ * doc on per-project coverage). Rendering a separate section per
+ * project would duplicate every file row N times in an N-project
+ * monorepo. Instead we aggregate across projects, dedupe on file
+ * path, and emit a single set of tables under `## Coverage Gaps`.
+ * Threshold and target specs are pulled from the first project that
+ * carries them — they are workspace-global by construction.
+ *
  * @public
  */
 export function formatCoverage(reports: ReadonlyArray<{ project: string; report: AgentReport }>): string {
 	const lines: string[] = [];
 	lines.push("## Coverage Gaps\n");
 
-	for (const { project, report } of reports) {
+	// Dedupe across projects. The first occurrence of each file path
+	// wins; later occurrences (from other projects' reports) carry
+	// identical data and are discarded.
+	const belowThresholdsByFile = new Map<string, FileCoverageReport>();
+	const belowTargetsByFile = new Map<string, FileCoverageReport>();
+	let thresholds: MetricThresholds | undefined;
+	let targets: MetricThresholds | undefined;
+
+	for (const { report } of reports) {
 		const cov = report.coverage;
 		if (!cov) continue;
 
-		const belowThresholds = cov.lowCoverage;
-		const belowTargets = cov.belowTarget ?? [];
-		if (belowThresholds.length === 0 && belowTargets.length === 0) continue;
+		thresholds ??= cov.thresholds.global;
+		targets ??= cov.targets?.global;
 
-		lines.push(`### ${project}`);
-		lines.push(`**Minimum thresholds:** ${formatThresholdDisplay(cov.thresholds.global)}`);
-		if (cov.targets) {
-			lines.push(`**Aspirational targets:** ${formatThresholdDisplay(cov.targets.global)}`);
+		for (const f of cov.lowCoverage) {
+			if (!belowThresholdsByFile.has(f.file)) belowThresholdsByFile.set(f.file, f);
 		}
+		for (const f of cov.belowTarget ?? []) {
+			if (!belowTargetsByFile.has(f.file)) belowTargetsByFile.set(f.file, f);
+		}
+	}
+
+	if (belowThresholdsByFile.size === 0 && belowTargetsByFile.size === 0) {
+		return lines.join("\n");
+	}
+
+	lines.push(`**Minimum thresholds:** ${formatThresholdDisplay(thresholds)}`);
+	if (targets) {
+		lines.push(`**Aspirational targets:** ${formatThresholdDisplay(targets)}`);
+	}
+	lines.push("");
+
+	if (belowThresholdsByFile.size > 0) {
+		lines.push("### Files below minimum thresholds");
 		lines.push("");
+		lines.push(...renderCoverageTable([...belowThresholdsByFile.values()]));
+		lines.push("");
+	}
 
-		if (belowThresholds.length > 0) {
-			lines.push("#### Files below minimum thresholds");
-			lines.push("");
-			lines.push(...renderCoverageTable(belowThresholds));
-			lines.push("");
-		}
-
-		if (belowTargets.length > 0) {
-			lines.push("#### Files below aspirational targets");
-			lines.push("");
-			lines.push(...renderCoverageTable(belowTargets));
-			lines.push("");
-		}
+	if (belowTargetsByFile.size > 0) {
+		lines.push("### Files below aspirational targets");
+		lines.push("");
+		lines.push(...renderCoverageTable([...belowTargetsByFile.values()]));
+		lines.push("");
 	}
 
 	return lines.join("\n");

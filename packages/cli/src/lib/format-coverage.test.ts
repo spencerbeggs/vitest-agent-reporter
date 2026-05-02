@@ -46,8 +46,7 @@ describe("formatCoverage", () => {
 
 		expect(result).toContain("## Coverage Gaps");
 		expect(result).toContain("**Minimum thresholds:** lines: 80%, functions: 80%, branches: 80%, statements: 80%");
-		expect(result).toContain("### core");
-		expect(result).toContain("#### Files below minimum thresholds");
+		expect(result).toContain("### Files below minimum thresholds");
 		expect(result).toContain("| File | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s |");
 		expect(result).toContain("| src/utils.ts | 60 | 50 | 70 | 55 | 42-50,99 |");
 	});
@@ -95,70 +94,39 @@ describe("formatCoverage", () => {
 		expect(result).toContain("| src/coverage.ts |");
 	});
 
-	it("renders multiple projects with their own thresholds", () => {
-		const report1 = makeReport({
-			coverage: {
-				totals: {
-					statements: 80,
-					branches: 70,
-					functions: 90,
-					lines: 75,
+	it("dedupes coverage data across projects (coverage is global, not per-project)", () => {
+		// In real monorepo runs the reporter attaches the same global
+		// coverage data to every project's report. Without dedupe the
+		// CLI would print every file once per project section.
+		const sharedCoverage = {
+			totals: { statements: 80, branches: 70, functions: 90, lines: 75 },
+			thresholds: { global: { lines: 80 } as const, patterns: [] as Array<[string, never]> },
+			scoped: false,
+			lowCoverage: [
+				{
+					file: "src/a.ts",
+					summary: { statements: 50, branches: 40, functions: 60, lines: 45 },
+					uncoveredLines: "10-20",
 				},
-				thresholds: { global: { lines: 80 }, patterns: [] },
-				scoped: false,
-				lowCoverage: [
-					{
-						file: "src/a.ts",
-						summary: {
-							statements: 50,
-							branches: 40,
-							functions: 60,
-							lines: 45,
-						},
-						uncoveredLines: "10-20",
-					},
-				],
-				lowCoverageFiles: ["src/a.ts"],
-			},
-		});
-
-		const report2 = makeReport({
-			coverage: {
-				totals: {
-					statements: 90,
-					branches: 85,
-					functions: 95,
-					lines: 88,
-				},
-				thresholds: { global: { lines: 90, branches: 90 }, patterns: [] },
-				scoped: false,
-				lowCoverage: [
-					{
-						file: "src/b.ts",
-						summary: {
-							statements: 70,
-							branches: 60,
-							functions: 80,
-							lines: 65,
-						},
-						uncoveredLines: "5-8",
-					},
-				],
-				lowCoverageFiles: ["src/b.ts"],
-			},
-		});
+			],
+			lowCoverageFiles: ["src/a.ts"],
+		};
+		const report1 = makeReport({ coverage: sharedCoverage });
+		const report2 = makeReport({ coverage: sharedCoverage });
 
 		const result = formatCoverage([
 			{ project: "core", report: report1 },
 			{ project: "utils", report: report2 },
 		]);
 
-		expect(result).toContain("### core");
-		expect(result).toContain("**Minimum thresholds:** lines: 80%");
-		expect(result).toContain("### utils");
-		expect(result).toContain("**Minimum thresholds:** lines: 90%, branches: 90%");
-		expect(result).toContain("| src/a.ts |");
-		expect(result).toContain("| src/b.ts |");
+		// Single threshold line + single table row (deduped on file path).
+		const thresholdMatches = result.match(/\*\*Minimum thresholds:\*\*/g) ?? [];
+		expect(thresholdMatches.length).toBe(1);
+		const fileMatches = result.match(/\| src\/a\.ts \|/g) ?? [];
+		expect(fileMatches.length).toBe(1);
+		// No per-project headings: coverage is workspace-global.
+		expect(result).not.toContain("### core");
+		expect(result).not.toContain("### utils");
 	});
 
 	it("skips projects with no coverage", () => {
@@ -166,7 +134,7 @@ describe("formatCoverage", () => {
 		const result = formatCoverage([{ project: "core", report }]);
 
 		expect(result).toContain("## Coverage Gaps");
-		expect(result).not.toContain("### core");
+		expect(result).not.toContain("### Files below");
 	});
 
 	it("skips projects with empty low coverage", () => {
@@ -187,7 +155,7 @@ describe("formatCoverage", () => {
 
 		const result = formatCoverage([{ project: "core", report }]);
 
-		expect(result).not.toContain("### core");
+		expect(result).not.toContain("### Files below");
 	});
 
 	it("handles empty reports array", () => {
