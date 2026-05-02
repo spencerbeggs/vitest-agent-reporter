@@ -147,7 +147,7 @@ describe("formatTerminal", () => {
 		expect(out).not.toContain("Files below aspirational target:");
 	});
 
-	it("renders Files below target rows with all below-target metrics, sorted worst-first", () => {
+	it("renders Files below target rows as a v8-style coverage table", () => {
 		const out = formatTerminal(
 			[
 				baseReport({
@@ -171,13 +171,13 @@ describe("formatTerminal", () => {
 		expect(out).toContain("Coverage: ✓ minimum thresholds met");
 		expect(out).toContain("Coverage: ⚠ 1 file below aspirational targets");
 		expect(out).toContain("Files below aspirational target:");
+		// v8-style table: header row, separator, single data row.
+		expect(out).toMatch(/File\s+\|\s+% Stmts\s+\|\s+% Branch\s+\|\s+% Funcs\s+\|\s+% Lines\s+\|\s+Uncovered Line #s/);
 		expect(out).toContain("record-turn.ts");
-		// Worst-first: funcs (33) before stmts (67) before lines (67) before branches (75).
-		const idxFuncs = out.indexOf("funcs 33%");
-		const idxBranches = out.indexOf("branches 75%");
-		expect(idxFuncs).toBeGreaterThan(0);
-		expect(idxBranches).toBeGreaterThan(idxFuncs);
-		expect(out).toContain("uncov 29-32, 34-38, 42, 48");
+		// Each metric appears as an integer in its own column. Use a regex
+		// to confirm the row carries 67/75/33/67 in order plus the
+		// compressed uncov ranges.
+		expect(out).toMatch(/record-turn\.ts\s+\|\s+67\s+\|\s+75\s+\|\s+33\s+\|\s+67\s+\|\s+29-32, 34-38, 42, 48/);
 	});
 
 	it("flags below-threshold coverage as a failure-tier coverage row", () => {

@@ -136,32 +136,6 @@ const renderProjectRow = (report: AgentReport, ao: AnsiOptions, nameWidth: numbe
 };
 
 /**
- * Pull all below-target metrics for a file, sorted worst-first.
- *
- * @internal
- */
-const belowTargetMetrics = (
-	f: FileCoverageReport,
-	targets: MetricThresholds | undefined,
-): Array<{ label: string; key: "lines" | "branches" | "functions" | "statements"; pct: number; target: number }> => {
-	if (!targets) return [];
-	const out: Array<{
-		label: string;
-		key: "lines" | "branches" | "functions" | "statements";
-		pct: number;
-		target: number;
-	}> = [];
-	for (const m of METRICS) {
-		const target = targets[m.key];
-		if (target == null) continue;
-		const pct = f.summary[m.key];
-		if (pct < target) out.push({ label: m.label, key: m.key, pct, target });
-	}
-	out.sort((a, b) => a.pct - b.pct);
-	return out;
-};
-
-/**
  * Format the global target spec compactly.
  *
  * If every metric has the same target (the common case), collapse to
@@ -188,29 +162,114 @@ const formatTargetSpec = (targets: MetricThresholds): string => {
 };
 
 /**
- * Render uncovered line ranges with a metric prefix.
+ * Header labels for the v8-style coverage table. The order is fixed
+ * and matches the column order rendered by {@link renderBelowTargetTable}.
  *
  * @internal
  */
-const renderUncov = (uncoveredLines: string): string => {
-	const compressed = compressUncov(uncoveredLines);
-	return compressed.length === 0 ? "" : `uncov ${compressed}`;
+const TABLE_HEADERS = {
+	file: "File",
+	stmts: "% Stmts",
+	branches: "% Branch",
+	funcs: "% Funcs",
+	lines: "% Lines",
+	uncov: "Uncovered Line #s",
+} as const;
+
+/**
+ * Pad a cell with one space on each side of its content. Numeric
+ * cells are right-aligned, string cells are left-aligned. The width
+ * argument is the inner content width (without the padding spaces).
+ *
+ * @internal
+ */
+const cell = (s: string, width: number, align: "left" | "right"): string => {
+	const inner = align === "right" ? s.padStart(width) : s.padEnd(width);
+	return ` ${inner} `;
 };
 
 /**
- * Below-target file row plus its uncov continuation line.
+ * Render a separator row matching the column geometry of the header.
+ * Width per column = inner width + 2 (the padding spaces) so the row
+ * lines up with the headers and data rows when joined by `|`.
  *
  * @internal
  */
-const renderBelowTargetFile = (f: FileCoverageReport, targets: MetricThresholds): string[] => {
-	const path = relativePath(f.file);
-	const below = belowTargetMetrics(f, targets);
-	if (below.length === 0) return [];
-	const metricsCol = below.map((m) => `${m.label} ${Math.round(m.pct)}%`).join(", ");
-	const lines = [`  ${path}  ${metricsCol}`];
-	const uncov = renderUncov(f.uncoveredLines);
-	if (uncov) lines.push(`    ${uncov}`);
-	return lines;
+const sepRow = (widths: ReadonlyArray<number>): string => widths.map((w) => "-".repeat(w + 2)).join("|");
+
+/**
+ * v8-style coverage table for files below aspirational targets.
+ *
+ * Columns: File, % Stmts, % Branch, % Funcs, % Lines, Uncovered
+ * Line #s. Numeric columns are right-aligned and show the file's
+ * actual coverage value (no `%` suffix — the header carries it).
+ * Showing every metric per row, not just the below-target ones,
+ * matches v8's reporter and gives an LLM agent a complete picture
+ * of where the file stands relative to all four metrics.
+ *
+ * Returns header rows + data rows + a trailing separator. The caller
+ * is responsible for the surrounding caption and any truncation
+ * footer.
+ *
+ * @internal
+ */
+const renderBelowTargetTable = (files: ReadonlyArray<FileCoverageReport>): string[] => {
+	if (files.length === 0) return [];
+
+	interface Row {
+		file: string;
+		stmts: string;
+		branches: string;
+		funcs: string;
+		lines: string;
+		uncov: string;
+	}
+
+	const rows: Row[] = files.map((f) => ({
+		file: relativePath(f.file),
+		stmts: String(Math.round(f.summary.statements)),
+		branches: String(Math.round(f.summary.branches)),
+		funcs: String(Math.round(f.summary.functions)),
+		lines: String(Math.round(f.summary.lines)),
+		uncov: compressUncov(f.uncoveredLines),
+	}));
+
+	const widths = [
+		Math.max(TABLE_HEADERS.file.length, ...rows.map((r) => r.file.length)),
+		Math.max(TABLE_HEADERS.stmts.length, ...rows.map((r) => r.stmts.length)),
+		Math.max(TABLE_HEADERS.branches.length, ...rows.map((r) => r.branches.length)),
+		Math.max(TABLE_HEADERS.funcs.length, ...rows.map((r) => r.funcs.length)),
+		Math.max(TABLE_HEADERS.lines.length, ...rows.map((r) => r.lines.length)),
+		Math.max(TABLE_HEADERS.uncov.length, ...rows.map((r) => r.uncov.length)),
+	] as const;
+
+	const out: string[] = [];
+	out.push(sepRow(widths));
+	out.push(
+		[
+			cell(TABLE_HEADERS.file, widths[0], "left"),
+			cell(TABLE_HEADERS.stmts, widths[1], "right"),
+			cell(TABLE_HEADERS.branches, widths[2], "right"),
+			cell(TABLE_HEADERS.funcs, widths[3], "right"),
+			cell(TABLE_HEADERS.lines, widths[4], "right"),
+			cell(TABLE_HEADERS.uncov, widths[5], "left"),
+		].join("|"),
+	);
+	out.push(sepRow(widths));
+	for (const r of rows) {
+		out.push(
+			[
+				cell(r.file, widths[0], "left"),
+				cell(r.stmts, widths[1], "right"),
+				cell(r.branches, widths[2], "right"),
+				cell(r.funcs, widths[3], "right"),
+				cell(r.lines, widths[4], "right"),
+				cell(r.uncov, widths[5], "left"),
+			].join("|"),
+		);
+	}
+	out.push(sepRow(widths));
+	return out;
 };
 
 /**
@@ -322,12 +381,10 @@ const renderCoverageSection = (
 		lines.push("Files below aspirational target:");
 		const limit = options.coverageConsoleLimit;
 		const shown = agg.belowTargetFiles.slice(0, limit);
-		for (const f of shown) {
-			lines.push(...renderBelowTargetFile(f, agg.targetsGlobal));
-		}
+		lines.push(...renderBelowTargetTable(shown));
 		if (agg.belowTargetFiles.length > limit) {
 			lines.push(
-				`  … ${agg.belowTargetFiles.length - limit} more (run \`vitest-agent-reporter coverage\` for full list)`,
+				`… ${agg.belowTargetFiles.length - limit} more (run \`vitest-agent-reporter coverage\` for full list)`,
 			);
 		}
 	}
