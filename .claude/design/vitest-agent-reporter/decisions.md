@@ -8,6 +8,7 @@ last-synced: 2026-04-30
 post-phase5-sync: 2026-04-23
 post-2-0-sync: 2026-04-29
 post-rc-sync: 2026-04-30
+post-final-sync: 2026-04-30
 completeness: 95
 related:
   - vitest-agent-reporter/architecture.md
@@ -1299,6 +1300,161 @@ migrations follow the same rule -- if a future change cannot
 be expressed without dropping data, it ships an
 export/import path on a major bump rather than silently
 dropping. D9 is not relaxed for RC.
+
+---
+
+## Phase 10 / final notes
+
+The 2.0.0 stable / final release lands the TDD orchestrator
+subagent (W2), the W4 cheap wins (`ci-annotations` formatter,
+OSC-8 hyperlinks, `commit_changes` MCP tool), the W6 TDD
+lifecycle MCP write tools, and the anti-pattern detection hooks.
+**No new architectural decisions** are introduced. Everything
+in final is downstream of D1–D11 from earlier phases. The notes
+below capture three patterns worth recording explicitly so
+future readers don't re-derive them.
+
+### Note final-N1: `tdd_phase_transition_request` is NOT in the idempotency-key registry
+
+The W6 hypothesis MCP write tools (`hypothesis_record`,
+`hypothesis_validate`) opt into the tRPC idempotency middleware
+because they're "write the same content / outcome twice and
+expect the same answer" mutations. The four other final
+mutations -- `tdd_session_start`, `tdd_session_end`,
+`decompose_goal_into_behaviors`, and
+`tdd_phase_transition_request` -- have to be considered one at a
+time: do their accept/deny semantics make sense to replay from
+cache, or are they functions of mutable state that change
+between calls?
+
+**Decision:** `tdd_session_start`, `tdd_session_end`, and
+`decompose_goal_into_behaviors` go into `idempotencyKeys` (5
+entries total at final). `tdd_phase_transition_request` does
+**not**.
+
+**Why `tdd_phase_transition_request` stays out:**
+
+- The accept/deny is a deterministic function of artifact-log
+  state at the moment of the request. The validator
+  (`validatePhaseTransition`) checks: does the cited artifact
+  exist in the current phase window? Was the test authored in
+  this session? Was it already failing on main? Each of these
+  is a fact about the database **right now**
+- Identical inputs at different times can legitimately produce
+  different results. Example: at T0 the agent calls
+  `red → green` citing test artifact #42, the validator denies
+  (test was already failing on main). The agent records a new
+  failing test, gets a fresh artifact #43, and at T1 calls
+  `red → green` citing #43 -- which is now valid. If we'd
+  cached the T0 deny under the input-derived key, the T1 call
+  would replay the deny even though the underlying state
+  changed. That's wrong
+- The validator is itself the source of idempotency: it's a
+  pure function of the database state plus the cited artifact
+  id. If the agent really does retry an identical call (same
+  cited artifact) before any state change, the validator
+  produces the same answer naturally -- no caching needed
+- The cache writes to `mcp_idempotent_responses` would also
+  pollute the table with results that are only valid at one
+  moment in time, making future cache misses harder to reason
+  about
+
+**Why the other three mutations get cached:**
+
+- `tdd_session_start` -- key is `${sessionId}:${goal}`. Opening
+  the same TDD session twice with the same goal under the
+  same parent session is a no-op the agent shouldn't have to
+  think about. Replay returns the existing tdd_session id
+- `tdd_session_end` -- key is `${tddSessionId}:${outcome}`.
+  Closing the same session with the same outcome twice is a
+  no-op
+- `decompose_goal_into_behaviors` -- key is
+  `${tddSessionId}:${goal}`. Re-decomposing the same goal
+  produces the same set of behaviors (the heuristic is
+  deterministic on the input string), so caching is fine
+
+The pattern: idempotency replay is appropriate when the call's
+result is a function of its inputs alone. It's inappropriate
+when the call's result depends on mutable database state that
+the agent might be racing against (or that other agents,
+hooks, or the human operator might have changed between
+calls). `tdd_phase_transition_request` is naturally idempotent
+against stable state and intentionally non-idempotent against
+changing state -- exactly the property the validator was
+designed to enforce.
+
+### Note final-N2: 0004 is additive ALTER-only and D9 stays intact
+
+The 2.0.0 final migration `0004_test_cases_created_turn_id` is
+a single `ALTER TABLE test_cases ADD COLUMN created_turn_id
+INTEGER REFERENCES turns(id) ON DELETE SET NULL` plus a
+supporting index. No `CREATE TABLE`, no `DROP`. Per Decision
+D9 (the last drop-and-recreate was `0002`), every migration
+after `0002` must be ALTER-only or additive `CREATE TABLE`
+with no destructive component. `0003` honored that rule with
+`CREATE TABLE mcp_idempotent_responses`. `0004` is the first
+migration to be a pure `ALTER TABLE`, which is the most
+restrictive form of additive migration and the canonical
+shape D9 anticipates for the long tail. Tables count is
+unchanged at 41. D9 is not relaxed for final, and the
+"export/import on a major bump" escape hatch remains the only
+way out for any future shape change ALTER cannot express.
+
+The new column is required by D2 binding rule 1 (the
+validator joins through `test_cases.created_turn_id` to
+resolve `test_case_created_turn_at` and
+`test_case_authored_in_session`). Without the column, rule 1
+can't be enforced, and the validator would have to fall back
+to coarser heuristics that defeat the point of evidence
+binding. The column being on `test_cases` rather than `turns`
+or `test_runs` is also load-bearing: it's what the test was
+created **by**, which is the spatial coordinate the rule
+binds to.
+
+### Note final-N3: D7 stays load-bearing for `tdd_artifact_record` (CLI-only)
+
+The four write-side TDD lifecycle MCP tools that ship in final
+(`tdd_session_start`, `tdd_session_end`,
+`tdd_session_resume`, `decompose_goal_into_behaviors`,
+`tdd_phase_transition_request`) are accessible to the
+orchestrator subagent via the MCP tool surface. The fifth
+write -- recording an artifact under a phase
+(`tdd_artifacts.artifact_kind`) -- is **deliberately not**
+exposed as an MCP tool. It's only writable through the
+`record tdd-artifact` CLI subcommand, which itself is only
+called from plugin hooks (`post-tool-use-tdd-artifact.sh` and
+`post-tool-use-test-quality.sh`).
+
+This is Decision D7 (originally in α, restated here for final
+as a load-bearing constraint): hooks observe what the agent
+did so the agent never writes evidence about itself.
+
+**Why D7 matters specifically for final:**
+
+- The W2 anti-pattern detection scheme depends on
+  `tdd_artifacts(kind='test_weakened')` rows being credible.
+  If the agent could write its own `test_weakened` artifacts,
+  the agent would have an incentive (or just an oversight) to
+  not record them -- and the metric collapses
+- The D2 evidence-binding validator depends on artifacts
+  being timestamped at the moment the side effect happened
+  (the test-run finishing, the file edit landing). The agent
+  reporting "yes, I just wrote a test" is a worse signal than
+  the hook observing "Edit tool just modified a `.test.ts`
+  file"
+- The orchestrator agent definition's `tools:` array
+  intentionally doesn't include any artifact-write tool. This
+  is enforced at the agent-frontmatter level, not just by
+  convention -- the subagent literally cannot call
+  `record tdd-artifact` directly because it has no Bash tool
+  in scope, and there's no MCP wrapper
+
+D7 stays load-bearing because removing it (i.e. shipping a
+`tdd_artifact_record` MCP write tool later) would invalidate
+the evidence-binding contract. If a future phase wants the
+agent to record artifacts, the right shape is a separate hook
+that the agent's tool calls trigger, not a direct write
+endpoint.
 
 ---
 

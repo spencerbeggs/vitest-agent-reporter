@@ -7,6 +7,8 @@ import type { CacheManifest } from "../schemas/CacheManifest.js";
 import type { CoverageReport, FileCoverageReport } from "../schemas/Coverage.js";
 import type { HistoryRecord } from "../schemas/History.js";
 import type { TrendRecord } from "../schemas/Trends.js";
+import type { CitedArtifact } from "../utils/validate-phase-transition.js";
+import type { ChangeKind, Phase } from "./DataStore.js";
 
 export interface ProjectRunSummary {
 	readonly project: string;
@@ -192,6 +194,30 @@ export interface TddSessionDetail {
 	readonly artifacts: ReadonlyArray<TddArtifactDetail>;
 }
 
+export interface CurrentTddPhase {
+	readonly id: number;
+	readonly phase: Phase;
+	readonly startedAt: string;
+	readonly behaviorId: number | null;
+}
+
+export interface CitedArtifactRow extends CitedArtifact {
+	readonly phase_id: number;
+}
+
+export interface CommitChangesEntry {
+	readonly sha: string;
+	readonly parentSha: string | null;
+	readonly message: string | null;
+	readonly author: string | null;
+	readonly committedAt: string | null;
+	readonly branch: string | null;
+	readonly files: ReadonlyArray<{
+		readonly filePath: string;
+		readonly changeKind: ChangeKind;
+	}>;
+}
+
 export interface HypothesisDetail {
 	readonly id: number;
 	readonly sessionId: number;
@@ -200,6 +226,15 @@ export interface HypothesisDetail {
 	readonly citedStackFrameId: number | null;
 	readonly validationOutcome: "confirmed" | "refuted" | "abandoned" | null;
 	readonly validatedAt: string | null;
+}
+
+export interface TddSessionSummary {
+	readonly id: number;
+	readonly sessionId: number;
+	readonly goal: string;
+	readonly startedAt: string;
+	readonly endedAt: string | null;
+	readonly outcome: "succeeded" | "blocked" | "abandoned" | null;
 }
 
 export class DataReader extends Context.Tag("vitest-agent-reporter/DataReader")<
@@ -282,6 +317,16 @@ export class DataReader extends Context.Tag("vitest-agent-reporter/DataReader")<
 			hash: string,
 		) => Effect.Effect<Option.Option<FailureSignatureDetail>, DataStoreError>;
 		readonly getTddSessionById: (id: number) => Effect.Effect<Option.Option<TddSessionDetail>, DataStoreError>;
+		readonly getCurrentTddPhase: (
+			tddSessionId: number,
+		) => Effect.Effect<Option.Option<CurrentTddPhase>, DataStoreError>;
+		readonly getTddArtifactWithContext: (
+			artifactId: number,
+		) => Effect.Effect<Option.Option<CitedArtifactRow>, DataStoreError>;
+		readonly getCommitChanges: (sha?: string) => Effect.Effect<ReadonlyArray<CommitChangesEntry>, DataStoreError>;
+		readonly listTddSessionsForSession: (
+			sessionId: number,
+		) => Effect.Effect<ReadonlyArray<TddSessionSummary>, DataStoreError>;
 		readonly listHypotheses: (options: {
 			readonly sessionId?: number;
 			readonly outcome?: "confirmed" | "refuted" | "abandoned" | "open";

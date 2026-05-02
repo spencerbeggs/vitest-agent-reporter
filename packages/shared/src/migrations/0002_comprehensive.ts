@@ -425,6 +425,13 @@ const migration = Effect.gen(function* () {
 	yield* sql`CREATE INDEX idx_coverage_trends_run ON coverage_trends(run_id)`;
 
 	// 23. file_coverage
+	//
+	// `tier` distinguishes the build-failing "below_threshold" tier
+	// from the warning "below_target" tier. Without it the reporter
+	// can only safely write one tier per row and the CLI's `coverage`
+	// subcommand has no aspirational-target gaps to surface when the
+	// minimum is met. Default value preserves the only tier that
+	// existed before the column was introduced.
 	yield* sql`
 		CREATE TABLE file_coverage (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -434,11 +441,14 @@ const migration = Effect.gen(function* () {
 			branches REAL NOT NULL,
 			functions REAL NOT NULL,
 			lines REAL NOT NULL,
-			uncovered_lines TEXT
+			uncovered_lines TEXT,
+			tier TEXT NOT NULL DEFAULT 'below_threshold'
+				CHECK (tier IN ('below_threshold', 'below_target'))
 		)
 	`;
 	yield* sql`CREATE INDEX idx_file_coverage_run ON file_coverage(run_id)`;
 	yield* sql`CREATE INDEX idx_file_coverage_file ON file_coverage(file_id)`;
+	yield* sql`CREATE INDEX idx_file_coverage_run_tier ON file_coverage(run_id, tier)`;
 
 	// 24. source_test_map
 	yield* sql`

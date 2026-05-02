@@ -4,6 +4,7 @@ import { AgentPlugin } from "vitest-agent-reporter";
 export default defineConfig({
 	plugins: [
 		AgentPlugin({
+			mode: "agent",
 			strategy: "own",
 			mcp: true,
 			reporter: {
@@ -57,6 +58,13 @@ export default defineConfig({
 			},
 		],
 		coverage: {
+			// On by default. Coverage instrumentation adds ~20% wall-clock
+			// on this suite, but the per-run gap analysis is load-bearing
+			// for the agent-facing terminal output (the threshold/target
+			// summary line and the v8-style table only render when
+			// coverage data is present), so the dev inner loop wants it.
+			// Set to `false` (or pass `--no-coverage`) when running
+			// individual tests where the report is just noise.
 			enabled: true,
 			provider: "v8",
 			include: [

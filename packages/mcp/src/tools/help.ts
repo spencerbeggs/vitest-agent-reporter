@@ -2,7 +2,7 @@ import { publicProcedure } from "../context.js";
 
 const HELP_TEXT = `# vitest-agent-reporter MCP Tools
 
-> 37 tools total.
+> 41 tools total.
 
 ## General
 
@@ -85,6 +85,18 @@ Scopes: \`run_tests({})\` all tests, \`run_tests({ project: "name" })\` by proje
 | Tool | Parameters | Description |
 | ---- | ---------- | ----------- |
 | \`wrapup_prompt\` | \`sessionId?\`, \`ccSessionId?\`, \`kind?\`, \`userPromptHint?\` | Tailored wrap-up prompt for a session (Stop / SessionEnd / PreCompact / TDD handoff / UserPromptSubmit nudge variants) |
+
+## TDD lifecycle (final)
+
+- tdd_session_start — open a TDD session for a goal (idempotent on sessionId+goal)
+- tdd_session_end — close a TDD session with succeeded/blocked/abandoned (idempotent on tddSessionId+outcome)
+- tdd_session_resume — markdown digest of an open session for resume context
+- decompose_goal_into_behaviors — split a goal into a backlog (idempotent on tddSessionId+goal)
+- tdd_phase_transition_request — request a phase transition with cited artifact (validates D2 binding rules)
+
+## Workspace history (final)
+
+- commit_changes — commit metadata + changed files (populated by post-commit hook)
 
 ## Parameter Key
 

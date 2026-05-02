@@ -42,7 +42,7 @@
 		"@trpc/server": "^11.17.0",
 		"effect": "catalog:silk",
 		"vitest-agent-reporter-shared": "workspace:*",
-		"zod": "^4.3.6"
+		"zod": "^4.4.2"
 	},
 	"devDependencies": {
 		"@savvy-web/rslib-builder": "^0.20.3",

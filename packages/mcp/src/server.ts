@@ -484,6 +484,116 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 	);
 
 	server.registerTool(
+		"tdd_session_start",
+		{
+			description: "Open a new TDD session for a goal. Idempotent on (sessionId, goal).",
+			inputSchema: {
+				goal: z.string().describe("The behavior or feature being implemented"),
+				sessionId: z.optional(z.number()).describe("sessions.id (integer); omit to use ccSessionId"),
+				ccSessionId: z.optional(z.string()).describe("Claude Code session id (alternative to sessionId)"),
+				parentTddSessionId: z.optional(z.number()).describe("Parent TDD session id when decomposing"),
+				startedAt: z.optional(z.string()).describe("ISO 8601 timestamp; defaults to now"),
+			},
+		},
+		async (args) =>
+			jsonResult(
+				await caller.tdd_session_start({
+					goal: args.goal,
+					sessionId: args.sessionId,
+					ccSessionId: args.ccSessionId,
+					parentTddSessionId: args.parentTddSessionId,
+					startedAt: args.startedAt,
+				}),
+			),
+	);
+
+	server.registerTool(
+		"tdd_session_end",
+		{
+			description: "Close a TDD session with an outcome. Idempotent on (tddSessionId, outcome).",
+			inputSchema: {
+				tddSessionId: z.number().describe("tdd_sessions.id"),
+				outcome: z.enum(["succeeded", "blocked", "abandoned"]).describe("Final outcome"),
+				summaryNoteId: z.optional(z.number()).describe("Optional FK to a notes row carrying the full summary"),
+			},
+		},
+		async (args) =>
+			jsonResult(
+				await caller.tdd_session_end({
+					tddSessionId: args.tddSessionId,
+					outcome: args.outcome,
+					summaryNoteId: args.summaryNoteId,
+				}),
+			),
+	);
+
+	server.registerTool(
+		"decompose_goal_into_behaviors",
+		{
+			description:
+				"Decompose a TDD goal into an ordered backlog of single-behavior goals. Idempotent on (tddSessionId, goal).",
+			inputSchema: {
+				tddSessionId: z.number().describe("Parent tdd_sessions.id"),
+				goal: z.string().describe("Goal text from /tdd <goal>"),
+			},
+		},
+		async (args) =>
+			jsonResult(
+				await caller.decompose_goal_into_behaviors({
+					tddSessionId: args.tddSessionId,
+					goal: args.goal,
+				}),
+			),
+	);
+
+	server.registerTool(
+		"tdd_session_resume",
+		{
+			description: "Markdown digest of a TDD session for resuming work — goal, current phase, artifact count.",
+			inputSchema: {
+				id: z.number().describe("tdd_sessions.id"),
+			},
+		},
+		async (args) => textResult(await caller.tdd_session_resume({ id: args.id })),
+	);
+
+	server.registerTool(
+		"tdd_phase_transition_request",
+		{
+			description:
+				"Request a TDD phase transition. Validates artifact evidence per D2 binding rules; returns accept/deny.",
+			inputSchema: {
+				tddSessionId: z.number().describe("tdd_sessions.id"),
+				requestedPhase: z
+					.enum([
+						"spike",
+						"red",
+						"red.triangulate",
+						"green",
+						"green.fake-it",
+						"refactor",
+						"extended-red",
+						"green-without-red",
+					])
+					.describe("Phase to transition to"),
+				citedArtifactId: z.number().describe("tdd_artifacts.id supplying the evidence"),
+				behaviorId: z.optional(z.number()).describe("tdd_session_behaviors.id when transitioning a specific behavior"),
+				reason: z.optional(z.string()).describe("Free-text reason for the transition"),
+			},
+		},
+		async (args) =>
+			jsonResult(
+				await caller.tdd_phase_transition_request({
+					tddSessionId: args.tddSessionId,
+					requestedPhase: args.requestedPhase,
+					citedArtifactId: args.citedArtifactId,
+					behaviorId: args.behaviorId,
+					reason: args.reason,
+				}),
+			),
+	);
+
+	server.registerTool(
 		"hypothesis_list",
 		{
 			description: "List agent hypotheses with optional filtering by session or validation outcome",
@@ -609,6 +719,18 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 					userPromptHint: args.userPromptHint,
 				}),
 			),
+	);
+
+	server.registerTool(
+		"commit_changes",
+		{
+			description:
+				"Commit metadata + changed files captured by the post-commit hook. Returns up to 20 most-recent when sha is omitted.",
+			inputSchema: {
+				sha: z.optional(z.string()).describe("Specific commit sha to fetch; omit for recent commits"),
+			},
+		},
+		async (args) => textResult(await caller.commit_changes({ sha: args.sha })),
 	);
 
 	const transport = new StdioServerTransport();

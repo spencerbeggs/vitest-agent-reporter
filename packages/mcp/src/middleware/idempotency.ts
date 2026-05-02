@@ -61,6 +61,59 @@ export const idempotencyKeys: ReadonlyArray<IdempotencyKeySpec> = [
 			return null;
 		},
 	},
+	{
+		// `tdd_session_start` accepts either `sessionId` (sessions.id) or
+		// `ccSessionId` (Claude Code session id). Both forms must produce
+		// a stable key — without that, an orchestrator retry that uses the
+		// same identifier form will silently bypass the cache and create
+		// a duplicate `tdd_sessions` row, which is exactly what idempotency
+		// is here to prevent. We key on whichever id is present, prefixed
+		// with its kind so a hypothetical `cc-X` cc-id can't collide with
+		// integer id `X`.
+		procedurePath: "tdd_session_start",
+		deriveKey: (input) => {
+			if (input === null || typeof input !== "object" || !("goal" in input)) return null;
+			const i = input as Record<string, unknown>;
+			if (typeof i.goal !== "string") return null;
+			if (typeof i.sessionId === "number") return `sid:${i.sessionId}:${i.goal}`;
+			if (typeof i.ccSessionId === "string") return `cc:${i.ccSessionId}:${i.goal}`;
+			return null;
+		},
+	},
+	{
+		procedurePath: "tdd_session_end",
+		deriveKey: (input) => {
+			if (
+				input !== null &&
+				typeof input === "object" &&
+				"tddSessionId" in input &&
+				"outcome" in input &&
+				typeof (input as Record<string, unknown>).tddSessionId === "number" &&
+				typeof (input as Record<string, unknown>).outcome === "string"
+			) {
+				const i = input as { tddSessionId: number; outcome: string };
+				return `${i.tddSessionId}:${i.outcome}`;
+			}
+			return null;
+		},
+	},
+	{
+		procedurePath: "decompose_goal_into_behaviors",
+		deriveKey: (input) => {
+			if (
+				input !== null &&
+				typeof input === "object" &&
+				"tddSessionId" in input &&
+				"goal" in input &&
+				typeof (input as Record<string, unknown>).tddSessionId === "number" &&
+				typeof (input as Record<string, unknown>).goal === "string"
+			) {
+				const i = input as { tddSessionId: number; goal: string };
+				return `${i.tddSessionId}:${i.goal}`;
+			}
+			return null;
+		},
+	},
 ];
 
 // ---------------------------------------------------------------------------

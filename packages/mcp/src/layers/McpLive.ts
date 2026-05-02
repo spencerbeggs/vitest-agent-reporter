@@ -13,6 +13,7 @@ import {
 	migration0001,
 	migration0002,
 	migration0003,
+	migration0004,
 } from "vitest-agent-reporter-shared";
 
 export const McpLive = (dbPath: string, logLevel?: LogLevel.LogLevel, logFile?: string) => {
@@ -23,6 +24,7 @@ export const McpLive = (dbPath: string, logLevel?: LogLevel.LogLevel, logFile?: 
 			"0001_initial": migration0001,
 			"0002_comprehensive": migration0002,
 			"0003_idempotent_responses": migration0003,
+			"0004_test_cases_created_turn_id": migration0004,
 		}),
 	}).pipe(Layer.provide(Layer.merge(SqliteLayer, PlatformLayer)));
 

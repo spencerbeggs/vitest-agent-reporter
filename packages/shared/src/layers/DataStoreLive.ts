@@ -4,6 +4,7 @@ import { DataStoreError, extractSqlReason } from "../errors/DataStoreError.js";
 import type { CoverageBaselines } from "../schemas/Baselines.js";
 import type { TrendEntry } from "../schemas/Trends.js";
 import type {
+	EndTddSessionInput,
 	FailureSignatureWriteInput,
 	FileCoverageInput,
 	HypothesisInput,
@@ -13,11 +14,19 @@ import type {
 	SessionInput,
 	SettingsInput,
 	SuiteInput,
+	TddBehaviorOutput,
+	TddSessionInput,
 	TestCaseInput,
 	TestErrorInput,
 	TestRunInput,
 	TurnInput,
 	ValidateHypothesisInput,
+	WriteCommitInput,
+	WriteRunChangedFilesInput,
+	WriteTddArtifactInput,
+	WriteTddBehaviorsInput,
+	WriteTddPhaseInput,
+	WriteTddPhaseOutput,
 } from "../services/DataStore.js";
 import { DataStore } from "../services/DataStore.js";
 
@@ -124,7 +133,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				yield* Effect.logDebug("writeTestCases").pipe(Effect.annotateLogs({ moduleId, count: tests.length }));
 				const ids: number[] = [];
 				for (const tc of tests) {
-					yield* sql`INSERT INTO test_cases (module_id, suite_id, vitest_id, name, full_name, state, classification, duration, start_time, flaky, slow, retry_count, repeat_count, heap, mode, each, fails, concurrent, shuffle, timeout, skip_note, location_line, location_column) VALUES (${moduleId}, ${tc.suiteId ?? null}, ${tc.vitestId ?? null}, ${tc.name}, ${tc.fullName}, ${tc.state}, ${tc.classification ?? null}, ${tc.duration ?? null}, ${tc.startTime ?? null}, ${boolToInt(tc.flaky)}, ${boolToInt(tc.slow)}, ${tc.retryCount ?? 0}, ${tc.repeatCount ?? 0}, ${tc.heap ?? null}, ${tc.mode ?? null}, ${boolToInt(tc.each)}, ${boolToInt(tc.fails)}, ${boolToInt(tc.concurrent)}, ${boolToInt(tc.shuffle)}, ${tc.timeout ?? null}, ${tc.skipNote ?? null}, ${tc.locationLine ?? null}, ${tc.locationColumn ?? null})`;
+					yield* sql`INSERT INTO test_cases (module_id, suite_id, vitest_id, name, full_name, state, classification, duration, start_time, flaky, slow, retry_count, repeat_count, heap, mode, each, fails, concurrent, shuffle, timeout, skip_note, location_line, location_column, created_turn_id) VALUES (${moduleId}, ${tc.suiteId ?? null}, ${tc.vitestId ?? null}, ${tc.name}, ${tc.fullName}, ${tc.state}, ${tc.classification ?? null}, ${tc.duration ?? null}, ${tc.startTime ?? null}, ${boolToInt(tc.flaky)}, ${boolToInt(tc.slow)}, ${tc.retryCount ?? 0}, ${tc.repeatCount ?? 0}, ${tc.heap ?? null}, ${tc.mode ?? null}, ${boolToInt(tc.each)}, ${boolToInt(tc.fails)}, ${boolToInt(tc.concurrent)}, ${boolToInt(tc.shuffle)}, ${tc.timeout ?? null}, ${tc.skipNote ?? null}, ${tc.locationLine ?? null}, ${tc.locationColumn ?? null}, ${tc.created_turn_id ?? null})`;
 					const rows = yield* sql<{ id: number }>`SELECT last_insert_rowid() as id`;
 					const testCaseId = rows[0].id;
 					ids.push(testCaseId);
@@ -193,7 +202,8 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 			Effect.gen(function* () {
 				yield* Effect.logDebug("writeCoverage").pipe(Effect.annotateLogs({ runId, count: coverage.length }));
 				for (const cov of coverage) {
-					yield* sql`INSERT INTO file_coverage (run_id, file_id, statements, branches, functions, lines, uncovered_lines) VALUES (${runId}, ${cov.fileId}, ${cov.statements}, ${cov.branches}, ${cov.functions}, ${cov.lines}, ${cov.uncoveredLines ?? null})`;
+					const tier = cov.tier ?? "below_threshold";
+					yield* sql`INSERT INTO file_coverage (run_id, file_id, statements, branches, functions, lines, uncovered_lines, tier) VALUES (${runId}, ${cov.fileId}, ${cov.statements}, ${cov.branches}, ${cov.functions}, ${cov.lines}, ${cov.uncoveredLines ?? null}, ${tier})`;
 				}
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
@@ -499,6 +509,217 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				),
 			);
 
+		const writeTddSession = (input: TddSessionInput): Effect.Effect<number, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("writeTddSession").pipe(
+					Effect.annotateLogs({ sessionId: input.sessionId, goal: input.goal }),
+				);
+				const rows = yield* sql<{ id: number }>`
+					INSERT INTO tdd_sessions (session_id, goal, started_at, parent_tdd_session_id)
+					VALUES (
+						${input.sessionId},
+						${input.goal},
+						${input.startedAt},
+						${input.parentTddSessionId ?? null}
+					)
+					RETURNING id
+				`;
+				return rows[0].id;
+			}).pipe(
+				Effect.annotateLogs("service", "DataStore"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "tdd_sessions", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const endTddSession = (input: EndTddSessionInput): Effect.Effect<void, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("endTddSession").pipe(Effect.annotateLogs({ id: input.id, outcome: input.outcome }));
+				yield* sql`
+					UPDATE tdd_sessions
+					SET ended_at = ${input.endedAt},
+					    outcome = ${input.outcome},
+					    summary_note_id = ${input.summaryNoteId ?? null}
+					WHERE id = ${input.id}
+				`;
+			}).pipe(
+				Effect.annotateLogs("service", "DataStore"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "tdd_sessions", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const writeTddSessionBehaviors = (
+			input: WriteTddBehaviorsInput,
+		): Effect.Effect<ReadonlyArray<TddBehaviorOutput>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("writeTddSessionBehaviors").pipe(
+					Effect.annotateLogs({
+						parentTddSessionId: input.parentTddSessionId,
+						count: input.behaviors.length,
+					}),
+				);
+				const out: TddBehaviorOutput[] = [];
+				for (let i = 0; i < input.behaviors.length; i++) {
+					const b = input.behaviors[i];
+					const dependsOnJson =
+						b.dependsOnBehaviorIds !== undefined && b.dependsOnBehaviorIds.length > 0
+							? JSON.stringify(b.dependsOnBehaviorIds)
+							: null;
+					const rows = yield* sql<{ id: number }>`
+						INSERT INTO tdd_session_behaviors
+							(parent_tdd_session_id, ordinal, behavior, suggested_test_name, depends_on_behavior_ids)
+						VALUES
+							(${input.parentTddSessionId}, ${i}, ${b.behavior}, ${b.suggestedTestName}, ${dependsOnJson})
+						RETURNING id
+					`;
+					out.push({
+						id: rows[0].id,
+						ordinal: i,
+						behavior: b.behavior,
+						suggestedTestName: b.suggestedTestName,
+					});
+				}
+				return out;
+			}).pipe(
+				Effect.annotateLogs("service", "DataStore"),
+				Effect.mapError(
+					(e) =>
+						new DataStoreError({
+							operation: "write",
+							table: "tdd_session_behaviors",
+							reason: extractSqlReason(e),
+						}),
+				),
+			);
+
+		const writeTddArtifact = (input: WriteTddArtifactInput): Effect.Effect<number, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("writeTddArtifact").pipe(
+					Effect.annotateLogs({ phaseId: input.phaseId, artifactKind: input.artifactKind }),
+				);
+				const truncatedDiff =
+					input.diffExcerpt !== undefined && input.diffExcerpt.length > 4096
+						? input.diffExcerpt.slice(0, 4096)
+						: (input.diffExcerpt ?? null);
+				const rows = yield* sql<{ id: number }>`
+					INSERT INTO tdd_artifacts
+						(phase_id, artifact_kind, file_id, test_case_id, test_run_id,
+						 test_first_failure_run_id, diff_excerpt, recorded_at)
+					VALUES
+						(
+							${input.phaseId},
+							${input.artifactKind},
+							${input.fileId ?? null},
+							${input.testCaseId ?? null},
+							${input.testRunId ?? null},
+							${input.testFirstFailureRunId ?? null},
+							${truncatedDiff},
+							${input.recordedAt}
+						)
+					RETURNING id
+				`;
+				return rows[0].id;
+			}).pipe(
+				Effect.annotateLogs("service", "DataStore"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "tdd_artifacts", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const writeTddPhase = (input: WriteTddPhaseInput): Effect.Effect<WriteTddPhaseOutput, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("writeTddPhase").pipe(
+					Effect.annotateLogs({ tddSessionId: input.tddSessionId, phase: input.phase }),
+				);
+
+				// Find the currently-open phase (ended_at IS NULL) for this session,
+				// if any, so we can close it as we open the new one.
+				const open = yield* sql<{ id: number }>`
+					SELECT id FROM tdd_phases
+					WHERE tdd_session_id = ${input.tddSessionId} AND ended_at IS NULL
+					ORDER BY started_at DESC LIMIT 1
+				`;
+				const previousPhaseId = open.length === 0 ? null : open[0].id;
+
+				if (previousPhaseId !== null) {
+					yield* sql`
+						UPDATE tdd_phases SET ended_at = ${input.startedAt}
+						WHERE id = ${previousPhaseId}
+					`;
+				}
+
+				const rows = yield* sql<{ id: number }>`
+					INSERT INTO tdd_phases
+						(tdd_session_id, behavior_id, phase, started_at, transition_reason, parent_phase_id)
+					VALUES
+						(
+							${input.tddSessionId},
+							${input.behaviorId ?? null},
+							${input.phase},
+							${input.startedAt},
+							${input.transitionReason ?? null},
+							${input.parentPhaseId ?? null}
+						)
+					RETURNING id
+				`;
+				return { id: rows[0].id, previousPhaseId };
+			}).pipe(
+				Effect.annotateLogs("service", "DataStore"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "tdd_phases", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const writeCommit = (input: WriteCommitInput): Effect.Effect<void, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("writeCommit").pipe(Effect.annotateLogs({ sha: input.sha }));
+				yield* sql`
+					INSERT INTO commits (sha, parent_sha, message, author, committed_at, branch)
+					VALUES (
+						${input.sha},
+						${input.parentSha ?? null},
+						${input.message ?? null},
+						${input.author ?? null},
+						${input.committedAt ?? null},
+						${input.branch ?? null}
+					)
+					ON CONFLICT(sha) DO NOTHING
+				`;
+			}).pipe(
+				Effect.annotateLogs("service", "DataStore"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "write", table: "commits", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const writeRunChangedFiles = (input: WriteRunChangedFilesInput): Effect.Effect<void, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("writeRunChangedFiles").pipe(
+					Effect.annotateLogs({ runId: input.runId, count: input.files.length }),
+				);
+				for (const file of input.files) {
+					const fileId = yield* ensureFile(file.filePath);
+					yield* sql`
+						INSERT INTO run_changed_files (run_id, file_id, change_kind, commit_sha)
+						VALUES (${input.runId}, ${fileId}, ${file.changeKind}, ${file.commitSha ?? null})
+						ON CONFLICT(run_id, file_id) DO UPDATE SET
+							change_kind = excluded.change_kind,
+							commit_sha = excluded.commit_sha
+					`;
+				}
+			}).pipe(
+				Effect.annotateLogs("service", "DataStore"),
+				Effect.mapError(
+					(e) =>
+						new DataStoreError({
+							operation: "write",
+							table: "run_changed_files",
+							reason: extractSqlReason(e),
+						}),
+				),
+			);
+
 		const recordIdempotentResponse = (input: IdempotentResponseInput): Effect.Effect<void, DataStoreError> =>
 			Effect.gen(function* () {
 				yield* Effect.logDebug("recordIdempotentResponse").pipe(
@@ -519,7 +740,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 
 		const pruneSessions = (
 			keepRecent: number,
-		): Effect.Effect<{ readonly prunedSessions: number; readonly prunedTurns: number }, DataStoreError> =>
+		): Effect.Effect<{ readonly affectedSessions: number; readonly prunedTurns: number }, DataStoreError> =>
 			Effect.gen(function* () {
 				yield* Effect.logDebug("pruneSessions").pipe(Effect.annotateLogs({ keepRecent }));
 
@@ -528,7 +749,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				const cutoffRows = yield* sql<{ started_at: string }>`
 					SELECT started_at FROM sessions ORDER BY started_at DESC LIMIT 1 OFFSET ${keepRecent}
 				`;
-				if (cutoffRows.length === 0) return { prunedSessions: 0, prunedTurns: 0 };
+				if (cutoffRows.length === 0) return { affectedSessions: 0, prunedTurns: 0 };
 				const cutoff = cutoffRows[0].started_at;
 
 				const turnCountRows = yield* sql<{ count: number }>`
@@ -537,10 +758,13 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				`;
 				const prunedTurns = turnCountRows[0]?.count ?? 0;
 
+				// `affectedSessions` is the number of sessions whose turn-log was
+				// dropped, NOT sessions deleted: sessions rows are retained so the
+				// summary remains queryable. Naming reflects that distinction.
 				const sessionCountRows = yield* sql<{ count: number }>`
 					SELECT COUNT(*) AS count FROM sessions WHERE started_at <= ${cutoff}
 				`;
-				const prunedSessions = sessionCountRows[0]?.count ?? 0;
+				const affectedSessions = sessionCountRows[0]?.count ?? 0;
 
 				// FK CASCADE on tool_invocations.turn_id and file_edits.turn_id
 				// drops the children when these turns rows go. The sessions rows
@@ -551,7 +775,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 					)
 				`;
 
-				return { prunedSessions, prunedTurns };
+				return { affectedSessions, prunedTurns };
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
 				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "turns", reason: extractSqlReason(e) })),
@@ -579,6 +803,13 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 			endSession,
 			writeHypothesis,
 			validateHypothesis,
+			writeTddSession,
+			endTddSession,
+			writeTddSessionBehaviors,
+			writeTddPhase,
+			writeTddArtifact,
+			writeCommit,
+			writeRunChangedFiles,
 			recordIdempotentResponse,
 			pruneSessions,
 		};

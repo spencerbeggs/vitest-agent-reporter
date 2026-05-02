@@ -8,6 +8,7 @@ last-synced: 2026-04-30
 post-phase5-sync: 2026-04-23
 post-2-0-sync: 2026-04-29
 post-rc-sync: 2026-04-30
+post-final-sync: 2026-04-30
 completeness: 95
 related:
   - vitest-agent-reporter/components.md
@@ -37,7 +38,7 @@ only what you need for the task at hand.
 | [decisions.md](./decisions.md) | Need to understand "why" something was built a certain way | Architectural decisions (incl. 2.0 four-package split, XDG path resolution, retired plugin file:// loader), design patterns, constraints/trade-offs |
 | [data-structures.md](./data-structures.md) | Working with schemas, DB schema, output, or data flow | File structure across four packages, TypeScript interfaces, SQLite schema, XDG data layout, config file schema, data flow diagrams, integration points |
 | [testing-strategy.md](./testing-strategy.md) | Writing tests, reviewing test coverage, or checking testing patterns | Current test patterns, coverage targets, per-project test counts, integration test targets |
-| [phase-history.md](./phase-history.md) | Understanding implementation history or when a feature shipped | Chronological narrative of Phases 1-9 (2.0 restructure + 2.0.0-α comprehensive schema + 2.0.0-β substrate wiring + 2.0.0-RC substrate integration) with breaking changes per phase |
+| [phase-history.md](./phase-history.md) | Understanding implementation history or when a feature shipped | Chronological narrative of Phases 1-10 (2.0 restructure + 2.0.0-α comprehensive schema + 2.0.0-β substrate wiring + 2.0.0-RC substrate integration + 2.0.0 stable / TDD orchestrator) with breaking changes per phase |
 
 ---
 
@@ -52,8 +53,8 @@ schema/data-layer contract:
 | --- | --- | --- |
 | `vitest-agent-reporter-shared` | `packages/shared/` | Effect Schema, SQLite migrations, errors, `DataStore`/`DataReader` services + live layers, all pipeline services (Environment/Executor/Format/Detail/OutputRenderer) and live layers, History/ProjectDiscovery, Logger, formatters, utilities, **and the new XDG path-resolution stack** (`AppDirs`, ConfigFile, WorkspaceDiscovery, `resolveDataPath`). No internal dependencies. |
 | `vitest-agent-reporter` | `packages/reporter/` | The Vitest reporter + plugin + `ReporterLive` + `CoverageAnalyzer`. Depends on shared. Declares the CLI and MCP packages as required `peerDependencies`. No bin entries. |
-| `vitest-agent-reporter-cli` | `packages/cli/` | `vitest-agent-reporter` bin (`@effect/cli`-based) with `status`, `overview`, `coverage`, `history`, `trends`, `cache` (β: + `prune`), `doctor`, (β) `record`, and (RC) `triage` + `wrapup` subcommands. Depends on shared. Owns `CliLive`. |
-| `vitest-agent-reporter-mcp` | `packages/mcp/` | `vitest-agent-reporter-mcp` bin (`@modelcontextprotocol/sdk` + tRPC). Depends on shared. Owns `McpLive`. β adds seven read-only tools over the α schema substrate; RC adds four more (`triage_brief`, `wrapup_prompt`, `hypothesis_record`, `hypothesis_validate`) plus a tRPC idempotency middleware. |
+| `vitest-agent-reporter-cli` | `packages/cli/` | `vitest-agent-reporter` bin (`@effect/cli`-based) with `status`, `overview`, `coverage`, `history`, `trends`, `cache` (β: + `prune`), `doctor`, (β) `record`, and (RC) `triage` + `wrapup` subcommands. Final adds two more `record` subcommands (`tdd-artifact`, `run-workspace-changes`). Depends on shared. Owns `CliLive`. |
+| `vitest-agent-reporter-mcp` | `packages/mcp/` | `vitest-agent-reporter-mcp` bin (`@modelcontextprotocol/sdk` + tRPC). Depends on shared. Owns `McpLive`. β adds seven read-only tools over the α schema substrate; RC adds four more (`triage_brief`, `wrapup_prompt`, `hypothesis_record`, `hypothesis_validate`) plus a tRPC idempotency middleware. Final adds six more (`tdd_session_start`, `tdd_session_end`, `tdd_session_resume`, `decompose_goal_into_behaviors`, `tdd_phase_transition_request`, `commit_changes`) for 41 tools total. |
 
 Examples live under `examples/*` (not pnpm workspaces by name, but
 included as a fifth Vitest project for integration coverage). The
@@ -76,9 +77,12 @@ pnpm workspace.
   subcommand emitting the W3 orientation brief, a `wrapup`
   subcommand emitting the W5 wrap-up prompt, and a
   `cache prune --keep-recent` subcommand for W1 turn-history
-  retention. All commands support `--format` for output format
-  selection. Reads cached test data on-demand for LLM-oriented
-  test landscape queries.
+  retention; final adds two more `record` actions
+  (`record tdd-artifact` for hook-driven TDD evidence capture per
+  Decision D7, `record run-workspace-changes` backing the
+  `commit_changes` MCP tool). All commands support `--format` for
+  output format selection. Reads cached test data on-demand for
+  LLM-oriented test landscape queries.
 - **Failure history and classification** -- per-test failure
   persistence with a 10-entry sliding window, classifying tests as
   `stable`, `new-failure`, `persistent`, `flaky`, or `recovered` for
@@ -95,22 +99,36 @@ pnpm workspace.
   (EnvironmentDetector -> ExecutorResolver -> FormatSelector ->
   DetailResolver -> OutputRenderer) with 4 built-in formatters
   (`markdown`, `gfm`, `json`, `silent`).
-- **MCP server and Claude Code plugin** -- 37 MCP tools via tRPC
+
+- **MCP server and Claude Code plugin** -- 41 MCP tools via tRPC
   router (24 from Phase 5/6 plus 7 read-only β tools:
   `session_list`, `session_get`, `turn_search`,
   `failure_signature_get`, `tdd_session_get`, `hypothesis_list`,
   `acceptance_metrics`; plus 4 RC tools: read-only `triage_brief`
   and `wrapup_prompt`, mutation `hypothesis_record` and
-  `hypothesis_validate` -- the latter two routed through the new
-  tRPC idempotency middleware), stdio transport. The file-based
+  `hypothesis_validate` -- routed through the tRPC idempotency
+  middleware; plus 6 final tools: TDD lifecycle reads/writes
+  `tdd_session_start`, `tdd_session_end`, `tdd_session_resume`,
+  `decompose_goal_into_behaviors`, `tdd_phase_transition_request`
+  -- the latter is the headline write but is **not** in the
+  idempotency-key registry per Phase 10 / final notes -- plus
+  read-only `commit_changes`), stdio transport. The file-based
   Claude Code plugin at `plugin/` ships a PM-detect-and-spawn
   loader, lifecycle hooks (incl. six β `record-*` hook scripts
   that emit session/turn rows via the CLI; RC adds a new
   `stop-record.sh` and upgrades three β record-only hooks --
   `session-end`, `pre-compact`, `user-prompt-submit` -- to
   record + interpretive prompt-injection nudges via the
-  `wrapup` CLI), skills, and a `PreToolUse` hook that
-  auto-allows all 37 MCP tools.
+  `wrapup` CLI; final adds five more orchestrator-scoped hooks
+  (`subagent-start-tdd.sh`, `subagent-stop-tdd.sh`,
+  `pre-tool-use-bash-tdd.sh`, `post-tool-use-tdd-artifact.sh`,
+  `post-tool-use-test-quality.sh`) and one repo-scoped hook
+  (`post-tool-use-git-commit.sh`)), the new TDD orchestrator
+  agent definition (`plugin/agents/tdd-orchestrator.md`), the
+  `/tdd <goal>` slash command (`plugin/commands/tdd.md`), the
+  9 sub-skill primitives under `plugin/skills/tdd-primitives/`
+  (Decision D6 standalone reuse), and a `PreToolUse` hook that
+  auto-allows all 41 MCP tools.
 
 For implementation history see [phase-history.md](./phase-history.md).
 
@@ -201,14 +219,17 @@ Vitest projects (one per package plus `example-basic`).
   for JSON encode/decode
 - **Duck-type istanbul** -- structural interface avoids hard peer dependency;
   works with both `v8` and `istanbul` coverage providers
-- **MCP-first agent integration** -- MCP server exposes 31 tools via
+- **MCP-first agent integration** -- MCP server exposes 41 tools via
   tRPC router (24 from Phase 5/6 plus 7 β read-only tools surfacing
-  α's session/turn/TDD/hypothesis/failure-signature substrate),
-  giving agents structured access to test data, coverage, history,
-  trends, errors, per-file coverage, individual test details, note
-  management, discovery queries (project/test/module/suite/settings
-  listing), and the new session/TDD/hypothesis read paths without
-  parsing CLI output
+  α's session/turn/TDD/hypothesis/failure-signature substrate, plus
+  4 RC tools, plus 6 final tools for TDD lifecycle reads/writes and
+  `commit_changes`), giving agents structured access to test data,
+  coverage, history, trends, errors, per-file coverage, individual
+  test details, note management, discovery queries
+  (project/test/module/suite/settings listing), session/TDD/hypothesis
+  read paths, the W3 orientation triage brief, the W5 wrap-up
+  prompt, hypothesis writes, TDD lifecycle writes, and workspace
+  commit history -- all without parsing CLI output
 - **Hook-driven session/turn capture (β)** -- six new `record-*`
   shell hooks under `plugin/hooks/` (SessionStart,
   UserPromptSubmit, PreToolUse, PostToolUse, SessionEnd,
@@ -254,7 +275,20 @@ Vitest projects (one per package plus `example-basic`).
   middleware, and W4 cheap wins (`wrapup` CLI, `wrapup_prompt`
   MCP tool, `cache prune` CLI) -- all built on a single
   additive `0003_idempotent_responses` migration (41 tables
-  total)
+  total); Phase 10 (2.0.0 stable / final) lands the TDD
+  orchestrator subagent (`plugin/agents/tdd-orchestrator.md` with
+  the eight-state state machine and the iron-law system prompt),
+  the `/tdd <goal>` slash command, the 9 sub-skill primitives
+  (Decision D6 standalone reuse), six new MCP tools for TDD
+  lifecycle reads/writes plus `commit_changes`, two new `record`
+  CLI subcommands (`tdd-artifact` per Decision D7, plus
+  `run-workspace-changes`), six new plugin hook scripts (five
+  orchestrator-scoped, one repo-scoped for git commits), the
+  `ci-annotations` shared formatter for GitHub Actions, the
+  `osc8` shared utility for terminal hyperlinks, and a single
+  additive `0004_test_cases_created_turn_id` migration (4
+  migrations total, 41 tables unchanged) needed by D2 binding
+  rule 1
 
 ---
 
@@ -327,6 +361,16 @@ Package layout (the four pnpm workspaces under `packages/`):
      session-end-record.sh, pre-compact-record.sh, and
      user-prompt-submit-record.sh upgraded from record-only to
      record + interpretive nudge via wrapup CLI.
+     (final) New tdd-orchestrator subagent (plugin/agents/) +
+     /tdd slash command (plugin/commands/tdd.md) + 9 sub-skill
+     primitives (plugin/skills/tdd-primitives/). Five new
+     orchestrator-scoped hooks: subagent-start-tdd.sh,
+     subagent-stop-tdd.sh, pre-tool-use-bash-tdd.sh (Bash gate),
+     post-tool-use-tdd-artifact.sh (records evidence),
+     post-tool-use-test-quality.sh (test_weakened detection).
+     One repo-scoped hook: post-tool-use-git-commit.sh (writes
+     commits + run_changed_files). MCP adds 6 more tools (TDD
+     lifecycle reads/writes + commit_changes) for 41 total.
 ```
 
 XDG data path resolution (`resolveDataPath`, `packages/shared`).
@@ -363,7 +407,7 @@ The most important components, with their canonical locations. See
 | Output pipeline | `packages/shared/src/layers/OutputPipelineLive.ts` (5 services) |
 | `ensureMigrated` | `packages/shared/src/utils/ensure-migrated.ts` |
 | XDG path resolution | `packages/shared/src/utils/resolve-data-path.ts`, `packages/shared/src/layers/PathResolutionLive.ts` |
-| SQLite migrations | `packages/shared/src/migrations/0001_initial.ts` (1.x), `packages/shared/src/migrations/0002_comprehensive.ts` (2.0.0-α drop-and-recreate, 40 tables), `packages/shared/src/migrations/0003_idempotent_responses.ts` (2.0.0-RC additive, +1 table -> 41 total) |
+| SQLite migrations | `packages/shared/src/migrations/0001_initial.ts` (1.x), `packages/shared/src/migrations/0002_comprehensive.ts` (2.0.0-α drop-and-recreate, 40 tables), `packages/shared/src/migrations/0003_idempotent_responses.ts` (2.0.0-RC additive, +1 table -> 41 total), `packages/shared/src/migrations/0004_test_cases_created_turn_id.ts` (2.0.0 final additive, +1 column -> 41 tables unchanged) |
 | Turn payload schemas (2.0.0-α) | `packages/shared/src/schemas/turns/` (7 payload `Schema.Struct` types + `TurnPayload` union) |
 | Failure signature + function boundary (2.0.0-α; TS-aware in β) | `packages/shared/src/utils/failure-signature.ts`, `packages/shared/src/utils/function-boundary.ts` (β: `acorn-typescript` plugin) |
 | Phase-transition validator (2.0.0-α) | `packages/shared/src/utils/validate-phase-transition.ts` |
@@ -376,6 +420,14 @@ The most important components, with their canonical locations. See
 | RC MCP tools (2.0.0-RC) | `packages/mcp/src/tools/{triage-brief,wrapup-prompt,hypothesis-record,hypothesis-validate}.ts` |
 | tRPC idempotency middleware (2.0.0-RC) | `packages/mcp/src/middleware/idempotency.ts` (with `idempotentProcedure` + `idempotencyKeys` registry) |
 | RC interpretive hooks (2.0.0-RC) | `plugin/hooks/{session-start,stop-record}.sh` (new); `session-end-record,pre-compact-record,user-prompt-submit-record}.sh` (record + nudge) |
+| Final CI annotations formatter | `packages/shared/src/formatters/ci-annotations.ts` (auto-selected when env=ci-github + executor=ci) |
+| Final OSC-8 hyperlink utility | `packages/shared/src/utils/hyperlink.ts` (`osc8(url, label, { enabled })`) |
+| Final CLI `record` subcommands | `packages/cli/src/lib/record-tdd-artifact.ts`, `packages/cli/src/lib/record-run-workspace-changes.ts` (registered under the existing `record.ts`) |
+| Final MCP tools (TDD + commit) | `packages/mcp/src/tools/{tdd-session-start,tdd-session-end,tdd-session-resume,decompose-goal-into-behaviors,tdd-phase-transition-request,commit-changes}.ts` |
+| Final TDD orchestrator agent | `plugin/agents/tdd-orchestrator.md` (eight-state state machine, iron-law system prompt, 9 inline sub-skill primitives) |
+| Final `/tdd` slash command | `plugin/commands/tdd.md` |
+| Final TDD sub-skill primitives (Decision D6) | `plugin/skills/tdd-primitives/{interpret-test-failure,derive-test-name-from-behavior,derive-test-shape-from-name,verify-test-quality,run-and-classify,record-hypothesis-before-fix,commit-cycle,revert-on-extended-red,decompose-goal-into-behaviors}/SKILL.md` |
+| Final TDD plugin hooks | `plugin/hooks/{subagent-start-tdd,subagent-stop-tdd,pre-tool-use-bash-tdd,post-tool-use-tdd-artifact,post-tool-use-test-quality,post-tool-use-git-commit}.sh` |
 | Claude Code Plugin | `plugin/` (manifest + zero-deps PM-detect loader at `plugin/bin/mcp-server.mjs`) |
 
 ---

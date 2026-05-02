@@ -29,8 +29,10 @@ import { stripConsoleReporters } from "./utils/strip-console-reporters.js";
 function resolveFormat(strategy: "own" | "complement", env: Environment, explicit?: OutputFormat): OutputFormat {
 	if (explicit) return explicit;
 	if (strategy === "own") {
-		// "own" mode: agent gets our markdown, humans get silent (Vitest handles their output)
-		return env === "agent-shell" ? "markdown" : "silent";
+		// "own" mode: agent gets the terminal formatter (plain text + ANSI;
+		// no markdown noise for a target that doesn't render markdown).
+		// Humans get silent so Vitest's own reporter handles their UX.
+		return env === "agent-shell" ? "terminal" : "silent";
 	}
 	return "vitest-bypass";
 }
@@ -43,7 +45,9 @@ function resolveFormat(strategy: "own" | "complement", env: Environment, explici
 function resolveGithubActions(env: Environment, format: OutputFormat): boolean {
 	if (env === "terminal") return false;
 	if (format === "vitest-bypass" || format === "silent") return false;
-	if (env === "ci-github" && format === "markdown") return true;
+	// GFM goes to the GitHub step summary file regardless of stdout format —
+	// the markdown-rendering surface is independent of the terminal one.
+	if (env === "ci-github" && (format === "markdown" || format === "terminal")) return true;
 	return false;
 }
 
@@ -56,6 +60,24 @@ function resolveGithubActions(env: Environment, format: OutputFormat): boolean {
  *
  * @public
  */
+/**
+ * Set to the Vitest object reference once we've pushed an aggregating
+ * reporter for that Vitest instance. The flag is module-scoped (rather
+ * than closure-scoped on the plugin) because Vitest can construct the
+ * plugin more than once per `vitest run` invocation (e.g., once per
+ * project). Keying the guard on the Vitest reference itself ensures we
+ * push exactly one reporter per actual Vitest run, regardless of how
+ * many times the plugin or `configureVitest` fires.
+ *
+ * The terminal/markdown formatters render all projects in one block
+ * (Projects header, per-project rows, one Total at the bottom), so we
+ * want exactly ONE reporter instance handling the whole run rather than
+ * N reporters each rendering their own slice.
+ *
+ * @internal
+ */
+const aggregatedReporterByVitest = new WeakSet<object>();
+
 export function AgentPlugin(options: AgentPluginOptions = {}, _layer?: Layer.Layer<EnvironmentDetector>) {
 	const mode = options.mode ?? "auto";
 	const strategy = options.strategy ?? "complement";
@@ -101,8 +123,10 @@ export function AgentPlugin(options: AgentPluginOptions = {}, _layer?: Layer.Lay
 				// Determine if this is an agent environment (for reporter stripping)
 				const isAgentEnv = env === "agent-shell";
 
-				// Only strip reporters when actively taking over console
-				if (format === "markdown" && isAgentEnv) {
+				// Strip reporters when actively taking over the console — both
+				// `markdown` (legacy) and `terminal` (new default for agent
+				// stdout) replace Vitest's own progress output.
+				if ((format === "markdown" || format === "terminal") && isAgentEnv) {
 					log("stripping console reporters");
 					const stripped = stripConsoleReporters(vitest.config.reporters as unknown[]);
 					// Write back via mutation (Vitest config is mutable at this point)
@@ -164,9 +188,20 @@ export function AgentPlugin(options: AgentPluginOptions = {}, _layer?: Layer.Lay
 
 				log("cacheDir:", cacheDir ?? "(XDG default)");
 
-				// In multi-project mode, scope this reporter to its project
-				const projectFilter = project?.name;
-				log("projectFilter:", projectFilter ?? "(none)");
+				// Push exactly one aggregating reporter per Vitest run. The
+				// terminal/markdown formatters render all projects in one block
+				// (Projects header + per-project rows + one Total), so a single
+				// reporter handling all projects produces the right output. Per-
+				// project calls after the first one still apply project-scoped
+				// config (reporter stripping, native-coverage suppression) but
+				// don't push another reporter.
+				if (aggregatedReporterByVitest.has(vitest as object)) {
+					log(
+						"aggregate reporter already pushed for this Vitest run; skipping push for project:",
+						project?.name ?? "(root)",
+					);
+					return;
+				}
 
 				const reporter = new AgentReporter({
 					...options.reporter,
@@ -180,11 +215,11 @@ export function AgentPlugin(options: AgentPluginOptions = {}, _layer?: Layer.Lay
 					logFile: options.logFile,
 					mcp,
 					githubActions,
-					...(projectFilter ? { projectFilter } : {}),
 				});
 
 				// Push reporter into the config (mutating the reporters array)
 				(vitest.config.reporters as unknown[]).push(reporter);
+				aggregatedReporterByVitest.add(vitest as object);
 
 				log("reporters after push:", vitest.config.reporters.length);
 			} catch (err) {

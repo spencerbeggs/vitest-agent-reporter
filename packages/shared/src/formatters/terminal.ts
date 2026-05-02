@@ -1,0 +1,76 @@
+/**
+ * Plain-text terminal formatter for stdout-bound agent / human output.
+ *
+ * Sibling to {@link MarkdownFormatter} and {@link GfmFormatter}. The
+ * markdown variants exist for surfaces that *render* markdown — Claude
+ * via MCP, GitHub via the step summary file. Terminal output never
+ * renders markdown; emitting `## ` and backticks there is pure visual
+ * noise. This formatter produces plain text with optional ANSI color,
+ * compact columnar project rows, and a coverage section keyed on the
+ * threshold-vs-target distinction.
+ *
+ * OSC-8 hyperlinks for failing-test paths live here (not in the
+ * markdown formatter), gated on `target === "stdout" && !ctx.noColor`.
+ *
+ * @packageDocumentation
+ */
+
+import * as path from "node:path";
+import { formatTerminal } from "../utils/format-terminal.js";
+import { osc8 } from "../utils/hyperlink.js";
+import type { Formatter, FormatterContext, RenderedOutput } from "./types.js";
+
+/**
+ * Wrap test-file paths in failing-test rows with `file://` OSC-8
+ * hyperlinks. Only fires when the target is stdout and noColor is
+ * unset; MCP responses never reach this formatter so they cannot
+ * accidentally pick up escape sequences.
+ *
+ * Failing-test rows are emitted by `renderFailedTest` in
+ * `format-terminal.ts` as
+ *
+ *   `    ` + ANSI(red, ✗) + ` ` + path + ` > ` + fullName
+ *
+ * The ✗ is wrapped in ANSI color escapes whenever color is on (which
+ * is always when this function runs — `wrapHyperlinks` is gated on
+ * `!noColor`). The optional `(?:\x1b\[\d+m)?` groups around `✗` make
+ * the pattern tolerant of those escapes; without them the regex
+ * silently never matched and the hyperlink feature was a no-op.
+ *
+ * The captured path is project-relative (the failing-test row goes
+ * through `relativePath()` in `format-terminal.ts`). RFC 8089
+ * requires an absolute filesystem path inside a `file://` URL —
+ * iTerm2 / WezTerm / Kitty / VSCode all silently fail to open
+ * relative targets. Resolve the captured value back to absolute
+ * against the cwd before handing it to `osc8`. The display label
+ * stays relative so the rendered output is unchanged.
+ */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching ANSI escape sequences around the red cross is the whole point
+const FAILED_TEST_ROW = /^( {4}(?:\x1b\[\d+m)?✗(?:\x1b\[\d+m)? )([^ ]+)( > )/gm;
+
+const wrapHyperlinks = (text: string, ctx: FormatterContext): string =>
+	text.replace(FAILED_TEST_ROW, (_match, prefix: string, captured: string, suffix: string) => {
+		const absolute = path.resolve(process.cwd(), captured);
+		const linked = osc8(`file://${absolute}`, captured, { enabled: !ctx.noColor });
+		return `${prefix}${linked}${suffix}`;
+	});
+
+export const TerminalFormatter: Formatter = {
+	format: "terminal",
+	render: (reports, context) => {
+		const text = formatTerminal(reports, {
+			noColor: context.noColor,
+			coverageConsoleLimit: context.coverageConsoleLimit,
+			...(context.trendSummary !== undefined ? { trendSummary: context.trendSummary } : {}),
+			...(context.mcp !== undefined ? { mcp: context.mcp } : {}),
+		});
+		if (text === "") return [];
+		const enriched = context.noColor ? text : wrapHyperlinks(text, context);
+		const out: RenderedOutput = {
+			target: "stdout",
+			content: enriched,
+			contentType: "text/plain",
+		};
+		return [out];
+	},
+};

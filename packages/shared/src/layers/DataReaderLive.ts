@@ -9,6 +9,9 @@ import type { HistoryRecord } from "../schemas/History.js";
 import type { TrendRecord } from "../schemas/Trends.js";
 import type {
 	AcceptanceMetrics,
+	CitedArtifactRow,
+	CommitChangesEntry,
+	CurrentTddPhase,
 	FailureSignatureDetail,
 	FlakyTest,
 	HypothesisDetail,
@@ -21,12 +24,14 @@ import type {
 	SettingsRow,
 	SuiteListEntry,
 	TddSessionDetail,
+	TddSessionSummary,
 	TestError,
 	TestListEntry,
 	TurnSearchOptions,
 	TurnSummary,
 } from "../services/DataReader.js";
 import { DataReader } from "../services/DataReader.js";
+import type { ArtifactKind, ChangeKind, Phase } from "../services/DataStore.js";
 
 export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.effect(
 	DataReader,
@@ -192,6 +197,91 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 
 				const projectName = run.sub_project ? `${run.project}:${run.sub_project}` : run.project;
 
+				// Per-file coverage rows for this run, split into the two
+				// tiers introduced by migration 0005. `lowCoverage`
+				// surfaces threshold violations; `belowTarget` surfaces
+				// aspirational-target gaps. Without this assembly, the
+				// CLI's `coverage` subcommand had no per-file data to
+				// render even though the rows were on disk.
+				const fileCovRows = yield* sql<{
+					file_path: string;
+					statements: number;
+					branches: number;
+					functions: number;
+					lines: number;
+					uncovered_lines: string | null;
+					tier: string;
+				}>`SELECT f.path AS file_path, fc.statements, fc.branches, fc.functions, fc.lines,
+					   fc.uncovered_lines, fc.tier
+					FROM file_coverage fc
+					JOIN files f ON f.id = fc.file_id
+					WHERE fc.run_id = ${run.id}`;
+
+				const lowCoverage = fileCovRows
+					.filter((r) => r.tier === "below_threshold")
+					.map((r) => ({
+						file: r.file_path,
+						summary: {
+							statements: r.statements,
+							branches: r.branches,
+							functions: r.functions,
+							lines: r.lines,
+						},
+						uncoveredLines: r.uncovered_lines ?? "",
+					}));
+				const belowTarget = fileCovRows
+					.filter((r) => r.tier === "below_target")
+					.map((r) => ({
+						file: r.file_path,
+						summary: {
+							statements: r.statements,
+							branches: r.branches,
+							functions: r.functions,
+							lines: r.lines,
+						},
+						uncoveredLines: r.uncovered_lines ?? "",
+					}));
+
+				const trendRows = yield* sql<{
+					statements: number;
+					branches: number;
+					functions: number;
+					lines: number;
+				}>`SELECT statements, branches, functions, lines FROM coverage_trends WHERE run_id = ${run.id} LIMIT 1`;
+				const totals = trendRows[0]
+					? {
+							statements: trendRows[0].statements,
+							branches: trendRows[0].branches,
+							functions: trendRows[0].functions,
+							lines: trendRows[0].lines,
+						}
+					: { statements: 0, branches: 0, functions: 0, lines: 0 };
+
+				const baselineRows = yield* sql<{
+					metric: string;
+					value: number;
+				}>`SELECT metric, value FROM coverage_baselines
+					WHERE project = '__global__' AND sub_project IS NULL AND pattern IS NULL`;
+				const thresholds: { lines?: number; functions?: number; branches?: number; statements?: number } = {};
+				for (const b of baselineRows) {
+					if (b.metric === "lines") thresholds.lines = b.value;
+					else if (b.metric === "functions") thresholds.functions = b.value;
+					else if (b.metric === "branches") thresholds.branches = b.value;
+					else if (b.metric === "statements") thresholds.statements = b.value;
+				}
+
+				const coverage =
+					fileCovRows.length > 0 || trendRows.length > 0
+						? {
+								totals,
+								thresholds: { global: thresholds, patterns: [] as Array<[string, typeof thresholds]> },
+								scoped: false,
+								lowCoverage,
+								lowCoverageFiles: lowCoverage.map((f) => f.file),
+								...(belowTarget.length > 0 ? { belowTarget, belowTargetFiles: belowTarget.map((f) => f.file) } : {}),
+							}
+						: undefined;
+
 				const report: AgentReport = {
 					timestamp: run.timestamp,
 					project: projectName,
@@ -210,6 +300,7 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 						...(e.diff != null ? { diff: e.diff } : {}),
 					})),
 					failedFiles,
+					...(coverage ? { coverage } : {}),
 				};
 
 				return Option.some(report);
@@ -1630,6 +1721,176 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				),
 			);
 
+		const getCurrentTddPhase = (tddSessionId: number): Effect.Effect<Option.Option<CurrentTddPhase>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("getCurrentTddPhase").pipe(Effect.annotateLogs({ tddSessionId }));
+				const rows = yield* sql<{
+					id: number;
+					phase: string;
+					started_at: string;
+					behavior_id: number | null;
+				}>`
+					SELECT id, phase, started_at, behavior_id FROM tdd_phases
+					WHERE tdd_session_id = ${tddSessionId} AND ended_at IS NULL
+					ORDER BY started_at DESC LIMIT 1
+				`;
+				if (rows.length === 0) return Option.none<CurrentTddPhase>();
+				return Option.some<CurrentTddPhase>({
+					id: rows[0].id,
+					phase: rows[0].phase as Phase,
+					startedAt: rows[0].started_at,
+					behaviorId: rows[0].behavior_id,
+				});
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "tdd_phases", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const getTddArtifactWithContext = (
+			artifactId: number,
+		): Effect.Effect<Option.Option<CitedArtifactRow>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("getTddArtifactWithContext").pipe(Effect.annotateLogs({ artifactId }));
+				const rows = yield* sql<{
+					id: number;
+					phase_id: number;
+					artifact_kind: string;
+					test_case_id: number | null;
+					test_case_created_turn_at: string | null;
+					test_case_authored_in_session: number;
+					test_run_id: number | null;
+					test_first_failure_run_id: number | null;
+					behavior_id: number | null;
+				}>`
+					SELECT
+						a.id,
+						a.phase_id,
+						a.artifact_kind,
+						a.test_case_id,
+						ttc.occurred_at AS test_case_created_turn_at,
+						CASE
+							WHEN ttc.session_id = sess.id THEN 1
+							ELSE 0
+						END AS test_case_authored_in_session,
+						a.test_run_id,
+						a.test_first_failure_run_id,
+						p.behavior_id
+					FROM tdd_artifacts a
+					JOIN tdd_phases p ON p.id = a.phase_id
+					JOIN tdd_sessions ts ON ts.id = p.tdd_session_id
+					JOIN sessions sess ON sess.id = ts.session_id
+					LEFT JOIN test_cases tc ON tc.id = a.test_case_id
+					LEFT JOIN turns ttc ON ttc.id = tc.created_turn_id
+					WHERE a.id = ${artifactId}
+				`;
+				if (rows.length === 0) return Option.none<CitedArtifactRow>();
+				const r = rows[0];
+				return Option.some<CitedArtifactRow>({
+					id: r.id,
+					phase_id: r.phase_id,
+					artifact_kind: r.artifact_kind as ArtifactKind,
+					test_case_id: r.test_case_id,
+					test_case_created_turn_at: r.test_case_created_turn_at,
+					test_case_authored_in_session: r.test_case_authored_in_session === 1,
+					test_run_id: r.test_run_id,
+					test_first_failure_run_id: r.test_first_failure_run_id,
+					behavior_id: r.behavior_id,
+				});
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "tdd_artifacts", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const getCommitChanges = (sha?: string): Effect.Effect<ReadonlyArray<CommitChangesEntry>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("getCommitChanges").pipe(Effect.annotateLogs({ sha: sha ?? "ALL" }));
+
+				const commitRows =
+					sha !== undefined
+						? yield* sql<{
+								sha: string;
+								parent_sha: string | null;
+								message: string | null;
+								author: string | null;
+								committed_at: string | null;
+								branch: string | null;
+							}>`SELECT sha, parent_sha, message, author, committed_at, branch FROM commits WHERE sha = ${sha}`
+						: yield* sql<{
+								sha: string;
+								parent_sha: string | null;
+								message: string | null;
+								author: string | null;
+								committed_at: string | null;
+								branch: string | null;
+							}>`
+							SELECT sha, parent_sha, message, author, committed_at, branch FROM commits
+							ORDER BY committed_at DESC NULLS LAST LIMIT 20
+						`;
+
+				const out: CommitChangesEntry[] = [];
+				for (const c of commitRows) {
+					const fileRows = yield* sql<{ path: string; change_kind: string }>`
+						SELECT f.path, rcf.change_kind
+						FROM run_changed_files rcf
+						JOIN files f ON f.id = rcf.file_id
+						WHERE rcf.commit_sha = ${c.sha}
+					`;
+					out.push({
+						sha: c.sha,
+						parentSha: c.parent_sha,
+						message: c.message,
+						author: c.author,
+						committedAt: c.committed_at,
+						branch: c.branch,
+						files: fileRows.map((r) => ({
+							filePath: r.path,
+							changeKind: r.change_kind as ChangeKind,
+						})),
+					});
+				}
+				return out;
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "commits", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const listTddSessionsForSession = (
+			sessionId: number,
+		): Effect.Effect<ReadonlyArray<TddSessionSummary>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("listTddSessionsForSession").pipe(Effect.annotateLogs({ sessionId }));
+				const rows = yield* sql<{
+					id: number;
+					session_id: number;
+					goal: string;
+					started_at: string;
+					ended_at: string | null;
+					outcome: string | null;
+				}>`
+					SELECT id, session_id, goal, started_at, ended_at, outcome FROM tdd_sessions
+					WHERE session_id = ${sessionId} ORDER BY started_at DESC
+				`;
+				return rows.map((r) => ({
+					id: r.id,
+					sessionId: r.session_id,
+					goal: r.goal,
+					startedAt: r.started_at,
+					endedAt: r.ended_at,
+					outcome: r.outcome as TddSessionSummary["outcome"],
+				}));
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "tdd_sessions", reason: extractSqlReason(e) }),
+				),
+			);
+
 		const listHypotheses = (options: {
 			readonly sessionId?: number;
 			readonly outcome?: "confirmed" | "refuted" | "abandoned" | "open";
@@ -1733,6 +1994,10 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 			computeAcceptanceMetrics,
 			getFailureSignatureByHash,
 			getTddSessionById,
+			getCurrentTddPhase,
+			getTddArtifactWithContext,
+			getCommitChanges,
+			listTddSessionsForSession,
 			listHypotheses,
 			findIdempotentResponse,
 		};

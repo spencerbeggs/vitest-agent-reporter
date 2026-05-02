@@ -41,4 +41,41 @@ describe("idempotency key derivation", () => {
 			expect(deriveKey({ id: 1 })).toBeNull();
 		});
 	});
+
+	describe("tdd_session_start", () => {
+		const { deriveKey } = spec("tdd_session_start");
+
+		it("derives a stable key from (sessionId, goal)", () => {
+			expect(deriveKey({ sessionId: 7, goal: "add foo" })).toBe("sid:7:add foo");
+			expect(deriveKey({ sessionId: 7, goal: "add foo" })).toBe(deriveKey({ sessionId: 7, goal: "add foo" }));
+		});
+
+		it("derives a stable key from (ccSessionId, goal) when sessionId is absent", () => {
+			expect(deriveKey({ ccSessionId: "cc-abc", goal: "add foo" })).toBe("cc:cc-abc:add foo");
+		});
+
+		it("prefixes the kind so cc-id and integer-id namespaces never collide", () => {
+			expect(deriveKey({ sessionId: 7, goal: "g" })).not.toBe(deriveKey({ ccSessionId: "7", goal: "g" }));
+		});
+
+		it("returns null for malformed input", () => {
+			expect(deriveKey(null)).toBeNull();
+			expect(deriveKey({ goal: "x" })).toBeNull();
+			expect(deriveKey({ sessionId: "not-a-number", goal: "x" })).toBeNull();
+		});
+	});
+
+	describe("tdd_session_end", () => {
+		const { deriveKey } = spec("tdd_session_end");
+
+		it("derives stable key from (tddSessionId, outcome)", () => {
+			expect(deriveKey({ tddSessionId: 5, outcome: "succeeded" })).toBe("5:succeeded");
+		});
+
+		it("returns null for malformed input", () => {
+			expect(deriveKey(null)).toBeNull();
+			expect(deriveKey({ outcome: "succeeded" })).toBeNull();
+			expect(deriveKey({ tddSessionId: 5 })).toBeNull();
+		});
+	});
 });

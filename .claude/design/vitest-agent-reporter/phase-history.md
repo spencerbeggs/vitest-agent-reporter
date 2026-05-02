@@ -5,6 +5,7 @@ category: history
 created: 2026-04-29
 updated: 2026-04-30
 last-synced: 2026-04-30
+post-final-sync: 2026-04-30
 completeness: 90
 related:
   - vitest-agent-reporter/architecture.md
@@ -655,7 +656,7 @@ last drop-and-recreate.
     turn rows for older sessions (FK CASCADE handles
     `tool_invocations` + `file_edits`). Sessions rows
     themselves are retained. Returns
-    `{ prunedSessions, prunedTurns }`
+    `{ affectedSessions, prunedTurns }`
 
   New input shapes in DataStore.ts: `IdempotentResponseInput`,
   `HypothesisInput`, `ValidateHypothesisInput`
@@ -715,7 +716,190 @@ persist-failure case.
 
 ---
 
-**Document Status:** Current. Covers Phase 1 through Phase 9
-(2.0.0-RC). Implementation complete on this branch; subsequent
-phases (TDD orchestrator subagent, write-side TDD/hypothesis
-tools, remaining W4 polish) will be appended here as they ship.
+## Phase 10: 2.0.0 Stable / TDD Orchestrator -- COMPLETE
+
+The 2.0.0 stable / final release closes the W2 (TDD
+orchestrator + anti-pattern detection), W4 cheap wins
+(`ci-annotations` formatter + OSC-8 hyperlinks +
+`commit_changes` MCP tool), and W6 (TDD lifecycle MCP write
+tools) workstreams from the spec, plus anti-pattern detection
+hooks scoped to the TDD orchestrator subagent. **No new
+architectural decisions** are introduced in this phase --
+everything is downstream of α's D9 / D10 / D11 and built on
+top of β's substrate wiring and RC's interpretive hooks +
+idempotency middleware. This phase ships final 2.0.0 stable
+across all four packages.
+
+### What lands in final
+
+The release covers the seven workstreams from the spec:
+
+- **W2 -- TDD orchestrator subagent**:
+  `plugin/agents/tdd-orchestrator.md` carries the iron-law
+  system prompt, the eight-state state machine matching α's
+  `tdd_phases.phase` enum, the ~15-tool `tools:` array, and
+  the 9 sub-skill primitives embedded inline. The
+  `/tdd <goal>` slash command (`plugin/commands/tdd.md`)
+  hands off to the orchestrator. Sub-skills also publish as
+  standalone `plugin/skills/tdd-primitives/<9 dirs>/SKILL.md`
+  per Decision D6 (standalone reuse for non-TDD work):
+  `interpret-test-failure`, `derive-test-name-from-behavior`,
+  `derive-test-shape-from-name`, `verify-test-quality`,
+  `run-and-classify`, `record-hypothesis-before-fix`,
+  `commit-cycle`, `revert-on-extended-red`,
+  `decompose-goal-into-behaviors`
+- **W2 -- TDD lifecycle MCP writes**: 5 new mutation tools
+  (`tdd_session_start`, `tdd_session_end`,
+  `tdd_session_resume` -- read, technically -- ,
+  `decompose_goal_into_behaviors`,
+  `tdd_phase_transition_request`) backed by 7 new DataStore
+  methods (`writeTddSession`, `endTddSession`,
+  `writeTddSessionBehaviors`, `writeTddPhase`,
+  `writeTddArtifact`, `writeCommit`, `writeRunChangedFiles`)
+  and 4 new DataReader methods (`getCurrentTddPhase`,
+  `getTddArtifactWithContext`, `getCommitChanges`,
+  `listTddSessionsForSession`). The `tdd_phase_transition_request`
+  tool reads the current phase + cited artifact context, runs
+  the pure α `validatePhaseTransition` validator, and on
+  accept calls `writeTddPhase` (which closes the prior open
+  phase and opens the new one in the same SQL transaction).
+  Per Phase 10 / final notes, the transition tool is **not**
+  in the idempotency-key registry; the four other write tools
+  are
+- **W2 -- Anti-pattern detection hooks**: five new
+  orchestrator-scoped plugin hook scripts.
+  `pre-tool-use-bash-tdd.sh` is a restricted-Bash gate that
+  blocks `--update`, `-u`, `--reporter=silent`, `--bail`,
+  `-t`, `--testNamePattern`, `*.snap` edits, and edits to
+  `coverage.exclude` / `setupFiles` / `globalSetup` in vitest
+  config files. `post-tool-use-tdd-artifact.sh` records
+  test_failed_run / test_passed_run / test_written /
+  code_written artifacts via `record tdd-artifact`.
+  `post-tool-use-test-quality.sh` scans test-file edits for
+  escape-hatch tokens (`it.skip`, `it.todo`, `it.fails`,
+  `it.concurrent`, `.skipIf`, `.todoIf`, `test.skip`,
+  `test.todo`, `test.fails`, `describe.skip`,
+  `describe.todo`) and records `test_weakened` artifacts.
+  `subagent-start-tdd.sh` and `subagent-stop-tdd.sh` register
+  the new `SubagentStart` and `SubagentStop` event types and
+  write/close the `sessions` row with
+  `agent_kind='subagent'`, `agent_type='tdd-orchestrator'`
+- **W4 -- `ci-annotations` formatter**:
+  `packages/shared/src/formatters/ci-annotations.ts` emits
+  GitHub Actions `::error file=...,line=...::` workflow
+  commands. The `OutputFormat` literal in `Common.ts` extends
+  from 4 to 5 values to add `"ci-annotations"`.
+  `FormatSelector.select()` gains an optional `environment?:
+  Environment` third parameter (backwards-compatible) that
+  the `ci-github` branch consults to auto-select this
+  formatter when running inside a GitHub Actions runner
+- **W4 -- OSC-8 hyperlinks**:
+  `packages/shared/src/utils/hyperlink.ts` provides
+  `osc8(url, label, { enabled })`. Wired into
+  `formatters/markdown.ts` via a regex post-processor that
+  wraps test-file paths in failing-test header lines, gated
+  on `target === "stdout"` AND `!ctx.noColor`. MCP responses
+  never receive OSC-8 codes (the MCP `triage_brief` /
+  `wrapup_prompt` tools call the shared `format-triage` /
+  `format-wrapup` generators directly, not the markdown
+  formatter)
+- **W4 -- `commit_changes` MCP tool**: read-only tool
+  exposing the new `record run-workspace-changes` write path.
+  The repo-scoped `post-tool-use-git-commit.sh` plugin hook
+  fires on every successful `git commit` / `git push` Bash
+  invocation (across all agents, not just the orchestrator),
+  parses git metadata, and writes `commits` (idempotent on
+  `sha`) + `run_changed_files` via the
+  `record run-workspace-changes` CLI subcommand
+- **W4 -- `cache prune` extended**: the `cache prune
+  --keep-recent` CLI subcommand from RC continues to handle
+  W1 retention; no further changes
+- **W6 -- TDD lifecycle MCP writes**: counted under W2 above
+  -- the 5 mutations are the W6 deliverable, with the four
+  non-`tdd_phase_transition_request` tools registered for
+  idempotency replay
+- **CLI extensions**: two new subcommands under `record`.
+  `record tdd-artifact --cc-session-id ... --artifact-kind
+  ...` writes `tdd_artifacts` rows. Per Decision D7, this CLI
+  is the **only** path to artifact writes -- agents never
+  call this directly, only hooks do.
+  `record run-workspace-changes --sha ... '<files-json>'`
+  writes `commits` + `run_changed_files`, driven by the
+  `post-tool-use-git-commit.sh` hook
+- **Migration `0004_test_cases_created_turn_id`**: single
+  `ALTER TABLE test_cases ADD COLUMN created_turn_id INTEGER
+  REFERENCES turns(id) ON DELETE SET NULL` plus a supporting
+  index. Required by D2 binding rule 1 (the validator joins
+  through this column to resolve `test_case_created_turn_at`
+  and `test_case_authored_in_session`). Per Decision D9, this
+  is additive ALTER-only -- tables count is unchanged at 41
+- **MCP idempotency-key registry**: grows from 2 entries
+  (`hypothesis_record`, `hypothesis_validate` from RC) to 5
+  by adding `tdd_session_start`,
+  `tdd_session_end`, and `decompose_goal_into_behaviors`.
+  `tdd_phase_transition_request` is intentionally excluded --
+  see Phase 10 / final note final-N1
+
+### Cumulative state after final
+
+- **Migrations**: 4 total (`0001_initial`, `0002_comprehensive`,
+  `0003_idempotent_responses`, `0004_test_cases_created_turn_id`)
+- **Database tables**: 41 total + `notes_fts` (unchanged from
+  RC -- `0004` is column-additive)
+- **MCP tools**: 41 total (24 original + 7 β + 4 RC + 6 final)
+- **Plugin hook scripts**: 12 total (excluding `lib/`):
+  `session-start`, `pre-tool-use-mcp`, `post-test-run`
+  (Phase 5d); `pre-tool-use-record`, `post-tool-use-record`,
+  `session-end-record`, `pre-compact-record`,
+  `user-prompt-submit-record` (β -- `session-start-record`
+  was deleted in RC); `stop-record` (RC); plus 5 final --
+  `subagent-start-tdd`, `subagent-stop-tdd`,
+  `pre-tool-use-bash-tdd`, `post-tool-use-tdd-artifact`,
+  `post-tool-use-test-quality`, `post-tool-use-git-commit`
+  (12 entries; one short of the 13 if you separately count
+  `session-start.sh` as RC-rewritten and Phase 5d, but it's
+  the same file)
+- **Plugin commands**: 4 total (`setup`, `configure`,
+  `tdd`)
+- **Plugin skills**: 13 total -- 4 user-facing skills under
+  `plugin/skills/` (tdd, debugging, configuration,
+  coverage-improvement) plus 9 sub-skill primitives under
+  `plugin/skills/tdd-primitives/` (Decision D6)
+- **Plugin agent definitions**: 1 total
+  (`tdd-orchestrator.md`)
+- **npm packages**: 4 total, all at 2.0.0 stable
+  (`vitest-agent-reporter-shared`, `vitest-agent-reporter`,
+  `vitest-agent-reporter-cli`, `vitest-agent-reporter-mcp`)
+
+**Breaking changes from Phase 9:** none. Final is additive
+across the schema (one new column on `test_cases`), the data
+layer (7 new DataStore methods, 4 new DataReader methods), the
+CLI (two new `record` subcommands), the MCP server (six new
+tools), and the plugin (one new agent definition, one new
+slash command, 9 new sub-skill primitives, six new hook
+scripts, two new event-type registrations). Existing β/RC
+data layout, frontmatter, options, and command names are
+preserved.
+
+**Out of scope (post-final):** any future TDD anti-pattern
+detectors beyond `test_weakened`, additional W4 polish (Bun
+rewrites of hooks for portability), and any deferred RC items
+(the spawnSync e2e test against the built bin per Decision
+β-N2). These will be appended to subsequent phase entries as
+they ship.
+
+**Dependencies added:** none. Final ships entirely on the
+α/β/RC dependency graph.
+
+See [decisions.md](./decisions.md) "Phase 10 / final notes"
+subsection for (a) why `tdd_phase_transition_request` is not
+in the idempotency-key registry, (b) why `0004` is additive
+ALTER-only and D9 stays intact, and (c) why D7 stays
+load-bearing for `tdd_artifact_record` (CLI-only).
+
+---
+
+**Document Status:** Current. Covers Phase 1 through Phase 10
+(2.0.0 stable / TDD orchestrator). Implementation complete on
+this branch; future post-2.0 phases will be appended here as
+they ship.

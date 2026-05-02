@@ -34,7 +34,9 @@ const pruneCommand = Command.make("prune", { keepRecent: keepRecentOption }, ({ 
 		const store = yield* DataStore;
 		const result = yield* store.pruneSessions(keepRecent);
 		yield* Effect.sync(() =>
-			process.stdout.write(`Pruned ${result.prunedSessions} session(s) and ${result.prunedTurns} turn row(s).\n`),
+			process.stdout.write(
+				`Pruned ${result.prunedTurns} turn row(s) across ${result.affectedSessions} session(s); session rows retained.\n`,
+			),
 		);
 	}),
 ).pipe(Command.withDescription("Drop old sessions' turn history (W1 retention; keeps the last N in full)"));

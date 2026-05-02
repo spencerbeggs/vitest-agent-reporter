@@ -52,6 +52,40 @@ import { processFailure } from "./utils/process-failure.js";
 import { resolveThresholds } from "./utils/resolve-thresholds.js";
 
 /**
+ * Cache of in-flight `resolveDataPath` promises, keyed by `projectDir`.
+ *
+ * Multi-project Vitest configs construct one `AgentReporter` instance per
+ * project (typical: 4-5 reporters per repo). Each instance's `ensureDbPath`
+ * runs `resolveDataPath(projectDir)` under `PathResolutionLive`, which
+ * pulls in `WorkspacesLive` — a layer that eagerly scans lockfiles and
+ * walks the workspace package graph. Without this cache, that scan
+ * happens N times in serial during reporter init, adding seconds of
+ * overhead to every `vitest run`.
+ *
+ * The cache is module-local: one entry per `projectDir` (in practice,
+ * always `process.cwd()` for a single Vitest invocation), shared across
+ * all reporter instances within the same Node process. Sufficient
+ * because reporter instances are created in the main Vitest process,
+ * not in worker forks.
+ *
+ * @internal
+ */
+const dbPathCache = new Map<string, Promise<string>>();
+
+function resolveDataPathCached(projectDir: string): Promise<string> {
+	const cached = dbPathCache.get(projectDir);
+	if (cached !== undefined) return cached;
+	const promise = Effect.runPromise(
+		resolveDataPath(projectDir).pipe(Effect.provide(PathResolutionLive(projectDir)), Effect.provide(NodeContext.layer)),
+	);
+	dbPathCache.set(projectDir, promise);
+	// Surface rejection to callers without leaving an unhandled-rejection
+	// warning attached to the cached reference.
+	promise.catch(() => undefined);
+	return promise;
+}
+
+/**
  * Compute updated baselines using ratchet logic: take the max of actual vs previous,
  * capped by targets if set.
  *
@@ -105,7 +139,7 @@ interface ResolvedOptions {
 	includeBareZero: boolean;
 	githubActions: boolean | undefined;
 	githubSummaryFile: string | undefined;
-	format?: "markdown" | "json" | "vitest-bypass" | "silent";
+	format?: "terminal" | "markdown" | "json" | "vitest-bypass" | "silent" | "ci-annotations";
 	detail?: "minimal" | "neutral" | "standard" | "verbose";
 	mode?: "auto" | "agent" | "silent";
 	logLevel?: LogLevel.LogLevel;
@@ -164,6 +198,17 @@ interface ResolvedOptions {
 export class AgentReporter {
 	private options: ResolvedOptions;
 	private dbPath: string | null = null;
+	/**
+	 * Set to `true` after the first `onTestRunEnd` invocation completes.
+	 *
+	 * Vitest can fire `onTestRunEnd` more than once per `vitest run` in
+	 * some multi-project configurations (e.g., once per project group, with
+	 * the same `testModules` array each time). The plugin pushes only ONE
+	 * AgentReporter per run, so a fresh instance always starts with this
+	 * flag `false`; the first call does the work and the flag prevents
+	 * subsequent invocations from re-rendering and re-writing to the DB.
+	 */
+	private rendered = false;
 
 	/**
 	 * Stored Vitest instance from {@link AgentReporter.onInit | onInit}.
@@ -243,13 +288,11 @@ export class AgentReporter {
 			this.dbPath = `${this.options.cacheDir}/data.db`;
 			return this.dbPath;
 		}
+		// Memoized across reporter instances for the same projectDir so
+		// multi-project Vitest configs don't run WorkspacesLive's lockfile
+		// scan once per reporter (5+ scans in typical monorepos).
 		const projectDir = process.cwd();
-		this.dbPath = await Effect.runPromise(
-			resolveDataPath(projectDir).pipe(
-				Effect.provide(PathResolutionLive(projectDir)),
-				Effect.provide(NodeContext.layer),
-			),
-		);
+		this.dbPath = await resolveDataPathCached(projectDir);
 		return this.dbPath;
 	}
 
@@ -297,6 +340,14 @@ export class AgentReporter {
 		unhandledErrors: ReadonlyArray<unknown>,
 		reason: "passed" | "failed" | "interrupted",
 	): Promise<void> {
+		// Idempotence: in some multi-project configs Vitest fires
+		// onTestRunEnd more than once per `vitest run` against the same
+		// reporter instance. The first invocation writes the DB and renders
+		// the output; subsequent ones must no-op or we'll double-write
+		// trend rows and duplicate the stdout block.
+		if (this.rendered) return;
+		this.rendered = true;
+
 		const modules = testModules as ReadonlyArray<VitestTestModule>;
 		const errors = unhandledErrors as ReadonlyArray<{ message: string; stack?: string }>;
 
@@ -705,21 +756,46 @@ export class AgentReporter {
 
 				reports.push(report);
 
-				// Write coverage data to DB if available
-				if (coverageReport && coverageReport.lowCoverage.length > 0) {
-					const coverageInputs = [];
-					for (const fc of coverageReport.lowCoverage) {
-						const fileId = yield* store.ensureFile(fc.file);
-						coverageInputs.push({
-							fileId,
-							statements: fc.summary.statements,
-							branches: fc.summary.branches,
-							functions: fc.summary.functions,
-							lines: fc.summary.lines,
-							uncoveredLines: fc.uncoveredLines,
-						});
+				// Write coverage data to DB. Two tiers persisted:
+				//
+				// - lowCoverage entries are failures against the minimum
+				//   threshold (build-blocking).
+				// - belowTarget entries are warnings: above threshold but
+				//   below the aspirational target.
+				//
+				// The two sets can overlap when the build is failing.
+				// Dedupe on file path so each file produces a single row;
+				// tier resolves to "below_threshold" whenever a file is in
+				// lowCoverage (the more severe classification wins).
+				if (coverageReport) {
+					const tierByFile = new Map<string, "below_threshold" | "below_target">();
+					const sourceByFile = new Map<string, (typeof coverageReport.lowCoverage)[number]>();
+					for (const fc of coverageReport.belowTarget ?? []) {
+						tierByFile.set(fc.file, "below_target");
+						sourceByFile.set(fc.file, fc);
 					}
-					yield* store.writeCoverage(runId, coverageInputs);
+					for (const fc of coverageReport.lowCoverage) {
+						tierByFile.set(fc.file, "below_threshold");
+						sourceByFile.set(fc.file, fc);
+					}
+					if (tierByFile.size > 0) {
+						const coverageInputs = [];
+						for (const [file, tier] of tierByFile) {
+							const fc = sourceByFile.get(file);
+							if (!fc) continue;
+							const fileId = yield* store.ensureFile(fc.file);
+							coverageInputs.push({
+								fileId,
+								statements: fc.summary.statements,
+								branches: fc.summary.branches,
+								functions: fc.summary.functions,
+								lines: fc.summary.lines,
+								uncoveredLines: fc.uncoveredLines,
+								tier,
+							});
+						}
+						yield* store.writeCoverage(runId, coverageInputs);
+					}
 				}
 
 				// Record coverage trend (full runs only)
@@ -794,7 +870,7 @@ export class AgentReporter {
 
 			const env = yield* detector.detect();
 			const executor = yield* executorResolver.resolve(env, opts.mode ?? "auto");
-			const format = yield* formatSelector.select(executor, opts.format);
+			const format = yield* formatSelector.select(executor, opts.format, env);
 			const health = {
 				hasFailures: reports.some((r) => r.summary.failed > 0 || r.unhandledErrors.length > 0),
 				belowTargets: reports.some((r) => {
