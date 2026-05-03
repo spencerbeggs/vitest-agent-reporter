@@ -42,7 +42,7 @@ cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record turn \
 # 2. For Edit/Write/MultiEdit, additionally emit a file_edit turn.
 case "$tool_name" in
 	Edit|Write|MultiEdit)
-		file_path=$(jq -r '.tool_input.file_path // ""' <<< "$hook_json")
+		file_path=$(jq -r '.tool_input.file_path // .tool_input.path // ""' <<< "$hook_json")
 		if [ -z "$file_path" ]; then
 			emit_noop
 			exit 0
