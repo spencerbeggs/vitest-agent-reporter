@@ -7,11 +7,11 @@
 
 ## Bug Fixes
 
-### TDD orchestrator session discovery race eliminated
+### TDD orchestrator session discovery follow-up
 
 The orchestrator's launch step previously called `session_list({ agentKind: "main", limit: 1 })` to derive the parent `cc_session_id`. When two Claude Code windows were open against the same workspace, this returned the most recently started main session — not necessarily the one that spawned the orchestrator. The downstream effect was that `tdd_sessions.session_id` linked to a session the artifact hooks couldn't resolve, so `tdd_artifacts` writes fell on the floor and `tdd_phase_transition_request` denied `red→green` with `missing_artifact_evidence`.
 
-The `/tdd` command now looks up the parent's own `cc_session_id` via `session_list` before spawning the orchestrator and passes it explicitly in the launch prompt. The orchestrator's launch step uses the provided value directly rather than calling `session_list` itself.
+This race should not be considered fixed yet. The current `/tdd` command still resolves `cc_session_id` via `session_list({ agentKind: "main", limit: 1 })`, which remains a workspace-global heuristic and can still select the wrong parent session when multiple Claude Code windows are open for the same workspace. This entry documents the known limitation; the bug should only be called resolved once `/tdd` switches to a conversation-specific source such as the new session pointer and passes that value through to the orchestrator.
 
 ### Orchestrator gains `TaskList` and `TaskGet`
 
