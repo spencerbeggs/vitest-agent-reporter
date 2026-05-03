@@ -295,35 +295,48 @@ describe("withStdioCaptured", () => {
 		expect(chunks.join("")).toContain("hello-from-stderr");
 	});
 
-	it("restores the original process.stdout.write after fn resolves", async () => {
-		const original = process.stdout.write;
-		const { sink } = collectInto();
+	it("does not divert writes from concurrent async contexts", async () => {
+		// The reviewer's concern (PR #47): the prior implementation mutated
+		// process.stdout.write globally for the full duration of the test
+		// run, so a concurrent MCP tool response from another tRPC procedure
+		// would be swallowed into the null sink and disappear from the
+		// JSON-RPC transport. AsyncLocalStorage scopes the diversion to the
+		// async context that called withStdioCaptured; writes initiated from
+		// outside that context must NOT land in the sink.
+		const { chunks: sinkChunks, sink } = collectInto();
+
+		// Start a parallel async chain *before* entering withStdioCaptured.
+		// Its continuation (after the timer) runs outside the AsyncLocalStorage
+		// scope set up by withStdioCaptured, so its write must NOT divert into
+		// the sink.
+		const concurrent = (async () => {
+			await new Promise<void>((res) => setTimeout(res, 1));
+			process.stdout.write("from-concurrent");
+		})();
+
 		await withStdioCaptured(sink, async () => {
-			expect(process.stdout.write).not.toBe(original);
+			process.stdout.write("from-inside");
+			await new Promise<void>((res) => setTimeout(res, 5));
 		});
-		expect(process.stdout.write).toBe(original);
+
+		await concurrent;
+
+		expect(sinkChunks.join("")).toContain("from-inside");
+		expect(sinkChunks.join("")).not.toContain("from-concurrent");
 	});
 
-	it("restores the original process.stderr.write after fn resolves", async () => {
-		const original = process.stderr.write;
-		const { sink } = collectInto();
-		await withStdioCaptured(sink, async () => {
-			expect(process.stderr.write).not.toBe(original);
-		});
-		expect(process.stderr.write).toBe(original);
-	});
-
-	it("restores process.stdout.write and process.stderr.write after fn rejects", async () => {
-		const originalStdout = process.stdout.write;
-		const originalStderr = process.stderr.write;
-		const { sink } = collectInto();
+	it("propagates rejections without leaving the sink installed for later writes", async () => {
+		const { chunks: sinkChunks, sink } = collectInto();
 		await expect(
 			withStdioCaptured(sink, async () => {
 				throw new Error("boom");
 			}),
 		).rejects.toThrow("boom");
-		expect(process.stdout.write).toBe(originalStdout);
-		expect(process.stderr.write).toBe(originalStderr);
+
+		// After the rejected call, writes from the test's own (outer) async
+		// context should not land in the sink.
+		process.stdout.write("post-reject");
+		expect(sinkChunks.join("")).not.toContain("post-reject");
 	});
 
 	it("returns the value resolved by fn", async () => {

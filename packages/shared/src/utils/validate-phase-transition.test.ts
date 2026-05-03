@@ -48,14 +48,15 @@ describe("validatePhaseTransition", () => {
 		);
 	});
 
-	it("accepts red→green when cited artifact has no test_case_id (run-level evidence)", () => {
-		// Reproduces the dogfood bug: post-tool-use-tdd-artifact.sh records a
-		// test_failed_run artifact for a Bash test invocation but does not
-		// resolve a specific test_case_id. The artifact arrives with
-		// test_case_id: null and (because rule 1's session check defaults to
-		// false when no test is cited) test_case_authored_in_session: false.
-		// Rule 1 binds a *test* authoring window — when no specific test is
-		// cited there is nothing to bind, so the validator must skip rule 1.
+	it("rejects red→green with missing_artifact_evidence when cited artifact has no test_case_id", () => {
+		// Run-level artifacts (e.g. test_failed_run rows recorded by
+		// post-tool-use-tdd-artifact.sh on a Bash invocation that didn't
+		// resolve a specific test) carry no anchor to bind to. Skipping
+		// rule 1 in this case would let *any* run-level failure — including
+		// one from a different session or a pre-existing failure on main —
+		// advance the phase machine. The validator denies; the orchestrator
+		// must run a specific failing test so the artifact carries a
+		// test_case_id, then cite that artifact.
 		const result = validatePhaseTransition(
 			baseCtx({
 				cited_artifact: {
@@ -66,7 +67,8 @@ describe("validatePhaseTransition", () => {
 				},
 			}),
 		);
-		expect(result.accepted).toBe(true);
+		expect(result.accepted).toBe(false);
+		if (!result.accepted) expect(result.denialReason).toBe("missing_artifact_evidence");
 	});
 
 	it("rejects D2 binding rule 1: cited test created before phase start", () => {

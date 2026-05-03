@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Writable } from "node:stream";
 import { Effect, Schema } from "effect";
 import type { AgentReport, VitestModuleError } from "vitest-agent-reporter-shared";
@@ -6,50 +7,69 @@ import { publicProcedure } from "../context.js";
 
 const FORBIDDEN_CHARS = /[;|&`$(){}[\]<>!#]/;
 
-// Serializes concurrent withStdioCaptured calls — overlapping invocations
-// corrupt each other's saved originals when process.stdout.write is mutated
-// globally. Promise-chain mutex: each call awaits the previous gate before
-// touching the globals, then releases its own gate in finally.
-let _serialGate = Promise.resolve<void>(undefined);
+// AsyncLocalStorage-scoped redirection. The prior implementation mutated
+// `process.stdout.write` / `process.stderr.write` globally for the full
+// duration of the test run. That broke under concurrent MCP requests:
+// the JSON-RPC transport and unrelated tool handlers write to stdout/stderr
+// from their own async chains, so a parallel response could be swallowed
+// into the null sink and disappear from the wire. The mutex didn't help
+// because it only serialized run_tests against other run_tests calls.
+//
+// Now: the wrapper is patched onto `process.stdout` / `process.stderr` once,
+// then consults the per-context storage on every call. Inside a
+// `withStdioCaptured` async context the write is diverted to the sink;
+// outside of it (i.e. every other tRPC procedure handler running on its
+// own top-level async chain) the write passes through to the original.
+const stdoutSinkStorage = new AsyncLocalStorage<Writable>();
+const stderrSinkStorage = new AsyncLocalStorage<Writable>();
+
+let _stdioPatched = false;
+let _originalStdoutWrite: typeof process.stdout.write;
+let _originalStderrWrite: typeof process.stderr.write;
+
+function ensureStdioPatched(): void {
+	if (_stdioPatched) return;
+	_stdioPatched = true;
+	// Save unbound references — JavaScript's method-call binding restores
+	// `this` automatically when the wrapper is invoked via
+	// `process.stdout.write(...)`. Pre-binding here would leak a fresh
+	// bound wrapper on every patch, so back-to-back wraps would observe
+	// stacked `bind`-layers instead of the true original.
+	_originalStdoutWrite = process.stdout.write;
+	_originalStderrWrite = process.stderr.write;
+	process.stdout.write = function patchedStdoutWrite(this: typeof process.stdout, ...args: unknown[]) {
+		const sink = stdoutSinkStorage.getStore();
+		if (sink) {
+			return (sink.write as (...a: unknown[]) => boolean).apply(sink, args);
+		}
+		return (_originalStdoutWrite as (...a: unknown[]) => boolean).apply(this, args);
+	} as typeof process.stdout.write;
+	process.stderr.write = function patchedStderrWrite(this: typeof process.stderr, ...args: unknown[]) {
+		const sink = stderrSinkStorage.getStore();
+		if (sink) {
+			return (sink.write as (...a: unknown[]) => boolean).apply(sink, args);
+		}
+		return (_originalStderrWrite as (...a: unknown[]) => boolean).apply(this, args);
+	} as typeof process.stderr.write;
+}
 
 /**
  * Run `fn` with `process.stdout.write` and `process.stderr.write`
- * temporarily replaced by `stream.write`. Restores the originals on
- * both resolve and reject paths.
+ * diverted to `stream.write` for code executing inside the call's
+ * async context. Code in other async contexts (concurrent tRPC
+ * procedure handlers, the MCP stdio transport) sees the original
+ * writes unchanged.
  *
- * The MCP server uses stdio for its JSON-RPC transport, so any writes
- * to `process.stdout` from user-registered Vitest reporters during an
- * in-process test run would corrupt the protocol stream. Vitest's own
- * stdout/stderr redirect options only cover Vitest-internal logging;
- * reporters that call `console.log` directly bypass them. This helper
- * captures those writes into a sink for the duration of the run.
+ * Vitest's own stdout/stderr redirect options only cover Vitest-internal
+ * logging. User-registered reporters that call `console.log` directly
+ * bypass them; this helper captures those writes into the supplied
+ * sink so they don't corrupt the JSON-RPC protocol stream.
  *
  * @internal
  */
 export async function withStdioCaptured<T>(stream: Writable, fn: () => Promise<T>): Promise<T> {
-	const prev = _serialGate;
-	let releaseLock!: () => void;
-	_serialGate = new Promise<void>((res) => {
-		releaseLock = res;
-	});
-	await prev;
-	// Save unbound references — JavaScript's method-call binding restores
-	// `this` automatically when reassigned onto `process.stdout` /
-	// `process.stderr`. Pre-binding here would leak a fresh bound wrapper
-	// on every call, so back-to-back invocations would observe stacked
-	// `bind`-layers instead of the true originals.
-	const originalStdoutWrite = process.stdout.write;
-	const originalStderrWrite = process.stderr.write;
-	const sink = stream.write.bind(stream) as typeof process.stdout.write;
-	process.stdout.write = sink;
-	process.stderr.write = sink;
-	try {
-		return await fn();
-	} finally {
-		process.stdout.write = originalStdoutWrite;
-		process.stderr.write = originalStderrWrite;
-		releaseLock();
-	}
+	ensureStdioPatched();
+	return stdoutSinkStorage.run(stream, () => stderrSinkStorage.run(stream, fn));
 }
 
 export function sanitizeTestArgs(args: readonly string[]): string[] {
