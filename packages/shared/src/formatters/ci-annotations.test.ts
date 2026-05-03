@@ -92,6 +92,94 @@ describe("ciAnnotationsFormatter", () => {
 		expect(out[0].content).toContain("%0D");
 	});
 
+	it("emits a fallback ::error for a failed test with no attached errors", () => {
+		const report: AgentReport = {
+			timestamp: "2026-04-29T00:00:00Z",
+			project: "demo",
+			reason: "failed",
+			summary: { total: 1, passed: 0, failed: 1, skipped: 0, duration: 5 },
+			failed: [
+				{
+					file: "src/empty.test.ts",
+					state: "failed",
+					tests: [
+						{
+							name: "fails silently",
+							fullName: "Empty > fails silently",
+							state: "failed",
+							errors: [],
+						},
+					],
+				},
+			],
+			unhandledErrors: [],
+			failedFiles: ["src/empty.test.ts"],
+		};
+		const out = ciAnnotationsFormatter.render([report], {
+			detail: "neutral",
+			noColor: true,
+			coverageConsoleLimit: 10,
+		});
+		expect(out).toHaveLength(1);
+		expect(out[0].target).toBe("stdout");
+		expect(out[0].content).toContain("::error file=src/empty.test.ts,line=1");
+		expect(out[0].content).toContain("title=Empty > fails silently");
+		expect(out[0].content).toContain("Empty > fails silently failed");
+	});
+
+	it("also emits a fallback ::error when a failed test has undefined errors", () => {
+		const report: AgentReport = {
+			timestamp: "2026-04-29T00:00:00Z",
+			project: "demo",
+			reason: "failed",
+			summary: { total: 1, passed: 0, failed: 1, skipped: 0, duration: 5 },
+			failed: [
+				{
+					file: "src/missing.test.ts",
+					state: "failed",
+					tests: [
+						{
+							name: "no errors field",
+							fullName: "Missing > no errors field",
+							state: "failed",
+						},
+					],
+				},
+			],
+			unhandledErrors: [],
+			failedFiles: ["src/missing.test.ts"],
+		};
+		const out = ciAnnotationsFormatter.render([report], {
+			detail: "neutral",
+			noColor: true,
+			coverageConsoleLimit: 10,
+		});
+		expect(out[0].content).toContain("::error file=src/missing.test.ts,line=1");
+		expect(out[0].content).toContain("Missing > no errors field failed");
+	});
+
+	it("emits an Unhandled error ::error annotation for each unhandled error", () => {
+		const report: AgentReport = {
+			timestamp: "2026-04-29T00:00:00Z",
+			project: "demo",
+			reason: "failed",
+			summary: { total: 1, passed: 1, failed: 0, skipped: 0, duration: 12 },
+			failed: [],
+			unhandledErrors: [{ message: "boom: top-level rejection" }, { message: "second unhandled" }],
+			failedFiles: [],
+		};
+		const out = ciAnnotationsFormatter.render([report], {
+			detail: "neutral",
+			noColor: true,
+			coverageConsoleLimit: 10,
+		});
+		expect(out).toHaveLength(1);
+		expect(out[0].content).toContain("::error title=Unhandled%20error::boom: top-level rejection");
+		expect(out[0].content).toContain("::error title=Unhandled%20error::second unhandled");
+		// And the passing-summary ::notice MUST NOT be emitted because allLines is non-empty.
+		expect(out[0].content).not.toContain("::notice");
+	});
+
 	it("matches pathological '(((!((!' stack input in linear time (ReDoS regression)", () => {
 		// CodeQL flagged the original STACK_FILE_LINE regex as polynomial on
 		// inputs with many `(` and no closing `)`. Both `:` and `(` are now

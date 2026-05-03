@@ -15,11 +15,10 @@ package family. Carries everything `vitest-agent-reporter`,
   `ConfigLive`)
 - `LoggerLive`, `ensureMigrated`, and shared utilities
 - `TurnPayload` Effect Schema union for Claude Code session/turn logging
-  (2.0.0-alpha)
 - `computeFailureSignature` and `findFunctionBoundary` for stable failure
-  identity hashing across line drift (2.0.0-alpha)
+  identity hashing across line drift
 - `validatePhaseTransition` pure validator for TDD phase-transition
-  evidence binding (2.0.0-alpha)
+  evidence binding
 
 You almost certainly don't install this directly — install
 `vitest-agent-reporter` and the runtime packages get pulled in via

@@ -157,6 +157,7 @@ export interface FailureSignatureDetail {
 	readonly signatureHash: string;
 	readonly firstSeenRunId: number | null;
 	readonly firstSeenAt: string;
+	readonly lastSeenAt: string | null;
 	readonly occurrenceCount: number;
 	readonly recentErrors: ReadonlyArray<{
 		readonly runId: number;

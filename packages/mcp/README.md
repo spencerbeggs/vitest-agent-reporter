@@ -2,10 +2,12 @@
 
 MCP server bin for
 [vitest-agent-reporter](https://github.com/spencerbeggs/vitest-agent-reporter).
-Exposes 24 tools over stdio (via tRPC) that give LLM agents structured
+Exposes 41 tools over stdio (via tRPC) that give LLM agents structured
 access to test data, coverage, history, trends, errors, per-file
 coverage, individual test details, run-tests, cache health, settings,
-and a notes CRUD/search system.
+a notes CRUD/search system, Claude Code session and turn logs, TDD
+lifecycle state, hypotheses, failure signatures, and workspace commit
+history.
 
 This package is a required peer dependency of `vitest-agent-reporter`,
 so you usually don't install it directly — modern pnpm and npm pull it
@@ -43,13 +45,20 @@ populates data for both the CLI and MCP tools.
 ## Tool overview
 
 `help` returns the full tool catalog with parameter signatures. The
-24 tools cover read-only queries (`test_status`, `test_overview`,
+41 tools cover read-only queries (`test_status`, `test_overview`,
 `test_coverage`, `test_history`, `test_trends`, `test_errors`,
 `test_for_file`, `test_get`, `file_coverage`, `cache_health`,
 `configure`), discovery (`project_list`, `test_list`, `module_list`,
-`suite_list`, `settings_list`), execution (`run_tests`), and notes
+`suite_list`, `settings_list`), execution (`run_tests`), notes
 (`note_create`, `note_list`, `note_get`, `note_update`, `note_delete`,
-`note_search`).
+`note_search`), session/turn reads (`session_list`, `session_get`,
+`turn_search`, `failure_signature_get`, `acceptance_metrics`),
+triage/wrapup reads (`triage_brief`, `wrapup_prompt`), hypothesis
+writes (`hypothesis_record`, `hypothesis_validate`, `hypothesis_list`),
+TDD lifecycle (`tdd_session_start`, `tdd_session_end`,
+`tdd_session_resume`, `tdd_session_get`, `decompose_goal_into_behaviors`,
+`tdd_phase_transition_request`), and workspace history
+(`commit_changes`).
 
 ## Documentation
 

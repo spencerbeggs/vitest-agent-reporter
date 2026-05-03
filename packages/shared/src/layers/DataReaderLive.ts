@@ -1621,9 +1621,10 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 					signature_hash: string;
 					first_seen_run_id: number | null;
 					first_seen_at: string;
+					last_seen_at: string | null;
 					occurrence_count: number;
 				}>`
-					SELECT signature_hash, first_seen_run_id, first_seen_at, occurrence_count
+					SELECT signature_hash, first_seen_run_id, first_seen_at, last_seen_at, occurrence_count
 					FROM failure_signatures WHERE signature_hash = ${hash} LIMIT 1
 				`;
 				if (sigRows.length === 0) return Option.none<FailureSignatureDetail>();
@@ -1638,6 +1639,7 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 					signatureHash: sig.signature_hash,
 					firstSeenRunId: sig.first_seen_run_id,
 					firstSeenAt: sig.first_seen_at,
+					lastSeenAt: sig.last_seen_at,
 					occurrenceCount: sig.occurrence_count,
 					recentErrors: errRows.map((e) => ({ runId: e.run_id, message: e.message, errorName: e.name })),
 				});

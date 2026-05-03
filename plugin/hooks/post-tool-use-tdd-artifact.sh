@@ -9,10 +9,16 @@
 
 set -e
 
-read -r hook_json
+# shellcheck source=lib/hook-output.sh
+. "$(dirname "$0")/lib/hook-output.sh"
+
+hook_json=$(cat)
 
 agent_type=$(echo "$hook_json" | jq -r '.agent_type // ""')
-if [ "$agent_type" != "tdd-orchestrator" ]; then
+# shellcheck source=lib/match-tdd-agent.sh
+. "$(dirname "$0")/lib/match-tdd-agent.sh"
+if ! is_tdd_orchestrator "$agent_type"; then
+	emit_noop
 	exit 0
 fi
 
@@ -21,6 +27,7 @@ cwd=$(echo "$hook_json" | jq -r '.cwd // ""')
 tool_name=$(echo "$hook_json" | jq -r '.tool_name // ""')
 
 if [ -z "$cc_session_id" ] || [ -z "$cwd" ]; then
+	emit_noop
 	exit 0
 fi
 
@@ -41,42 +48,70 @@ case "$tool_name" in
 			if [ "$exit_code" != "0" ]; then
 				kind="test_failed_run"
 			fi
-			cd "$cwd" && $pm_exec vitest-agent-reporter record tdd-artifact \
+			cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record tdd-artifact \
 				--cc-session-id "$cc_session_id" \
 				--artifact-kind "$kind" \
 				--recorded-at "$recorded_at" \
 				>/dev/null 2>&1 \
-				|| echo "record tdd-artifact ($kind) failed (non-fatal)" >&2
+				|| true
 		fi
 		;;
-	mcp__vitest-agent-reporter__run_tests)
+	mcp__plugin_vitest-agent-reporter_vitest-reporter__run_tests | mcp__vitest-agent-reporter__run_tests)
 		# The orchestrator runs tests primarily through the run_tests
 		# MCP tool, so a Bash-only matcher would silently miss every
 		# real test execution and break evidence-based phase
-		# transitions. The MCP tool returns markdown whose headline
-		# starts with `## ❌ Vitest -- N failed, ...` on failure and
-		# `## ✅ Vitest -- N passed ...` on success; classify the
-		# response on that prefix.
+		# transitions. Match both the plugin-namespaced tool name
+		# (Claude Code emits `mcp__plugin_<plugin>_<server>__<op>` for
+		# plugin-bundled MCP servers) and the legacy bare prefix.
+		#
+		# Claude Code surfaces MCP tool results with `tool_response`
+		# as an array of `{ type, text }` content blocks, NOT a
+		# `tool_response.content[]` object. `formatReportMarkdown`
+		# emits `## ✅ Vitest -- ...` on success and
+		# `## ❌ Vitest -- N failed, ...` on failure. `formatReportJson`
+		# emits `{"report": {"reason": "passed"|"failed"|...}, ...}`.
+		# Classify by markdown header first, fall back to JSON
+		# `.report.reason`. If neither matches (timeout / run-failed
+		# / unrecognized shape), skip the artifact write rather than
+		# guess — silent misclassification breaks evidence-based
+		# phase transitions far more than a missing artifact does.
 		response_text=$(echo "$hook_json" | jq -r '
-			(.tool_response.content // [])
-			| map(select(.type == "text") | .text)
-			| join("\n")
-			// (.tool_response | tostring)
+			if (.tool_response | type) == "array"
+			then [.tool_response[] | select(.type? == "text") | .text] | join("\n")
+			else (.tool_response | tostring)
+			end
 		')
-		kind="test_passed_run"
-		if echo "$response_text" | grep -q -E '^##[[:space:]]*❌|^##[[:space:]]*[^✅]*[0-9]+ failed,'; then
+		kind=""
+		if echo "$response_text" | grep -q -E '^##[[:space:]]*✅[[:space:]]+Vitest'; then
+			kind="test_passed_run"
+		elif echo "$response_text" | grep -q -E '^##[[:space:]]*❌[[:space:]]+Vitest'; then
 			kind="test_failed_run"
+		else
+			# JSON-format fallback. `.report.reason` is the AgentReport
+			# pass/fail discriminator. The 2>/dev/null swallows non-JSON
+			# inputs cleanly (jq prints a parse error on stderr otherwise).
+			json_reason=$(echo "$response_text" | jq -r '.report.reason // empty' 2>/dev/null || true)
+			case "$json_reason" in
+				passed) kind="test_passed_run" ;;
+				failed) kind="test_failed_run" ;;
+				# interrupted -> no artifact (run was killed; not a clean signal).
+				# error responses (VITEST_TIMEOUT / RUN_FAILED) lack .report
+				# entirely so jq returns empty and we skip.
+			esac
 		fi
-		cd "$cwd" && $pm_exec vitest-agent-reporter record tdd-artifact \
-			--cc-session-id "$cc_session_id" \
-			--artifact-kind "$kind" \
-			--recorded-at "$recorded_at" \
-			>/dev/null 2>&1 \
-			|| echo "record tdd-artifact ($kind) failed (non-fatal)" >&2
+		if [ -n "$kind" ]; then
+			cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record tdd-artifact \
+				--cc-session-id "$cc_session_id" \
+				--artifact-kind "$kind" \
+				--recorded-at "$recorded_at" \
+				>/dev/null 2>&1 \
+				|| true
+		fi
 		;;
 	Edit|Write|MultiEdit)
 		file_path=$(echo "$hook_json" | jq -r '.tool_input.file_path // .tool_input.path // ""')
 		if [ -z "$file_path" ]; then
+			emit_noop
 			exit 0
 		fi
 		case "$file_path" in
@@ -87,14 +122,15 @@ case "$tool_name" in
 				kind="code_written"
 				;;
 		esac
-		cd "$cwd" && $pm_exec vitest-agent-reporter record tdd-artifact \
+		cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record tdd-artifact \
 			--cc-session-id "$cc_session_id" \
 			--artifact-kind "$kind" \
 			--file-path "$file_path" \
 			--recorded-at "$recorded_at" \
 			>/dev/null 2>&1 \
-			|| echo "record tdd-artifact ($kind) failed (non-fatal)" >&2
+			|| true
 		;;
 esac
 
+emit_noop
 exit 0

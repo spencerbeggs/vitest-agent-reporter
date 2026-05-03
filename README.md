@@ -40,7 +40,7 @@ The package family has three entry points:
 | --- | --- | --- | --- |
 | Reporter/Plugin | (library import) | `vitest-agent-reporter` | Vitest reporter producing SQLite-persisted test data |
 | CLI | `vitest-agent-reporter` | `vitest-agent-reporter-cli` | Query test status, coverage, history, trends from the terminal |
-| MCP Server | `vitest-agent-reporter-mcp` | `vitest-agent-reporter-mcp` | 24 tools over stdio for LLM agent integration |
+| MCP Server | `vitest-agent-reporter-mcp` | `vitest-agent-reporter-mcp` | 41 tools over stdio for LLM agent integration |
 
 All three share the Effect service architecture and the same SQLite
 database in `vitest-agent-reporter-shared` (`DataReader`, `DataStore`,

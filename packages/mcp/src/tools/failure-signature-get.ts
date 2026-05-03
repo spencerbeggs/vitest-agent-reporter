@@ -14,6 +14,8 @@ export const failureSignatureGet = publicProcedure
 				const lines: string[] = [
 					`# Failure Signature \`${sig.signatureHash}\``,
 					"",
+					`**Hash:** ${sig.signatureHash}`,
+					"",
 					`- first_seen_at: ${sig.firstSeenAt}`,
 					`- first_seen_run_id: ${sig.firstSeenRunId ?? "unknown"}`,
 					`- occurrence_count: ${sig.occurrenceCount}`,

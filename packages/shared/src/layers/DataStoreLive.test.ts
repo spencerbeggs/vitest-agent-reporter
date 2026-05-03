@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import migration0001 from "../migrations/0001_initial.js";
 import migration0002 from "../migrations/0002_comprehensive.js";
 import migration0004 from "../migrations/0004_test_cases_created_turn_id.js";
+import migration0005 from "../migrations/0005_failure_signatures_last_seen_at.js";
 import { DataStore } from "../services/DataStore.js";
 import { DataStoreLive } from "./DataStoreLive.js";
 
@@ -18,6 +19,7 @@ const MigratorLayer = SqliteMigrator.layer({
 		"0001_initial": migration0001,
 		"0002_comprehensive": migration0002,
 		"0004_test_cases_created_turn_id": migration0004,
+		"0005_failure_signatures_last_seen_at": migration0005,
 	}),
 }).pipe(Layer.provide(Layer.merge(SqliteLayer, PlatformLayer)));
 
@@ -406,6 +408,75 @@ describe("DataStoreLive", () => {
 						SELECT signature_hash, occurrence_count FROM failure_signatures WHERE signature_hash = 'deadbeefcafe1234'
 					`;
 					expect(rows).toHaveLength(1);
+					expect(rows[0].occurrence_count).toBe(2);
+				}),
+			);
+		});
+
+		it("should set last_seen_at = seenAt on first insert", async () => {
+			await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					yield* store.writeSettings("fs-ls-1", settingsInput, {});
+					const runId = yield* store.writeRun({ ...runInput, settingsHash: "fs-ls-1" });
+
+					const seenAt = "2026-05-01T12:00:00Z";
+					yield* store.writeFailureSignature({
+						signatureHash: "abcdef0123456701",
+						runId,
+						seenAt,
+					});
+
+					const rows = yield* sql<{
+						signature_hash: string;
+						first_seen_at: string;
+						last_seen_at: string | null;
+					}>`
+						SELECT signature_hash, first_seen_at, last_seen_at
+						FROM failure_signatures WHERE signature_hash = 'abcdef0123456701'
+					`;
+					expect(rows).toHaveLength(1);
+					expect(rows[0].first_seen_at).toBe(seenAt);
+					expect(rows[0].last_seen_at).toBe(seenAt);
+				}),
+			);
+		});
+
+		it("should bump last_seen_at to the new seenAt on recurrence while preserving first_seen_at and incrementing occurrence_count", async () => {
+			await run(
+				Effect.gen(function* () {
+					const store = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					yield* store.writeSettings("fs-ls-2", settingsInput, {});
+					const runId = yield* store.writeRun({ ...runInput, settingsHash: "fs-ls-2" });
+
+					const firstAt = "2026-05-01T12:00:00Z";
+					const laterAt = "2026-05-02T15:30:00Z";
+					yield* store.writeFailureSignature({
+						signatureHash: "abcdef0123456702",
+						runId,
+						seenAt: firstAt,
+					});
+					yield* store.writeFailureSignature({
+						signatureHash: "abcdef0123456702",
+						runId,
+						seenAt: laterAt,
+					});
+
+					const rows = yield* sql<{
+						first_seen_at: string;
+						last_seen_at: string | null;
+						occurrence_count: number;
+					}>`
+						SELECT first_seen_at, last_seen_at, occurrence_count
+						FROM failure_signatures WHERE signature_hash = 'abcdef0123456702'
+					`;
+					expect(rows).toHaveLength(1);
+					expect(rows[0].first_seen_at).toBe(firstAt);
+					expect(rows[0].last_seen_at).toBe(laterAt);
 					expect(rows[0].occurrence_count).toBe(2);
 				}),
 			);
@@ -912,6 +983,223 @@ describe("DataStoreLive", () => {
 			);
 			expect(result.map((r) => r.turn_no)).toEqual([1, 2]);
 		});
+
+		describe("file_edit fanout", () => {
+			it("inserts a file_edits row when payload type is file_edit", async () => {
+				const result = await run(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						const sql = yield* SqlClient;
+
+						const sessionId = yield* ds.writeSession({
+							cc_session_id: "cc-file-edit",
+							project: "p",
+							cwd: "/tmp/p",
+							agent_kind: "main",
+							started_at: "2026-04-29T00:00:00Z",
+						});
+
+						const payload = {
+							type: "file_edit" as const,
+							file_path: "/abs/src/feature.ts",
+							edit_kind: "edit" as const,
+							lines_added: 12,
+							lines_removed: 3,
+							diff: "@@ -1 +1 @@\n-old\n+new",
+						};
+
+						const turnId = yield* ds.writeTurn({
+							session_id: sessionId,
+							type: "file_edit",
+							payload: JSON.stringify(payload),
+							occurred_at: "2026-04-29T00:00:01Z",
+						});
+
+						const rows = yield* sql<{
+							turn_id: number;
+							file_id: number;
+							edit_kind: string;
+							lines_added: number | null;
+							lines_removed: number | null;
+							diff: string | null;
+						}>`SELECT turn_id, file_id, edit_kind, lines_added, lines_removed, diff FROM file_edits WHERE turn_id = ${turnId}`;
+						const fileRows = yield* sql<{
+							path: string;
+						}>`SELECT path FROM files WHERE id = ${rows[0]?.file_id ?? -1}`;
+						return { rows, fileRows };
+					}),
+				);
+
+				expect(result.rows).toHaveLength(1);
+				expect(result.rows[0].edit_kind).toBe("edit");
+				expect(result.rows[0].lines_added).toBe(12);
+				expect(result.rows[0].lines_removed).toBe(3);
+				expect(result.rows[0].diff).toBe("@@ -1 +1 @@\n-old\n+new");
+				expect(result.fileRows).toHaveLength(1);
+				expect(result.fileRows[0].path).toBe("/abs/src/feature.ts");
+			});
+
+			it("inserts a tool_invocations row when payload type is tool_result", async () => {
+				const result = await run(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						const sql = yield* SqlClient;
+
+						const sessionId = yield* ds.writeSession({
+							cc_session_id: "cc-tool-result",
+							project: "p",
+							cwd: "/tmp/p",
+							agent_kind: "main",
+							started_at: "2026-04-29T00:00:00Z",
+						});
+
+						const payload = {
+							type: "tool_result" as const,
+							tool_name: "Bash",
+							tool_use_id: "tu-42",
+							result_summary: "exit 0",
+							success: true,
+							duration_ms: 250,
+						};
+
+						const turnId = yield* ds.writeTurn({
+							session_id: sessionId,
+							type: "tool_result",
+							payload: JSON.stringify(payload),
+							occurred_at: "2026-04-29T00:00:01Z",
+						});
+
+						return yield* sql<{
+							turn_id: number;
+							tool_name: string;
+							params_hash: string | null;
+							result_summary: string | null;
+							duration_ms: number | null;
+							success: number;
+						}>`SELECT turn_id, tool_name, params_hash, result_summary, duration_ms, success FROM tool_invocations WHERE turn_id = ${turnId}`;
+					}),
+				);
+
+				expect(result).toHaveLength(1);
+				expect(result[0].tool_name).toBe("Bash");
+				expect(result[0].params_hash).toBeNull();
+				expect(result[0].result_summary).toBe("exit 0");
+				expect(result[0].duration_ms).toBe(250);
+				expect(result[0].success).toBe(1);
+			});
+
+			it("does not fan out for non-fanout payload types", async () => {
+				const result = await run(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						const sql = yield* SqlClient;
+
+						const sessionId = yield* ds.writeSession({
+							cc_session_id: "cc-no-fanout",
+							project: "p",
+							cwd: "/tmp/p",
+							agent_kind: "main",
+							started_at: "2026-04-29T00:00:00Z",
+						});
+
+						const inserts = [
+							{
+								type: "user_prompt" as const,
+								payload: { type: "user_prompt", prompt: "hi" },
+							},
+							{
+								type: "tool_call" as const,
+								payload: { type: "tool_call", tool_name: "Bash", tool_input: { cmd: "ls" } },
+							},
+							{
+								type: "hook_fire" as const,
+								payload: { type: "hook_fire", hook_kind: "PreToolUse" },
+							},
+							{
+								type: "note" as const,
+								payload: { type: "note", scope: "global", content: "remember" },
+							},
+							{
+								type: "hypothesis" as const,
+								payload: { type: "hypothesis", content: "the bug is in foo" },
+							},
+						];
+
+						for (let i = 0; i < inserts.length; i++) {
+							const entry = inserts[i];
+							yield* ds.writeTurn({
+								session_id: sessionId,
+								type: entry.type,
+								payload: JSON.stringify(entry.payload),
+								occurred_at: `2026-04-29T00:00:0${i + 1}Z`,
+							});
+						}
+
+						const fileEdits = yield* sql<{
+							count: number;
+						}>`SELECT COUNT(*) AS count FROM file_edits`;
+						const toolInvocations = yield* sql<{
+							count: number;
+						}>`SELECT COUNT(*) AS count FROM tool_invocations`;
+						const turns = yield* sql<{
+							count: number;
+						}>`SELECT COUNT(*) AS count FROM turns WHERE session_id = ${sessionId}`;
+						return {
+							fileEdits: fileEdits[0].count,
+							toolInvocations: toolInvocations[0].count,
+							turns: turns[0].count,
+						};
+					}),
+				);
+
+				expect(result.turns).toBe(5);
+				expect(result.fileEdits).toBe(0);
+				expect(result.toolInvocations).toBe(0);
+			});
+
+			it("nulls optional file_edit fields when the payload omits them", async () => {
+				const result = await run(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						const sql = yield* SqlClient;
+
+						const sessionId = yield* ds.writeSession({
+							cc_session_id: "cc-file-edit-min",
+							project: "p",
+							cwd: "/tmp/p",
+							agent_kind: "main",
+							started_at: "2026-04-29T00:00:00Z",
+						});
+
+						const payload = {
+							type: "file_edit" as const,
+							file_path: "/abs/src/minimal.ts",
+							edit_kind: "write" as const,
+						};
+
+						const turnId = yield* ds.writeTurn({
+							session_id: sessionId,
+							type: "file_edit",
+							payload: JSON.stringify(payload),
+							occurred_at: "2026-04-29T00:00:01Z",
+						});
+
+						return yield* sql<{
+							edit_kind: string;
+							lines_added: number | null;
+							lines_removed: number | null;
+							diff: string | null;
+						}>`SELECT edit_kind, lines_added, lines_removed, diff FROM file_edits WHERE turn_id = ${turnId}`;
+					}),
+				);
+
+				expect(result).toHaveLength(1);
+				expect(result[0].edit_kind).toBe("write");
+				expect(result[0].lines_added).toBeNull();
+				expect(result[0].lines_removed).toBeNull();
+				expect(result[0].diff).toBeNull();
+			});
+		});
 	});
 
 	describe("pruneSessions", () => {
@@ -1052,6 +1340,46 @@ describe("DataStoreLive", () => {
 			);
 			expect(exit._tag).toBe("Failure");
 		});
+
+		it("opens an initial spike phase tied to the new tdd_session id", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sql = yield* SqlClient;
+
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-tdd-spike",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						agent_type: "tdd-orchestrator",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+
+					const tddId = yield* ds.writeTddSession({
+						sessionId,
+						goal: "open initial spike",
+						startedAt: "2026-04-29T00:00:01Z",
+					});
+
+					const phases = yield* sql<{
+						id: number;
+						phase: string;
+						started_at: string;
+						ended_at: string | null;
+					}>`
+						SELECT id, phase, started_at, ended_at FROM tdd_phases
+						WHERE tdd_session_id = ${tddId}
+					`;
+					return { tddId, phases };
+				}),
+			);
+
+			expect(result.phases).toHaveLength(1);
+			expect(result.phases[0].phase).toBe("spike");
+			expect(result.phases[0].started_at).toBe("2026-04-29T00:00:01Z");
+			expect(result.phases[0].ended_at).toBeNull();
+		});
 	});
 
 	describe("endTddSession", () => {
@@ -1146,6 +1474,14 @@ describe("DataStoreLive", () => {
 						startedAt: "2026-04-29T00:00:01Z",
 					});
 
+					// The spike phase is auto-opened by writeTddSession; capture its
+					// id so the first explicit writeTddPhase should close it.
+					const spikeRows = yield* sql<{ id: number }>`
+						SELECT id FROM tdd_phases
+						WHERE tdd_session_id = ${tddId} AND phase = 'spike' AND ended_at IS NULL
+					`;
+					const spikeId = spikeRows[0].id;
+
 					const r1 = yield* ds.writeTddPhase({
 						tddSessionId: tddId,
 						phase: "red",
@@ -1161,10 +1497,10 @@ describe("DataStoreLive", () => {
 					const closed = yield* sql<{ ended_at: string | null }>`
 						SELECT ended_at FROM tdd_phases WHERE id = ${r1.id}
 					`;
-					return { r1, r2, closed };
+					return { r1, r2, closed, spikeId };
 				}),
 			);
-			expect(result.r1.previousPhaseId).toBeNull();
+			expect(result.r1.previousPhaseId).toBe(result.spikeId);
 			expect(result.r2.previousPhaseId).toBe(result.r1.id);
 			expect(result.closed[0].ended_at).toBe("2026-04-29T00:00:10Z");
 		});

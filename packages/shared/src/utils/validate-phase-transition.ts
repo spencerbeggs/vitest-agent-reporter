@@ -39,6 +39,7 @@ export interface PhaseTransitionContext {
 
 export type DenialReason =
 	| "missing_artifact_evidence"
+	| "wrong_artifact_kind"
 	| "wrong_source_phase"
 	| "unknown_session"
 	| "session_already_ended"
@@ -102,7 +103,7 @@ export const validatePhaseTransition = (ctx: PhaseTransitionContext): PhaseTrans
 		return {
 			accepted: false,
 			phase: ctx.current_phase,
-			denialReason: "missing_artifact_evidence",
+			denialReason: "wrong_artifact_kind",
 			remediation: {
 				suggestedTool: "run_tests",
 				suggestedArgs: {},
@@ -111,34 +112,42 @@ export const validatePhaseTransition = (ctx: PhaseTransitionContext): PhaseTrans
 		};
 	}
 
-	// D2 binding rule 1: cited test was created in this phase window AND authored in this session
-	if (
-		ctx.cited_artifact.test_case_created_turn_at !== null &&
-		ctx.cited_artifact.test_case_created_turn_at < ctx.phase_started_at
-	) {
-		return {
-			accepted: false,
-			phase: ctx.current_phase,
-			denialReason: "evidence_not_in_phase_window",
-			remediation: {
-				suggestedTool: "run_tests",
-				suggestedArgs: {},
-				humanHint:
-					"The cited test was authored before this phase started. Write a new failing test inside the current phase.",
-			},
-		};
-	}
-	if (!ctx.cited_artifact.test_case_authored_in_session) {
-		return {
-			accepted: false,
-			phase: ctx.current_phase,
-			denialReason: "evidence_not_in_phase_window",
-			remediation: {
-				suggestedTool: "run_tests",
-				suggestedArgs: {},
-				humanHint: "The cited test was not authored in this TDD session. Write the test yourself in the current phase.",
-			},
-		};
+	// D2 binding rule 1: cited test was created in this phase window AND authored
+	// in this session. Rule 1 binds a *test* authoring window — when the cited
+	// artifact carries no test_case_id (e.g. a run-level test_failed_run /
+	// test_passed_run recorded by post-tool-use-tdd-artifact.sh on a Bash test
+	// invocation), there is no specific test to bind to, so rule 1 is
+	// inapplicable. Skip both the phase-window check and the session check.
+	if (ctx.cited_artifact.test_case_id !== null) {
+		if (
+			ctx.cited_artifact.test_case_created_turn_at !== null &&
+			ctx.cited_artifact.test_case_created_turn_at < ctx.phase_started_at
+		) {
+			return {
+				accepted: false,
+				phase: ctx.current_phase,
+				denialReason: "evidence_not_in_phase_window",
+				remediation: {
+					suggestedTool: "run_tests",
+					suggestedArgs: {},
+					humanHint:
+						"The cited test was authored before this phase started. Write a new failing test inside the current phase.",
+				},
+			};
+		}
+		if (!ctx.cited_artifact.test_case_authored_in_session) {
+			return {
+				accepted: false,
+				phase: ctx.current_phase,
+				denialReason: "evidence_not_in_phase_window",
+				remediation: {
+					suggestedTool: "run_tests",
+					suggestedArgs: {},
+					humanHint:
+						"The cited test was not authored in this TDD session. Write the test yourself in the current phase.",
+				},
+			};
+		}
 	}
 
 	// D2 binding rule 2: behavior match (if the orchestrator requests transitioning a specific behavior)

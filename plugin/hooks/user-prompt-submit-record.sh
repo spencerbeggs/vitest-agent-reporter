@@ -9,13 +9,17 @@
 
 set -e
 
-read -r hook_json
+# shellcheck source=lib/hook-output.sh
+. "$(dirname "$0")/lib/hook-output.sh"
+
+hook_json=$(cat)
 
 cc_session_id=$(jq -r '.session_id // ""' <<< "$hook_json")
 cwd=$(jq -r '.cwd // ""' <<< "$hook_json")
 prompt=$(jq -r '.prompt // ""' <<< "$hook_json")
 
 if [ -z "$cc_session_id" ] || [ -z "$cwd" ] || [ -z "$prompt" ]; then
+	emit_noop
 	exit 0
 fi
 
@@ -29,11 +33,11 @@ pm_exec=$(detect_pm_exec "$cwd")
 # "find the message that started this thread" queries against the
 # UserPromptPayload schema's contract.
 payload=$(jq -nc --arg p "$prompt" '{type: "user_prompt", prompt: $p}')
-cd "$cwd" && $pm_exec vitest-agent-reporter record turn \
+cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record turn \
 	--cc-session-id "$cc_session_id" \
 	"$payload" \
 	>/dev/null 2>&1 \
-	|| echo "record turn (user_prompt) failed (non-fatal)" >&2
+	|| true
 
 # 2. Compute the nudge (empty when the prompt isn't failure-related).
 nudge=$(cd "$cwd" && $pm_exec vitest-agent-reporter wrapup \
@@ -44,12 +48,9 @@ nudge=$(cd "$cwd" && $pm_exec vitest-agent-reporter wrapup \
 
 # 3. Inject if non-empty.
 if [ -n "$nudge" ]; then
-	jq -n --arg ctx "$nudge" '{
-		hookSpecificOutput: {
-			hookEventName: "UserPromptSubmit",
-			additionalContext: $ctx
-		}
-	}'
+	emit_additional_context "UserPromptSubmit" "$nudge"
+else
+	emit_noop
 fi
 
 exit 0

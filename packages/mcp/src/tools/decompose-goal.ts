@@ -10,17 +10,20 @@ import { idempotentProcedure } from "../middleware/idempotency.js";
  * cycle once per behavior. Required for non-toy goals."
  *
  * The decomposition heuristic here is intentionally simple — splits
- * by " and " / "," / "; " in the goal text, dropping empties, and
- * coining suggested test names by prefixing each chunk with "should ".
- * Agents that want better decomposition can re-call with a pre-split
- * goal as separate atoms; the idempotency key on (tddSessionId, goal)
- * means re-running with the same input is a no-op replay.
+ * by " and " / "; " in the goal text, dropping empties, and coining
+ * suggested test names by prefixing each chunk with "should ". Plain
+ * commas are NOT a separator: embedded clarifying clauses like
+ * "Add foo, distinct from bar, to the union" should stay as one
+ * behavior. Agents that want finer decomposition can re-call with a
+ * pre-split goal as separate atoms; the idempotency key on
+ * (tddSessionId, goal) means re-running with the same input is a
+ * no-op replay.
  */
 function splitGoal(goal: string): ReadonlyArray<string> {
 	const trimmed = goal.trim();
 	if (trimmed.length === 0) return [];
 	const parts = trimmed
-		.split(/\s+and\s+|;\s+|,\s+/i)
+		.split(/\s+and\s+|;\s+/i)
 		.map((s) => s.trim())
 		.filter((s) => s.length > 0);
 	return parts.length > 0 ? parts : [trimmed];

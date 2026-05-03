@@ -304,6 +304,9 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 				files: z.optional(z.array(z.string())).describe("Test file paths to run"),
 				project: z.optional(z.string()).describe("Project name to filter"),
 				timeout: z.optional(z.number()).describe("Timeout in seconds (default: 120)"),
+				format: z
+					.optional(z.enum(["markdown", "json"]))
+					.describe("Output format (default: markdown). 'json' returns the raw AgentReport for machine consumption."),
 			},
 		},
 		async (args) =>
@@ -312,6 +315,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 					files: args.files,
 					project: args.project,
 					timeout: args.timeout,
+					format: args.format,
 				}),
 			),
 	);

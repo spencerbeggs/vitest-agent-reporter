@@ -13,6 +13,7 @@ import {
 	migration0002,
 	migration0003,
 	migration0004,
+	migration0005,
 } from "vitest-agent-reporter-shared";
 import { CoverageAnalyzerLive } from "./CoverageAnalyzerLive.js";
 
@@ -25,6 +26,7 @@ export const ReporterLive = (dbPath: string, logLevel?: LogLevel.LogLevel, logFi
 			"0002_comprehensive": migration0002,
 			"0003_idempotent_responses": migration0003,
 			"0004_test_cases_created_turn_id": migration0004,
+			"0005_failure_signatures_last_seen_at": migration0005,
 		}),
 	}).pipe(Layer.provide(Layer.merge(SqliteLayer, PlatformLayer)));
 

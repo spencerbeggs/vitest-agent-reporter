@@ -7,6 +7,9 @@
 
 set -euo pipefail
 
+# shellcheck source=lib/hook-output.sh
+. "$(dirname "$0")/lib/hook-output.sh"
+
 # Read and discard the JSON envelope to avoid broken-pipe; we re-read
 # session_id and cwd below.
 hook_json=$(cat)
@@ -17,6 +20,7 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$cwd}"
 
 if [ -z "$cc_session_id" ] || [ -z "$PROJECT_DIR" ]; then
 	# Nothing to inject and no session to record.
+	emit_noop
 	exit 0
 fi
 
@@ -38,7 +42,7 @@ fi
 project=$(jq -r '.name // "unknown"' < "$PROJECT_DIR/package.json" 2>/dev/null || echo "unknown")
 started_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-cd "$PROJECT_DIR" && $pm_exec vitest-agent-reporter record session-start \
+cd "$PROJECT_DIR" >/dev/null && $pm_exec vitest-agent-reporter record session-start \
 	--cc-session-id "$cc_session_id" \
 	--project "$project" \
 	--cwd "$PROJECT_DIR" \
@@ -46,7 +50,7 @@ cd "$PROJECT_DIR" && $pm_exec vitest-agent-reporter record session-start \
 	--started-at "$started_at" \
 	$triage_flag \
 	>/dev/null 2>&1 \
-	|| echo "record session-start failed (non-fatal)" >&2
+	|| true
 
 # 4. Build the additionalContext markdown -- prefer triage when non-empty,
 #    fall back to the generic context message.
@@ -65,9 +69,4 @@ No orientation signal yet (no failing tests, flaky tests, or open TDD sessions).
 fi
 
 # 5. Emit the hookSpecificOutput JSON for Claude Code to inject.
-jq -n --arg ctx "$context" '{
-	hookSpecificOutput: {
-		hookEventName: "SessionStart",
-		additionalContext: $ctx
-	}
-}'
+emit_additional_context "SessionStart" "$context"

@@ -100,6 +100,14 @@ export function formatCoverage(reports: ReadonlyArray<{ project: string; report:
 	}
 
 	if (belowThresholdsByFile.size === 0 && belowTargetsByFile.size === 0) {
+		// Replace the empty `## Coverage Gaps` section body with an
+		// explicit all-clear line. Without this, agents would receive
+		// an ambiguous bare heading when invoking
+		// `vitest-agent-reporter coverage` on a healthy project — they
+		// can't distinguish "no gaps" from "the formatter forgot to
+		// render the body". An explicit line gives them an
+		// unambiguous signal there is nothing to act on.
+		lines.push("All targets met — no coverage gaps.");
 		return lines.join("\n");
 	}
 

@@ -79,4 +79,63 @@ describe("record-session", () => {
 			),
 		).rejects.toThrow();
 	});
+
+	it("recordSessionStart resolves parent session when parentCcSessionId points at an existing session", async () => {
+		const result = await run(
+			Effect.gen(function* () {
+				const parent = yield* recordSessionStart({
+					ccSessionId: "cc-rs-parent",
+					project: "p",
+					cwd: "/tmp/p",
+					agentKind: "main",
+					startedAt: "2026-04-29T00:00:00Z",
+					triageWasNonEmpty: false,
+				});
+				const child = yield* recordSessionStart({
+					ccSessionId: "cc-rs-child",
+					project: "p",
+					cwd: "/tmp/p",
+					agentKind: "subagent",
+					parentCcSessionId: "cc-rs-parent",
+					startedAt: "2026-04-29T00:00:01Z",
+					triageWasNonEmpty: false,
+				});
+				return { parent, child };
+			}),
+		);
+		expect(result.parent.sessionId).toBeGreaterThan(0);
+		expect(result.child.sessionId).toBeGreaterThan(0);
+		expect(result.child.sessionId).not.toBe(result.parent.sessionId);
+	});
+
+	it("recordSessionStart proceeds when parentCcSessionId points at a missing session", async () => {
+		const result = await run(
+			recordSessionStart({
+				ccSessionId: "cc-rs-orphan",
+				project: "p",
+				cwd: "/tmp/p",
+				agentKind: "subagent",
+				parentCcSessionId: "cc-rs-missing-parent",
+				startedAt: "2026-04-29T00:00:00Z",
+				triageWasNonEmpty: false,
+			}),
+		);
+		expect(result.sessionId).toBeGreaterThan(0);
+	});
+
+	it("recordSessionStart accepts optional subProject and agentType fields", async () => {
+		const result = await run(
+			recordSessionStart({
+				ccSessionId: "cc-rs-subproj",
+				project: "p",
+				subProject: "unit",
+				cwd: "/tmp/p",
+				agentKind: "subagent",
+				agentType: "tdd-orchestrator",
+				startedAt: "2026-04-29T00:00:00Z",
+				triageWasNonEmpty: true,
+			}),
+		);
+		expect(result.sessionId).toBeGreaterThan(0);
+	});
 });

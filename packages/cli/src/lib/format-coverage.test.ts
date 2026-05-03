@@ -137,7 +137,13 @@ describe("formatCoverage", () => {
 		expect(result).not.toContain("### Files below");
 	});
 
-	it("skips projects with empty low coverage", () => {
+	it("emits all-targets-met line when coverage data exists with no gaps", () => {
+		// When every project's coverage data shows no files below
+		// thresholds AND no files below targets, the formatter must
+		// not leave an empty `## Coverage Gaps` heading dangling. The
+		// CLI's job is to give agents an unambiguous signal that there
+		// is nothing to do. A bare heading with no body is ambiguous;
+		// an explicit "all targets met" line is not.
 		const report = makeReport({
 			coverage: {
 				totals: {
@@ -155,11 +161,110 @@ describe("formatCoverage", () => {
 
 		const result = formatCoverage([{ project: "core", report }]);
 
+		expect(result).toContain("## Coverage Gaps");
+		expect(result).toContain("All targets met — no coverage gaps.");
 		expect(result).not.toContain("### Files below");
 	});
 
 	it("handles empty reports array", () => {
 		const result = formatCoverage([]);
 		expect(result).toContain("## Coverage Gaps");
+	});
+
+	it("renders aspirational targets line and below-targets table when targets are set and only below-target files exist", () => {
+		// Hits three coverage gaps in one shot:
+		//  - the `for (const f of cov.belowTarget ?? [])` branch where
+		//    `belowTarget` is provided non-empty (the truthy nullish-
+		//    coalescing arm).
+		//  - the `if (targets) { aspirational targets line }` true
+		//    branch -- emits the **Aspirational targets:** line.
+		//  - the `if (belowTargetsByFile.size > 0)` block when
+		//    `belowThresholdsByFile.size === 0` (no minimum-threshold
+		//    files, only below-target files), so the only table the
+		//    formatter renders is the aspirational-targets one.
+		const report = makeReport({
+			coverage: {
+				totals: {
+					statements: 85,
+					branches: 80,
+					functions: 90,
+					lines: 85,
+				},
+				thresholds: {
+					global: { lines: 80, functions: 80, branches: 80, statements: 80 },
+					patterns: [],
+				},
+				targets: {
+					global: { lines: 95, functions: 95, branches: 95, statements: 95 },
+					patterns: [],
+				},
+				scoped: false,
+				lowCoverage: [],
+				lowCoverageFiles: [],
+				belowTarget: [
+					{
+						file: "src/payments.ts",
+						summary: {
+							statements: 88,
+							branches: 82,
+							functions: 92,
+							lines: 87,
+						},
+						uncoveredLines: "12-15,40",
+					},
+				],
+				belowTargetFiles: ["src/payments.ts"],
+			},
+		});
+
+		const result = formatCoverage([{ project: "core", report }]);
+
+		expect(result).toContain("## Coverage Gaps");
+		expect(result).toContain("**Aspirational targets:** lines: 95%, functions: 95%, branches: 95%, statements: 95%");
+		expect(result).toContain("### Files below aspirational targets");
+		expect(result).toContain("| src/payments.ts | 88 | 82 | 92 | 87 | 12-15,40 |");
+		// No minimum-threshold table emitted (lowCoverage is empty).
+		expect(result).not.toContain("### Files below minimum thresholds");
+	});
+
+	it("dedupes belowTarget across projects (coverage is global, not per-project)", () => {
+		// Mirrors the existing dedupe test but for the belowTarget
+		// path so the `if (!belowTargetsByFile.has(f.file))` branch is
+		// exercised with both the cache-miss (first project) and the
+		// cache-hit (second project) cases.
+		const sharedCoverage = {
+			totals: { statements: 85, branches: 80, functions: 90, lines: 85 },
+			thresholds: {
+				global: { lines: 80 } as const,
+				patterns: [] as Array<[string, never]>,
+			},
+			targets: {
+				global: { lines: 95 } as const,
+				patterns: [] as Array<[string, never]>,
+			},
+			scoped: false,
+			lowCoverage: [],
+			lowCoverageFiles: [],
+			belowTarget: [
+				{
+					file: "src/b.ts",
+					summary: { statements: 88, branches: 82, functions: 92, lines: 87 },
+					uncoveredLines: "5-9",
+				},
+			],
+			belowTargetFiles: ["src/b.ts"],
+		};
+		const report1 = makeReport({ coverage: sharedCoverage });
+		const report2 = makeReport({ coverage: sharedCoverage });
+
+		const result = formatCoverage([
+			{ project: "core", report: report1 },
+			{ project: "utils", report: report2 },
+		]);
+
+		// Single below-target row (deduped on file path across projects).
+		const fileMatches = result.match(/\| src\/b\.ts \|/g) ?? [];
+		expect(fileMatches.length).toBe(1);
+		expect(result).toContain("### Files below aspirational targets");
 	});
 });

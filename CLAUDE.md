@@ -82,7 +82,7 @@ Schema definitions with `typeof Schema.Type` for TypeScript types.
 Schemas are part of the public API and are re-exported from
 `vitest-agent-reporter` for backward-compatible consumer use.
 
-### Database location (2.0 change)
+### Database location
 
 The SQLite `data.db` lives at a deterministic XDG-derived path:
 
@@ -130,7 +130,7 @@ projectKey = "my-stable-key"
 Loaded via `config-file-effect`'s resolver chain (workspace root ->
 git root -> upward walk).
 
-### Plugin MCP loader (2.0 rewrite, retires Decision 29)
+### Plugin MCP loader
 
 `plugin/bin/mcp-server.mjs` is now a zero-deps Node script that:
 
@@ -154,17 +154,16 @@ plus `node_modules` walk approach.
 
 `packages/shared/src/` -- `services/` (Effect tags), `layers/` (live +
 test, including `LoggerLive`, `ConfigLive`, `PathResolutionLive`,
-`OutputPipelineLive`), `schemas/` (Effect Schema definitions; 2.0.0-α
-adds `schemas/turns/` with the seven `TurnPayload` discriminated-union
-payloads), `utils/` (pure functions, including `resolve-data-path`,
-`resolve-workspace-key`, `normalize-workspace-key`, `ensure-migrated`;
-2.0.0-α adds `function-boundary` (acorn AST walk),
+`OutputPipelineLive`), `schemas/` (Effect Schema definitions; `schemas/turns/`
+holds the seven `TurnPayload` discriminated-union payloads),
+`utils/` (pure functions, including `resolve-data-path`,
+`resolve-workspace-key`, `normalize-workspace-key`, `ensure-migrated`,
+`function-boundary` (acorn AST walk),
 `failure-signature` (deterministic 16-char sha256 hash), and
 `validate-phase-transition` (TDD evidence-binding rules)),
-`errors/` (tagged errors), `formatters/` (markdown, gfm, json, silent),
-`migrations/` (`0001_initial` for 1.x; 2.0.0-α adds
-`0002_comprehensive` -- the **last** drop-and-recreate migration,
-40 tables total), `sql/` (row types + assemblers).
+`errors/` (tagged errors), `formatters/` (markdown, gfm, json, silent,
+ci-annotations), `migrations/` (5 migrations; `0002_comprehensive` is
+the last drop-and-recreate, 41 tables total), `sql/` (row types + assemblers).
 
 `packages/reporter/src/` -- `reporter.ts` (`AgentReporter`),
 `plugin.ts` (`AgentPlugin`), `services/CoverageAnalyzer.ts`,
@@ -176,8 +175,8 @@ payloads), `utils/` (pure functions, including `resolve-data-path`,
 `lib/` (testable formatting logic), `layers/CliLive.ts`.
 
 `packages/mcp/src/` -- `bin.ts` (entry), `index.ts`, `server.ts`,
-`router.ts`, `context.ts`, `tools/` (24 tool implementations),
-`layers/McpLive.ts`.
+`router.ts`, `context.ts`, `tools/` (41 tool implementations),
+`middleware/idempotency.ts`, `layers/McpLive.ts`.
 
 `plugin/` -- `.claude-plugin/plugin.json` (manifest with inline
 `mcpServers`), `bin/mcp-server.mjs` (PM-detect + spawn loader),
@@ -187,23 +186,19 @@ payloads), `utils/` (pure functions, including `resolve-data-path`,
 `commands/` (setup, configure).
 
 **Spec:** [GitHub Issue #1](https://github.com/spencerbeggs/vitest-agent-reporter/issues/1)
-**2.0 plan (archived):** [`./.claude/plans/archive/2026-04-29-2.0.0-xdg-paths-and-package-split.md`](./.claude/plans/archive/2026-04-29-2.0.0-xdg-paths-and-package-split.md)
-(implements [issue #39](https://github.com/spencerbeggs/vitest-agent-reporter/issues/39))
 
 **For architecture details (progressive loading -- load only what you need):**
 
-- @./.claude/design/vitest-agent-reporter/architecture.md
+- `@./.claude/design/vitest-agent-reporter/architecture.md`
   Hub document with overview, diagram, and component summary.
-- @./.claude/design/vitest-agent-reporter/components.md
+- `@./.claude/design/vitest-agent-reporter/components.md`
   Load when working on specific components, need API details or interfaces.
-- @./.claude/design/vitest-agent-reporter/decisions.md
+- `@./.claude/design/vitest-agent-reporter/decisions.md`
   Load when you need to understand "why" a design choice was made.
-- @./.claude/design/vitest-agent-reporter/data-structures.md
+- `@./.claude/design/vitest-agent-reporter/data-structures.md`
   Load when working with schemas, cache format, output, or data flow.
-- @./.claude/design/vitest-agent-reporter/testing-strategy.md
+- `@./.claude/design/vitest-agent-reporter/testing-strategy.md`
   Load when writing tests or reviewing testing patterns and coverage.
-- @./.claude/design/vitest-agent-reporter/phase-history.md
-  Load when reviewing implementation history or checking when a feature shipped.
 
 ## Build Pipeline
 

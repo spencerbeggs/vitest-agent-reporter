@@ -4,11 +4,12 @@ import { layer as sqliteClientLayer } from "@effect/sql-sqlite-node/SqliteClient
 import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
 import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
+import { DataStoreError } from "../errors/DataStoreError.js";
 import { DataReaderLive } from "../layers/DataReaderLive.js";
 import { DataStoreLive } from "../layers/DataStoreLive.js";
 import migration0001 from "../migrations/0001_initial.js";
 import migration0002 from "../migrations/0002_comprehensive.js";
-import type { DataReader } from "../services/DataReader.js";
+import { DataReader } from "../services/DataReader.js";
 import { DataStore } from "../services/DataStore.js";
 import { formatTriageEffect } from "./format-triage.js";
 
@@ -128,5 +129,106 @@ describe("formatTriageEffect", () => {
 			}),
 		);
 		expect(result.split("\n").length).toBeLessThanOrEqual(5);
+	});
+
+	it("filters runs to only the named project when options.project is set", async () => {
+		const result = await run(
+			Effect.gen(function* () {
+				const store = yield* DataStore;
+				yield* store.writeSettings(settingsHash, settingsInput, {});
+				yield* store.writeRun(runInput);
+				yield* store.writeRun({
+					...runInput,
+					invocationId: "inv-triage-keep",
+					project: "keep-me",
+				});
+				yield* store.writeRun({
+					...runInput,
+					invocationId: "inv-triage-drop",
+					project: "drop-me",
+				});
+				return yield* formatTriageEffect({ project: "keep-me" });
+			}),
+		);
+		expect(result).toContain("keep-me");
+		expect(result).not.toContain("drop-me");
+		expect(result).not.toContain("my-project");
+	});
+
+	it("matches a sub-projected run when options.project is 'project:subProject'", async () => {
+		const result = await run(
+			Effect.gen(function* () {
+				const store = yield* DataStore;
+				yield* store.writeSettings(settingsHash, settingsInput, {});
+				yield* store.writeRun({
+					...runInput,
+					invocationId: "inv-triage-sub",
+					project: "mono",
+					subProject: "unit",
+				});
+				yield* store.writeRun({
+					...runInput,
+					invocationId: "inv-triage-other",
+					project: "mono",
+					subProject: "e2e",
+				});
+				return yield* formatTriageEffect({ project: "mono:unit" });
+			}),
+		);
+		expect(result).toContain("mono:unit");
+		expect(result).not.toContain("mono:e2e");
+	});
+
+	it("swallows DataReader errors and still returns a string with default fallbacks", async () => {
+		// Construct a DataReader test layer where every method called by
+		// formatTriageEffect fails, exercising all four `Effect.orElseSucceed`
+		// arrow-function fallbacks (lines 21, 30, 39, 42 of format-triage.ts).
+		const failingReader = DataReader.of({
+			getRunsByProject: () =>
+				Effect.fail(new DataStoreError({ operation: "read", table: "test_runs", reason: "boom" })),
+			listSessions: () => Effect.fail(new DataStoreError({ operation: "read", table: "sessions", reason: "boom" })),
+			computeAcceptanceMetrics: () =>
+				Effect.fail(new DataStoreError({ operation: "read", table: "tdd_artifacts", reason: "boom" })),
+			getTddSessionById: () =>
+				Effect.fail(new DataStoreError({ operation: "read", table: "tdd_sessions", reason: "boom" })),
+			// Unused methods can be left as `null as never` since formatTriageEffect
+			// never reaches them.
+		} as unknown as DataReader["Type"]);
+		const FailingReaderLayer = Layer.succeed(DataReader, failingReader);
+
+		const result = await Effect.runPromise(Effect.provide(formatTriageEffect(), FailingReaderLayer));
+		expect(typeof result).toBe("string");
+		expect(result).toContain("## Vitest Agent Reporter");
+		// Empty fallback paths are taken: no test runs, no sessions, no open TDD section.
+		expect(result).toContain("_No test runs recorded yet._");
+		expect(result).toContain("_No session data recorded yet._");
+		expect(result).not.toContain("### Open TDD Session");
+		// All four metric ratios fall back to 0% (the fallbackMetrics object).
+		expect(result).toContain("Phase evidence integrity: 0%");
+	});
+
+	it("renders an Open TDD Session section when a TDD session exists with id 1", async () => {
+		const result = await run(
+			Effect.gen(function* () {
+				const store = yield* DataStore;
+				const sessionId = yield* store.writeSession({
+					cc_session_id: "cc-tdd-session",
+					project: "tdd-project",
+					cwd: "/workspace/tdd-project",
+					agent_kind: "main",
+					started_at: "2026-04-30T11:00:00.000Z",
+				});
+				yield* store.writeTddSession({
+					sessionId,
+					goal: "make the orientation triage report support TDD session display",
+					startedAt: "2026-04-30T11:30:00.000Z",
+				});
+				return yield* formatTriageEffect();
+			}),
+		);
+		expect(result).toContain("### Open TDD Session");
+		expect(result).toContain("make the orientation triage report support TDD session display");
+		expect(result).toContain("Started: 2026-04-30T11:30:00.000Z");
+		expect(result).toContain("Phases recorded:");
 	});
 });

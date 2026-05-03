@@ -3,15 +3,22 @@
 # additionally emits a file_edit turn so file_edit_history is queryable.
 set -e
 
-read -r hook_json
+# shellcheck source=lib/hook-output.sh
+. "$(dirname "$0")/lib/hook-output.sh"
+
+hook_json=$(cat)
 
 cc_session_id=$(jq -r '.session_id // ""' <<< "$hook_json")
 cwd=$(jq -r '.cwd // ""' <<< "$hook_json")
 tool_name=$(jq -r '.tool_name // ""' <<< "$hook_json")
 tool_use_id=$(jq -r '.tool_use_id // ""' <<< "$hook_json")
-success=$(jq -r '(.tool_response.success // true) | if . == true then "true" else "false" end' <<< "$hook_json")
+success=$(jq -r '
+	(try .tool_response.success catch null)
+	| if . == null then "true" elif . == true then "true" else "false" end
+' <<< "$hook_json")
 
 if [ -z "$cc_session_id" ] || [ -z "$cwd" ] || [ -z "$tool_name" ]; then
+	emit_noop
 	exit 0
 fi
 
@@ -26,17 +33,18 @@ result_payload=$(jq -nc \
 	--argjson ok "$success" \
 	'{type: "tool_result", tool_name: $tn, success: $ok} + (if $tuid != "" then {tool_use_id: $tuid} else {} end)')
 
-cd "$cwd" && $pm_exec vitest-agent-reporter record turn \
+cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record turn \
 	--cc-session-id "$cc_session_id" \
 	"$result_payload" \
 	>/dev/null 2>&1 \
-	|| echo "record turn (tool_result) failed (non-fatal)" >&2
+	|| true
 
 # 2. For Edit/Write/MultiEdit, additionally emit a file_edit turn.
 case "$tool_name" in
 	Edit|Write|MultiEdit)
 		file_path=$(jq -r '.tool_input.file_path // ""' <<< "$hook_json")
 		if [ -z "$file_path" ]; then
+			emit_noop
 			exit 0
 		fi
 		case "$tool_name" in
@@ -48,12 +56,13 @@ case "$tool_name" in
 			--arg fp "$file_path" \
 			--arg ek "$edit_kind" \
 			'{type: "file_edit", file_path: $fp, edit_kind: $ek}')
-		cd "$cwd" && $pm_exec vitest-agent-reporter record turn \
+		cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record turn \
 			--cc-session-id "$cc_session_id" \
 			"$edit_payload" \
 			>/dev/null 2>&1 \
-			|| echo "record turn (file_edit) failed (non-fatal)" >&2
+			|| true
 		;;
 esac
 
+emit_noop
 exit 0

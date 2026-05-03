@@ -6,6 +6,39 @@ import { publicProcedure } from "../context.js";
 
 const FORBIDDEN_CHARS = /[;|&`$(){}[\]<>!#]/;
 
+/**
+ * Run `fn` with `process.stdout.write` and `process.stderr.write`
+ * temporarily replaced by `stream.write`. Restores the originals on
+ * both resolve and reject paths.
+ *
+ * The MCP server uses stdio for its JSON-RPC transport, so any writes
+ * to `process.stdout` from user-registered Vitest reporters during an
+ * in-process test run would corrupt the protocol stream. Vitest's own
+ * stdout/stderr redirect options only cover Vitest-internal logging;
+ * reporters that call `console.log` directly bypass them. This helper
+ * captures those writes into a sink for the duration of the run.
+ *
+ * @internal
+ */
+export async function withStdioCaptured<T>(stream: Writable, fn: () => Promise<T>): Promise<T> {
+	// Save unbound references — JavaScript's method-call binding restores
+	// `this` automatically when reassigned onto `process.stdout` /
+	// `process.stderr`. Pre-binding here would leak a fresh bound wrapper
+	// on every call, so back-to-back invocations would observe stacked
+	// `bind`-layers instead of the true originals.
+	const originalStdoutWrite = process.stdout.write;
+	const originalStderrWrite = process.stderr.write;
+	const sink = stream.write.bind(stream) as typeof process.stdout.write;
+	process.stdout.write = sink;
+	process.stderr.write = sink;
+	try {
+		return await fn();
+	} finally {
+		process.stdout.write = originalStdoutWrite;
+		process.stderr.write = originalStderrWrite;
+	}
+}
+
 export function sanitizeTestArgs(args: readonly string[]): string[] {
 	const result: string[] = [];
 	for (const arg of args) {
@@ -33,6 +66,22 @@ export function coerceErrors(errors: readonly unknown[]): VitestModuleError[] {
 		}
 		return { message: String(e) };
 	});
+}
+
+/**
+ * Serialize an AgentReport plus classifications as pretty-printed JSON.
+ *
+ * @internal
+ */
+export function formatReportJson(report: AgentReport, classifications?: ReadonlyMap<string, string>): string {
+	return JSON.stringify(
+		{
+			report,
+			classifications: classifications ? Object.fromEntries(classifications) : undefined,
+		},
+		null,
+		2,
+	);
 }
 
 /**
@@ -116,12 +165,14 @@ export const runTests = publicProcedure
 				files: Schema.optional(Schema.Array(Schema.String)),
 				project: Schema.optional(Schema.String),
 				timeout: Schema.optional(Schema.Number),
+				format: Schema.optional(Schema.Literal("markdown", "json")),
 			}),
 		),
 	)
 	.mutation(async ({ ctx, input }) => {
 		const files = input.files ? sanitizeTestArgs(input.files) : [];
 		const project = input.project ? sanitizeTestArgs([input.project])[0] : undefined;
+		const format = input.format ?? "markdown";
 
 		const timeoutMs = (input.timeout ?? 120) * 1000;
 
@@ -145,7 +196,11 @@ export const runTests = publicProcedure
 				{
 					root: ctx.cwd,
 					run: true,
-					coverage: { enabled: false },
+					// Inherit coverage from the user's vitest.config. Forcing
+					// `enabled: false` here was overriding intentional
+					// "coverage on by default" configurations and forced the
+					// orchestrator to make a parallel Bash --coverage call
+					// just to populate file_coverage rows.
 					...(project ? { project } : {}),
 				},
 				{}, // viteOverrides
@@ -156,14 +211,16 @@ export const runTests = publicProcedure
 			);
 
 			let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-			const result = await Promise.race([
-				vitest.start(files.length > 0 ? files : undefined),
-				new Promise<never>((_, reject) => {
-					timeoutHandle = setTimeout(() => reject(new Error("VITEST_TIMEOUT")), timeoutMs);
+			const result = await withStdioCaptured(nullStream, () =>
+				Promise.race([
+					vitest!.start(files.length > 0 ? files : undefined),
+					new Promise<never>((_, reject) => {
+						timeoutHandle = setTimeout(() => reject(new Error("VITEST_TIMEOUT")), timeoutMs);
+					}),
+				]).finally(() => {
+					if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
 				}),
-			]).finally(() => {
-				if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
-			});
+			);
 
 			const testModules = result.testModules as unknown as Parameters<typeof buildAgentReport>[0];
 			const unhandledErrors = coerceErrors(result.unhandledErrors);
@@ -192,13 +249,19 @@ export const runTests = publicProcedure
 				// Classification is best-effort; don't fail the tool if DB read fails
 			}
 
-			return formatReportMarkdown(report, classifications);
+			return format === "json"
+				? formatReportJson(report, classifications)
+				: formatReportMarkdown(report, classifications);
 		} catch (err) {
 			if (err instanceof Error && err.message === "VITEST_TIMEOUT") {
-				return `Test run timed out after ${input.timeout ?? 120} seconds.`;
+				return format === "json"
+					? JSON.stringify({ error: "VITEST_TIMEOUT", timeoutSeconds: input.timeout ?? 120 }, null, 2)
+					: `Test run timed out after ${input.timeout ?? 120} seconds.`;
 			}
 			const message = err instanceof Error ? err.message : String(err);
-			return `Test run failed: ${message}`;
+			return format === "json"
+				? JSON.stringify({ error: "RUN_FAILED", message }, null, 2)
+				: `Test run failed: ${message}`;
 		} finally {
 			await vitest?.close();
 			nullStream.destroy();

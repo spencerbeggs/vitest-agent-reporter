@@ -5,10 +5,6 @@ category: architecture
 created: 2026-03-20
 updated: 2026-04-30
 last-synced: 2026-04-30
-post-phase5-sync: 2026-04-23
-post-2-0-sync: 2026-04-29
-post-rc-sync: 2026-04-30
-post-final-sync: 2026-04-30
 completeness: 95
 related:
   - vitest-agent-reporter/architecture.md
@@ -53,13 +49,17 @@ packages/
                       ToolResultPayload, FileEditPayload, HookFirePayload,
                       NotePayload, HypothesisPayload + TurnPayload union)
       migrations/  -- 0001_initial.ts (1.x 25-table schema),
-                      0002_comprehensive.ts (2.0.0-α drop-and-recreate
+                      0002_comprehensive.ts (drop-and-recreate
                       with 40 tables + notes_fts, WAL, FKs),
-                      0003_idempotent_responses.ts (2.0.0-RC,
-                      additive +1 table -> 41 total),
-                      0004_test_cases_created_turn_id.ts (2.0.0
-                      final, additive ALTER on test_cases
-                      adding created_turn_id column + index;
+                      0003_idempotent_responses.ts (additive
+                      +1 table -> 41 total),
+                      0004_test_cases_created_turn_id.ts
+                      (additive ALTER on test_cases adding
+                      created_turn_id column + index;
+                      tables count unchanged at 41),
+                      0005_failure_signatures_last_seen_at.ts
+                      (additive ALTER on failure_signatures
+                      adding last_seen_at column + index;
                       tables count unchanged at 41)
       sql/         -- rows.ts (Schema.Struct row types), assemblers.ts
       utils/       -- compress-lines, safe-filename, ansi, detect-pm,
@@ -69,13 +69,13 @@ packages/
                       normalize-workspace-key, resolve-workspace-key,
                       resolve-data-path, function-boundary,
                       failure-signature, validate-phase-transition,
-                      (2.0.0 final) hyperlink (osc8)
-      lib/         -- (2.0.0-RC) format-triage, format-wrapup
+                      hyperlink (osc8)
+      lib/         -- format-triage, format-wrapup
                       (pure markdown generators feeding both CLI
                       subcommands and MCP tools)
       formatters/  -- types, markdown, gfm, json, silent;
-                      (2.0.0 final) ci-annotations (auto-selected
-                      when env=ci-github + executor=ci)
+                      ci-annotations (auto-selected when
+                      env=ci-github + executor=ci)
 
   reporter/  -- vitest-agent-reporter (depends on shared)
     src/
@@ -90,15 +90,14 @@ packages/
     src/
       bin.ts, index.ts
       commands/    -- status, overview, coverage, history, trends,
-                      cache (RC: + prune action), doctor (each
-                      --format aware), (β) record (with turn /
-                      session-start / session-end subcommands;
-                      final adds tdd-artifact +
-                      run-workspace-changes), and (RC) triage +
-                      wrapup
+                      cache (incl. prune), doctor (each
+                      --format aware), record (with turn /
+                      session-start / session-end /
+                      tdd-artifact / run-workspace-changes
+                      subcommands), triage, wrapup
       lib/         -- format-* (testable pure formatting logic);
-                      (β) record-turn, record-session;
-                      (final) record-tdd-artifact,
+                      record-turn, record-session,
+                      record-tdd-artifact,
                       record-run-workspace-changes
       layers/      -- CliLive(dbPath, logLevel?, logFile?)
 
@@ -106,30 +105,25 @@ packages/
     src/
       bin.ts, index.ts, context.ts, router.ts, server.ts
       layers/      -- McpLive(dbPath, logLevel?, logFile?)
-      middleware/  -- (2.0.0-RC) idempotency.ts (idempotentProcedure
-                      drop-in for publicProcedure + idempotencyKeys
+      middleware/  -- idempotency.ts (idempotentProcedure drop-in
+                      for publicProcedure + idempotencyKeys
                       registry)
-      tools/       -- 41 tool implementations: 24 from Phase 5/6
-                      (help, status, overview, coverage, history,
-                      trends, errors, test-for-file, test-get,
-                      test-list, file-coverage, run-tests,
-                      cache-health, configure, notes, project-list,
-                      module-list, suite-list, settings-list); plus
-                      7 read-only β tools (session-list,
+      tools/       -- 41 tool implementations: help, status,
+                      overview, coverage, history, trends,
+                      errors, test-for-file, test-get, test-list,
+                      file-coverage, run-tests, cache-health,
+                      configure, notes, project-list, module-list,
+                      suite-list, settings-list, session-list,
                       session-get, turn-search,
                       failure-signature-get, tdd-session-get,
-                      hypothesis-list, acceptance-metrics); plus
-                      4 RC tools (triage-brief, wrapup-prompt,
-                      hypothesis-record, hypothesis-validate --
-                      the latter two via idempotentProcedure);
-                      plus 6 final tools (tdd-session-start,
-                      tdd-session-end, tdd-session-resume,
+                      hypothesis-list, acceptance-metrics,
+                      triage-brief, wrapup-prompt,
+                      hypothesis-record, hypothesis-validate,
+                      tdd-session-start, tdd-session-end,
+                      tdd-session-resume,
                       decompose-goal-into-behaviors,
                       tdd-phase-transition-request,
-                      commit-changes -- five mutations and one
-                      read; tdd_phase_transition_request is
-                      intentionally NOT registered for
-                      idempotency replay)
+                      commit-changes
 
 examples/
   basic/     -- minimal example app (5th Vitest project)
@@ -139,43 +133,51 @@ plugin/      -- file-based Claude Code plugin (NOT a pnpm workspace)
   bin/mcp-server.mjs           -- zero-deps PM-detect + spawn loader.
                                   Forwards projectDir via
                                   VITEST_AGENT_REPORTER_PROJECT_DIR
-  hooks/       -- hooks.json + session-start.sh (RC: rewritten
-                  to call triage CLI + write sessions row;
-                  β session-start-record.sh deleted, folded in)
-                  + pre-tool-use-mcp.sh (auto-allows the 41 MCP
+  hooks/       -- hooks.json + lib/match-tdd-agent.sh (shared
+                  helper sourced by all five orchestrator-scoped
+                  hooks; matches `agent_type` against either
+                  the agent's `name:` value `"TDD Orchestrator"`
+                  or the legacy `"tdd-orchestrator"` slug — see
+                  the agent_type clarification in components.md
+                  Plugin section for why the slug is also
+                  accepted) + session-start.sh (calls triage
+                  CLI + writes sessions row) +
+                  pre-tool-use-mcp.sh (auto-allows the 41 MCP
                   tools enumerated in lib/safe-mcp-vitest-agent-
-                  reporter-ops.txt) + post-test-run.sh; (β) five
-                  *-record.sh scripts (user-prompt-submit-record,
-                  pre-tool-use-record, post-tool-use-record,
-                  session-end-record, pre-compact-record) drive
-                  the `record` CLI subcommand for session/turn
-                  capture; (RC) new stop-record.sh registered as
-                  the Stop hook (records hook_fire turn + injects
-                  wrapup --kind=stop nudge); (RC) the β
-                  session-end-record, pre-compact-record, and
-                  user-prompt-submit-record scripts upgrade from
-                  record-only to record + interpretive nudge via
-                  the wrapup CLI; (final) five new
-                  orchestrator-scoped scripts
-                  (subagent-start-tdd, subagent-stop-tdd,
-                  pre-tool-use-bash-tdd, post-tool-use-tdd-artifact,
-                  post-tool-use-test-quality) plus one repo-scoped
-                  script (post-tool-use-git-commit). hooks.json
-                  registers two new event types: SubagentStart
-                  and SubagentStop
-  agents/      -- (final) tdd-orchestrator.md (subagent definition
-                  with iron-law system prompt, 8-state machine,
+                  reporter-ops.txt) + post-test-run.sh +
+                  user-prompt-submit-record.sh,
+                  pre-tool-use-record.sh, post-tool-use-record.sh,
+                  session-end-record.sh, pre-compact-record.sh
+                  (drive the `record` CLI subcommand; the
+                  session-end, pre-compact, and
+                  user-prompt-submit scripts also inject
+                  interpretive nudges via the wrapup CLI) +
+                  stop-record.sh (Stop hook; records hook_fire
+                  turn + injects wrapup nudge) +
+                  subagent-start-tdd.sh, subagent-stop-tdd.sh,
+                  pre-tool-use-bash-tdd.sh,
+                  post-tool-use-tdd-artifact.sh,
+                  post-tool-use-test-quality.sh
+                  (orchestrator-scoped) +
+                  post-tool-use-git-commit.sh (repo-scoped).
+                  hooks.json registers SubagentStart and
+                  SubagentStop event types
+  agents/      -- tdd-orchestrator.md (subagent definition with
+                  iron-law system prompt, 8-state machine,
                   ~15-tool tools: array, 9 inline sub-skill
                   primitives)
-  skills/      -- tdd, debugging, configuration, coverage-improvement;
-                  (final) tdd-primitives/<9 dirs>/SKILL.md
-                  (interpret-test-failure, derive-test-name-from-behavior,
-                  derive-test-shape-from-name, verify-test-quality,
-                  run-and-classify, record-hypothesis-before-fix,
-                  commit-cycle, revert-on-extended-red,
+  skills/      -- tdd, debugging, configuration,
+                  coverage-improvement;
+                  tdd-primitives/<9 dirs>/SKILL.md
+                  (interpret-test-failure,
+                  derive-test-name-from-behavior,
+                  derive-test-shape-from-name,
+                  verify-test-quality, run-and-classify,
+                  record-hypothesis-before-fix, commit-cycle,
+                  revert-on-extended-red,
                   decompose-goal-into-behaviors -- Decision D6
                   standalone reuse)
-  commands/    -- setup.md, configure.md; (final) tdd.md
+  commands/    -- setup.md, configure.md, tdd.md
                   (the /tdd <goal> slash command)
 ```
 
@@ -192,9 +194,8 @@ project and testing patterns.
 
 ## Data Path Layout
 
-In 2.0 (Phase 6) the SQLite database lives at a deterministic
-XDG-derived location keyed by the workspace's identity, not its
-filesystem path:
+The SQLite database lives at a deterministic XDG-derived location
+keyed by the workspace's identity, not its filesystem path:
 
 ```text
 $XDG_DATA_HOME/vitest-agent-reporter/<workspaceKey>/data.db
@@ -295,32 +296,37 @@ zero-deps inline copy with the same detection order:
 
 The canonical schema with column types, foreign keys, indexes, and the
 `notes_fts` triggers lives in
-`packages/shared/src/migrations/0002_comprehensive.ts` (2.0.0-α). The
-2.0.0-RC additive `0003_idempotent_responses.ts` migration adds one
-new table on top, and the 2.0.0 final additive
-`0004_test_cases_created_turn_id.ts` migration adds a column to
-`test_cases`. All are managed via `@effect/sql-sqlite-node`
-SqliteMigrator with WAL journal mode and foreign keys enabled. The
-list below is a navigation aid only -- do not treat it as a column
-reference.
+`packages/shared/src/migrations/0002_comprehensive.ts`. The additive
+`0003_idempotent_responses.ts` migration adds one new table on top,
+`0004_test_cases_created_turn_id.ts` adds a column to `test_cases`,
+and `0005_failure_signatures_last_seen_at.ts` adds a `last_seen_at`
+column to `failure_signatures` (plus a supporting index). All are
+managed via `@effect/sql-sqlite-node` SqliteMigrator with WAL journal
+mode and foreign keys enabled. The list below is a navigation aid
+only -- do not treat it as a column reference.
 
 **Migration sequence:**
 `0001_initial` (1.x 25-table schema) runs first; `0002_comprehensive`
 then drops every 1.x table and recreates the layout with 15 additional
 tables and column augmentations on `test_errors` and `stack_frames`.
 Per Decision D9 this is the **last drop-and-recreate** migration;
-2.0.x and beyond are ALTER-only. 2.0.0-RC adds
-`0003_idempotent_responses` -- a single `CREATE TABLE` (no DROP),
-keeping D9 intact. 2.0.0 final adds
-`0004_test_cases_created_turn_id` -- a single `ALTER TABLE
-test_cases ADD COLUMN created_turn_id INTEGER REFERENCES turns(id)
-ON DELETE SET NULL` plus a supporting index. Tables count is
-unchanged at 41. The new column is required by D2 binding rule 1
-(the `validatePhaseTransition` validator joins through it to resolve
-`test_case_created_turn_at` and `test_case_authored_in_session`,
-the two fields that "this test was authored in the current phase
-window AND in the current session" depends on). Migration count
-goes from 3 to 4. D9 stays intact.
+subsequent migrations are ALTER-only. `0003_idempotent_responses` is
+a single `CREATE TABLE` (no DROP), keeping D9 intact.
+`0004_test_cases_created_turn_id` is a single `ALTER TABLE test_cases
+ADD COLUMN created_turn_id INTEGER REFERENCES turns(id) ON DELETE SET
+NULL` plus a supporting index. Tables count is unchanged at 41. The
+new column is required by D2 binding rule 1 (the
+`validatePhaseTransition` validator joins through it to resolve
+`test_case_created_turn_at` and `test_case_authored_in_session`).
+`0005_failure_signatures_last_seen_at` is a single `ALTER TABLE
+failure_signatures ADD COLUMN last_seen_at TEXT` (nullable) plus a
+supporting `idx_failure_signatures_last_seen ON
+failure_signatures(last_seen_at DESC)` index. The new column
+completes recurrence tracking: `DataStore.writeFailureSignature` sets
+`last_seen_at = firstSeenAt` on insert and bumps it via
+`ON CONFLICT(signature_hash) DO UPDATE` on recurrence alongside
+`occurrence_count`, so consumers can sort/filter by recency. Tables
+count unchanged at 41. D9 stays intact.
 
 **Key relationships:** `test_runs` is the spine; each run owns one or
 more `test_modules`, which own `test_suites` and `test_cases`. Errors
@@ -342,9 +348,9 @@ below).
 | 5 | `scoped_files` | Files included in scoped test runs |
 | 6 | `test_modules` | Test modules (files) per run |
 | 7 | `test_suites` | Test suites (describe blocks) per module |
-| 8 | `test_cases` | Individual test cases per module (2.0.0 final adds `created_turn_id INTEGER REFERENCES turns(id) ON DELETE SET NULL` + index, used by D2 binding rule 1) |
-| 9 | `test_errors` | Errors with diffs, expected/actual, stacks (2.0.0-α adds `signature_hash` FK) |
-| 10 | `stack_frames` | Parsed stack frames per error (2.0.0-α adds `source_mapped_line` and `function_boundary_line`) |
+| 8 | `test_cases` | Individual test cases per module; includes `created_turn_id REFERENCES turns(id) ON DELETE SET NULL` + index (used by D2 binding rule 1) |
+| 9 | `test_errors` | Errors with diffs, expected/actual, stacks; includes `signature_hash` FK to `failure_signatures` |
+| 10 | `stack_frames` | Parsed stack frames per error; includes `source_mapped_line` and `function_boundary_line` columns |
 | 11 | `tags` | Deduplicated tag names |
 | 12 | `test_case_tags` | Tag associations for test cases |
 | 13 | `test_suite_tags` | Tag associations for test suites |
@@ -360,38 +366,38 @@ below).
 | 23 | `file_coverage` | Per-file coverage data per run |
 | 24 | `source_test_map` | Source file to test module mapping |
 | 25 | `notes` | Scoped notes with threading and expiration |
-| 26 | `sessions` (2.0.0-α) | Claude Code conversations (`cc_session_id` unique, `agent_kind`, `parent_session_id` self-FK, `triage_was_non_empty`) |
-| 27 | `turns` (2.0.0-α) | Per-session turn log; `type` CHECK in `(user_prompt, tool_call, tool_result, file_edit, hook_fire, note, hypothesis)`; `payload` is JSON-stringified `TurnPayload` |
-| 28 | `tool_invocations` (2.0.0-α) | Per-turn tool call detail (tool_name, params_hash, duration_ms, success) |
-| 29 | `file_edits` (2.0.0-α) | Per-turn file edits (write/edit/multi_edit, lines added/removed, diff) |
-| 30 | `hypotheses` (2.0.0-α) | Agent hypotheses with `cited_test_error_id`/`cited_stack_frame_id` evidence FKs and `validation_outcome` (`confirmed`/`refuted`/`abandoned` or NULL) |
-| 31 | `commits` (2.0.0-α) | Git commit metadata (sha, parent_sha, message, author, branch) |
-| 32 | `run_changed_files` (2.0.0-α) | Files changed for a given run (`added`/`modified`/`deleted`/`renamed`/`untracked-modified`) |
-| 33 | `run_triggers` (2.0.0-α) | 1:1 with `test_runs`; `trigger` CHECK in `(cli, ide, ci, agent, pre-commit, watch)`; `agent_session_id` FK to `sessions` |
-| 34 | `build_artifacts` (2.0.0-α) | Captured tsc/biome/eslint output (tool_kind, exit_code, output, duration_ms) |
-| 35 | `tdd_sessions` (2.0.0-α) | TDD session goal + outcome (`succeeded`/`blocked`/`abandoned`); `parent_tdd_session_id` self-FK; `summary_note_id` FK |
-| 36 | `tdd_session_behaviors` (2.0.0-α) | Ordered behaviors per TDD session; status (`pending`/`in_progress`/`done`/`abandoned`); `child_tdd_session_id` for delegation |
-| 37 | `tdd_phases` (2.0.0-α) | TDD phase transitions; 8-value `phase` CHECK (`spike`, `red`, `red.triangulate`, `green`, `green.fake-it`, `refactor`, `extended-red`, `green-without-red`); `parent_phase_id` self-FK |
-| 38 | `tdd_artifacts` (2.0.0-α) | Evidence artifacts per phase; `artifact_kind` CHECK in `(test_written, test_failed_run, code_written, test_passed_run, refactor, test_weakened)`; `test_first_failure_run_id` for D2 binding rule 3 |
-| 39 | `failure_signatures` (2.0.0-α) | `signature_hash` PK (16-char sha256 from `computeFailureSignature`); `first_seen_run_id`, `first_seen_at`, `occurrence_count` |
-| 40 | `hook_executions` (2.0.0-α) | Vitest hook lifecycle; `hook_kind` CHECK in `(beforeAll, beforeEach, afterEach, afterAll)`; CHECK constraint ensures at most one of test_module_id / test_suite_id / test_case_id is set |
-| 41 | `mcp_idempotent_responses` (2.0.0-RC) | Cached MCP mutation results keyed by `(procedure_path, key)` composite PK. Carries `result_json` (the cached procedure response) and `created_at` (timestamp). Index on `(procedure_path, created_at DESC)` for future TTL pruning. Backed by `DataStore.recordIdempotentResponse` (`INSERT ... ON CONFLICT DO NOTHING`) and `DataReader.findIdempotentResponse`. Powers the tRPC idempotency middleware that wraps `hypothesis_record` and `hypothesis_validate` -- duplicate calls replay the cached response with `_idempotentReplay: true` rather than double-writing |
+| 26 | `sessions` | Claude Code conversations (`cc_session_id` unique, `agent_kind`, `parent_session_id` self-FK, `triage_was_non_empty`) |
+| 27 | `turns` | Per-session turn log; `type` CHECK in `(user_prompt, tool_call, tool_result, file_edit, hook_fire, note, hypothesis)`; `payload` is JSON-stringified `TurnPayload` |
+| 28 | `tool_invocations` | Per-turn tool call detail (tool_name, params_hash, duration_ms, success). Populated by `DataStore.writeTurn` for `tool_result` payloads -- one row per turn in the same SQL transaction as the `turns` insert. **Caveats:** (a) `params_hash` is intentionally NULL pending future cross-reference of the matching `tool_call` turn's `tool_input`; (b) rows derive from `tool_result` payloads only (`tool_call` payloads write to `turns` only and do **not** produce a `tool_invocations` row); consumers wanting strict request/response pairing should pair via `payload.tool_use_id`. `tool_invocations` is a flattened projection over the result side |
+| 29 | `file_edits` | Per-turn file edits (write/edit/multi_edit, lines added/removed, diff). Populated by `DataStore.writeTurn` for `file_edit` payloads -- one row per turn in the same SQL transaction. `file_id` is resolved via `ensureFile(file_path)`; `edit_kind`, `lines_added`, `lines_removed`, and `diff` are carried verbatim from the payload. 1:1 with `file_edit` turns |
+| 30 | `hypotheses` | Agent hypotheses with `cited_test_error_id`/`cited_stack_frame_id` evidence FKs and `validation_outcome` (`confirmed`/`refuted`/`abandoned` or NULL) |
+| 31 | `commits` | Git commit metadata (sha, parent_sha, message, author, branch) |
+| 32 | `run_changed_files` | Files changed for a given run (`added`/`modified`/`deleted`/`renamed`/`untracked-modified`). `run_id` is `NOT NULL`; the `record run-workspace-changes` CLI auto-resolves the latest run id when callers omit it |
+| 33 | `run_triggers` | 1:1 with `test_runs`; `trigger` CHECK in `(cli, ide, ci, agent, pre-commit, watch)`; `agent_session_id` FK to `sessions` |
+| 34 | `build_artifacts` | Captured tsc/biome/eslint output (tool_kind, exit_code, output, duration_ms) |
+| 35 | `tdd_sessions` | TDD session goal + outcome (`succeeded`/`blocked`/`abandoned`). FK to `sessions(id)` is named `session_id` (NOT `agent_session_id`); `parent_tdd_session_id` self-FK; `summary_note_id` FK |
+| 36 | `tdd_session_behaviors` | Ordered behaviors per TDD session. Live columns: `parent_tdd_session_id` FK, `ordinal` (1-based ordering position, NOT `position`), `behavior` (the behavior text, NOT `name`), `suggested_test_name` (NOT `description`), `depends_on_behavior_ids` (nullable text), `status` (`pending`/`in_progress`/`done`/`abandoned`), `child_tdd_session_id` for delegation |
+| 37 | `tdd_phases` | TDD phase transitions; 8-value `phase` CHECK (`spike`, `red`, `red.triangulate`, `green`, `green.fake-it`, `refactor`, `extended-red`, `green-without-red`); `parent_phase_id` self-FK |
+| 38 | `tdd_artifacts` | Evidence artifacts per phase; `artifact_kind` CHECK in `(test_written, test_failed_run, code_written, test_passed_run, refactor, test_weakened)`; `test_first_failure_run_id` for D2 binding rule 3. FK to `tdd_phases(id)` is named `phase_id` (NOT `tdd_phase_id`) |
+| 39 | `failure_signatures` | `signature_hash` PK (16-char sha256 from `computeFailureSignature`); `first_seen_run_id`, `first_seen_at`, `occurrence_count`, `last_seen_at` (nullable). On insert, `writeFailureSignature` sets `last_seen_at = first_seen_at` and `occurrence_count = 1`. On recurrence, the `ON CONFLICT(signature_hash) DO UPDATE` clause increments `occurrence_count` AND refreshes `last_seen_at` |
+| 40 | `hook_executions` | Vitest hook lifecycle; `hook_kind` CHECK in `(beforeAll, beforeEach, afterEach, afterAll)`; CHECK constraint ensures at most one of test_module_id / test_suite_id / test_case_id is set |
+| 41 | `mcp_idempotent_responses` | Cached MCP mutation results keyed by `(procedure_path, key)` composite PK. Carries `result_json` and `created_at`. Index on `(procedure_path, created_at DESC)` for future TTL pruning. Backed by `DataStore.recordIdempotentResponse` (`INSERT ... ON CONFLICT DO NOTHING`) and `DataReader.findIdempotentResponse`. Powers the tRPC idempotency middleware -- duplicate calls replay the cached response with `_idempotentReplay: true` |
 
 **Plus:** `notes_fts` FTS5 virtual table with sync triggers for
 full-text search across note content.
 
-**FTS5 trigger pattern (2.0.0-α fix):** `notes_ai` (AFTER INSERT) and
-`notes_ad` (AFTER DELETE) are unchanged. The UPDATE pair was rewritten
-into `notes_bu` (**BEFORE UPDATE**, captures `OLD.id`/`OLD.content` for
+**FTS5 trigger pattern:** `notes_ai` (AFTER INSERT) and
+`notes_ad` (AFTER DELETE) are unchanged. The UPDATE pair uses
+`notes_bu` (**BEFORE UPDATE**, captures `OLD.id`/`OLD.content` for
 the FTS delete) plus `notes_au` (AFTER UPDATE, inserts NEW values).
-The 1.x triggers used `AFTER UPDATE` for both steps, so the delete
-read the already-updated row and accumulated stale tokens in the FTS5
-index over time.
+Using AFTER UPDATE for both delete and insert steps would read the
+already-updated row and accumulate stale tokens in the FTS5 index.
 
 For the full DDL, see
 `packages/shared/src/migrations/0002_comprehensive.ts`,
-`packages/shared/src/migrations/0003_idempotent_responses.ts`, and
-`packages/shared/src/migrations/0004_test_cases_created_turn_id.ts`.
+`packages/shared/src/migrations/0003_idempotent_responses.ts`,
+`packages/shared/src/migrations/0004_test_cases_created_turn_id.ts`,
+and `packages/shared/src/migrations/0005_failure_signatures_last_seen_at.ts`.
 
 ---
 
@@ -579,47 +585,32 @@ Input and output types (`TestRunInput`, `ModuleInput`, `TestCaseInput`,
 `TestListEntry`, `ModuleListEntry`, `SuiteListEntry`, `SettingsListEntry`,
 `NoteRow`, `SettingsRow`, `TestError`) live in
 `packages/shared/src/services/DataStore.ts` and
-`packages/shared/src/services/DataReader.ts`. The 2.0.0-α schema branch
-adds `SessionInput`, `TurnInput` (DataStore) and `SessionDetail`,
-`TurnSummary`, `TurnSearchOptions`, `AcceptanceMetrics` (DataReader).
-The 2.0.0-β substrate-wiring branch further adds:
+`packages/shared/src/services/DataReader.ts`. Also in DataStore:
+`SessionInput`, `TurnInput`, `StackFrameInput`, `FailureSignatureWriteInput`,
+optional `signatureHash` and `frames` fields on `TestErrorInput`
+(with `TurnInput.turnNo` auto-assigned when omitted),
+`IdempotentResponseInput`, `HypothesisInput`, `ValidateHypothesisInput`,
+`TddSessionInput`, `EndTddSessionInput`, `TddBehaviorInput`,
+`WriteTddBehaviorsInput`, `TddBehaviorOutput`, `WriteTddPhaseInput`,
+`WriteTddPhaseOutput`, `WriteTddArtifactInput`, `WriteCommitInput`,
+`RunChangedFile`, `WriteRunChangedFilesInput`, plus re-exported literal
+types `Phase`, `ArtifactKind`, and `ChangeKind` so callers don't dip
+into `schemas/` directly.
 
-- DataStore: `StackFrameInput`, `FailureSignatureWriteInput`, plus
-  optional `signatureHash` and `frames` fields on `TestErrorInput`.
-  `TurnInput.turnNo` is now optional (auto-assigned in the live
-  layer when omitted)
-- DataReader: `SessionSummary`, `FailureSignatureDetail`,
-  `TddSessionDetail`, `TddPhaseDetail`, `TddArtifactDetail`,
-  `HypothesisSummary`, `HypothesisDetail`, plus
-  `ListSessionsOptions` and `ListHypothesesOptions`
-
-The 2.0.0-RC additions are `IdempotentResponseInput`,
-`HypothesisInput`, and `ValidateHypothesisInput` (DataStore) and
-`findIdempotentResponse` (DataReader; returns
-`Option<string>`).
-
-The 2.0.0 final additions are:
-
-- DataStore: 11 new input types -- `TddSessionInput`,
-  `EndTddSessionInput`, `TddBehaviorInput`,
-  `WriteTddBehaviorsInput`, `TddBehaviorOutput`,
-  `WriteTddPhaseInput`, `WriteTddPhaseOutput`,
-  `WriteTddArtifactInput`, `WriteCommitInput`,
-  `RunChangedFile`, `WriteRunChangedFilesInput`. Plus
-  re-exported literal types `Phase`, `ArtifactKind`, and
-  `ChangeKind` so callers don't dip into `schemas/` directly
-- DataReader: 4 new output types -- `CurrentTddPhase`,
-  `CitedArtifactRow`, `CommitChangesEntry`,
-  `TddSessionSummary`
+Also in DataReader: `SessionDetail`, `TurnSummary`, `TurnSearchOptions`,
+`AcceptanceMetrics`, `SessionSummary`, `FailureSignatureDetail`,
+`TddSessionDetail`, `TddPhaseDetail`, `TddArtifactDetail`,
+`HypothesisSummary`, `HypothesisDetail`, `ListSessionsOptions`,
+`ListHypothesesOptions`, `CurrentTddPhase`, `CitedArtifactRow`,
+`CommitChangesEntry`, `TddSessionSummary`.
 
 The Common schema literals (`Environment`, `Executor`, `OutputFormat`,
-`DetailLevel`) live in `packages/shared/src/schemas/Common.ts`. The
-final phase extends `OutputFormat` from 4 to 5 values to add
-`"ci-annotations"` (the new GitHub Actions formatter). Effect
-Schema is the source of truth -- TypeScript types derive via
-`typeof Schema.Type`.
+`DetailLevel`) live in `packages/shared/src/schemas/Common.ts`.
+`OutputFormat` has 5 values including `"ci-annotations"` for the
+GitHub Actions formatter. Effect Schema is the source of truth --
+TypeScript types derive via `typeof Schema.Type`.
 
-**Naming note (β):** there are two `FailureSignature*Input` types
+**Naming note:** there are two `FailureSignature*Input` types
 that look similar but live in different layers and serve different
 purposes:
 
@@ -629,12 +620,12 @@ purposes:
   un-hashed `error_name`, `assertion_message`,
   `top_frame_function_name`, `top_frame_function_boundary_line`,
   and optional `top_frame_raw_line` that get hashed *into* the
-  signature. Defined in α
+  signature
 - `FailureSignatureWriteInput` (in
   `packages/shared/src/services/DataStore.ts`) is the
   **persistence-time** input to `DataStore.writeFailureSignature`
   -- the already-computed `signatureHash` plus the metadata to
-  store alongside it (`firstSeenRunId`, `firstSeenAt`). Added in β
+  store alongside it (`firstSeenRunId`, `firstSeenAt`)
 
 The `*WriteInput` suffix mirrors the naming convention used for
 the other DataStore inputs (`TestRunInput`, `ModuleInput`,
@@ -647,14 +638,14 @@ defined in `packages/mcp/src/context.ts`. Formatter types
 (`Formatter`, `FormatterContext`, `RenderedOutput`) live in
 `packages/shared/src/formatters/types.ts`.
 
-### Turn Payload Schemas (2.0.0-α)
+### Turn Payload Schemas
 
 `packages/shared/src/schemas/turns/` defines a discriminated
 `TurnPayload` union over seven `Schema.Struct` payload types, each
 keyed by a `type` literal that mirrors the `turns.type` CHECK
-constraint. The union is the source of truth that the forthcoming
-`record` CLI uses to validate the JSON-stringified payload before
-`DataStore.writeTurn` persists it.
+constraint. The union is the source of truth the `record` CLI uses
+to validate the JSON-stringified payload before `DataStore.writeTurn`
+persists it.
 
 ```typescript
 // UserPromptPayload
@@ -695,7 +686,7 @@ type TurnPayload =
   | FileEditPayload | HookFirePayload | NotePayload | HypothesisPayload;
 ```
 
-### Phase Transition Validation Types (2.0.0-α)
+### Phase Transition Validation Types
 
 `packages/shared/src/utils/validate-phase-transition.ts` exports the
 TDD evidence-binding contract:
@@ -735,7 +726,7 @@ type PhaseTransitionResult =
                      humanHint: string } };
 ```
 
-### Failure Signature Input (2.0.0-α)
+### Failure Signature Input
 
 `packages/shared/src/utils/failure-signature.ts`:
 
@@ -755,7 +746,7 @@ interface FailureSignatureInput {
 //               else "raw:?"
 ```
 
-### β DataStore Input Types (2.0.0-β)
+### DataStore Input Types
 
 `packages/shared/src/services/DataStore.ts`:
 
@@ -776,26 +767,26 @@ interface FailureSignatureWriteInput {
   firstSeenAt: string;         // ISO 8601
 }
 
-// β extension to TestErrorInput
+// TestErrorInput (extended fields)
 interface TestErrorInput {
   // ...existing fields...
-  signatureHash?: string;      // β: FK target on test_errors
-  frames?: ReadonlyArray<StackFrameInput>; // β: per-frame rows
+  signatureHash?: string;      // FK target on test_errors
+  frames?: ReadonlyArray<StackFrameInput>; // per-frame rows
 }
 
-// β extension to TurnInput
+// TurnInput (extended fields)
 interface TurnInput {
   sessionId: number;
   type: TurnType;
   payload: string;             // pre-stringified TurnPayload JSON
-  turnNo?: number;             // β: optional; auto-assigned via
+  turnNo?: number;             // optional; auto-assigned via
                                // MAX(turn_no)+1 per session if
                                // omitted
   // ...existing fields...
 }
 ```
 
-### β DataReader Output Types (2.0.0-β)
+### DataReader Output Types
 
 `packages/shared/src/services/DataReader.ts`:
 
@@ -819,12 +810,15 @@ interface ListSessionsOptions {
   limit?: number;              // default 50
 }
 
+// `last_seen_at` is nullable (no backfill for rows written before the
+// column was added). Recurrences bump `occurrence_count` AND refresh
+// `last_seen_at` via the ON CONFLICT clause in `writeFailureSignature`.
 interface FailureSignatureDetail {
   signature_hash: string;
   first_seen_run_id: number;
   first_seen_at: string;
-  last_seen_at: string;
   occurrence_count: number;
+  lastSeenAt: string | null;
   recent_errors: ReadonlyArray<TestError>; // up to 10 most recent
 }
 
@@ -865,7 +859,7 @@ interface ListHypothesesOptions {
 }
 ```
 
-### β Reporter Failure-Processing Output (2.0.0-β)
+### Reporter Failure-Processing Output
 
 `packages/reporter/src/utils/process-failure.ts`:
 
@@ -881,7 +875,7 @@ interface ProcessFailureResult {
 // computeFailureSignature with the parsed pieces.
 ```
 
-### RC DataStore Input Types (2.0.0-RC)
+### Idempotency and Hypothesis Input Types
 
 `packages/shared/src/services/DataStore.ts`:
 
@@ -897,11 +891,8 @@ interface IdempotentResponseInput {
   createdAt: string;            // ISO 8601
 }
 
-// Backs DataStore.writeHypothesis. Carries the hypothesis content
-// and optional cited evidence FKs (test_errors, stack_frames,
-// turns) so hypotheses link back to specific captured failures.
-// The created_at column on the hypotheses row is set by SQLite
-// via a DEFAULT clause; the input shape does not carry it.
+// Backs DataStore.writeHypothesis. The created_at column is set by
+// SQLite via a DEFAULT clause; the input shape does not carry it.
 interface HypothesisInput {
   sessionId: number;            // FK to sessions.id
   content: string;
@@ -910,8 +901,7 @@ interface HypothesisInput {
   createdTurnId?: number;
 }
 
-// Backs DataStore.validateHypothesis. The outcome discriminator
-// mirrors α's hypotheses.validation_outcome CHECK enum.
+// Backs DataStore.validateHypothesis.
 interface ValidateHypothesisInput {
   id: number;                   // hypotheses.id (must exist;
                                 // raises DataStoreError otherwise)
@@ -921,7 +911,7 @@ interface ValidateHypothesisInput {
 }
 ```
 
-### RC DataReader Output Types (2.0.0-RC)
+### Idempotency DataReader Output Types
 
 `packages/shared/src/services/DataReader.ts`:
 
@@ -934,11 +924,9 @@ type FindIdempotentResponse =
     Effect.Effect<Option.Option<string>, DataStoreError>;
 ```
 
-### Final DataStore Input Types (2.0.0-final)
+### TDD Lifecycle and Workspace Input Types
 
-`packages/shared/src/services/DataStore.ts` adds 11 new input
-types plus 3 re-exported literal types for the TDD lifecycle and
-workspace-history write paths:
+`packages/shared/src/services/DataStore.ts`:
 
 ```typescript
 // Re-exported literal types -- callers reference these instead of
@@ -955,9 +943,14 @@ type ChangeKind =
   | "untracked-modified";
 
 // Backs DataStore.writeTddSession. Opens a TDD session row.
+// Note: the `agentSessionId` input field maps to the
+// `tdd_sessions.session_id` column (NOT `agent_session_id` —
+// no such column exists in the live schema). The input name is
+// kept for callsite clarity.
 interface TddSessionInput {
   goal: string;
   agentSessionId: number;          // FK to sessions.id
+                                   // (column: tdd_sessions.session_id)
   parentTddSessionId?: number;     // self-FK for delegation
   startedAt: string;               // ISO 8601
 }
@@ -971,23 +964,28 @@ interface EndTddSessionInput {
 }
 
 // Single behavior input under WriteTddBehaviorsInput.
+// Live `tdd_session_behaviors` columns are `behavior` (the
+// behavior text), `suggested_test_name`, `ordinal` (1-based
+// position), `depends_on_behavior_ids`, and `status`. The
+// input field names below map to those columns directly.
 interface TddBehaviorInput {
-  name: string;
-  description?: string;
-  position: number;                // ordering within the session
+  behavior: string;                // -> tdd_session_behaviors.behavior
+  suggestedTestName: string;       // -> suggested_test_name
+  ordinal: number;                 // -> ordinal (1-based position)
+  dependsOnBehaviorIds?: string;   // -> depends_on_behavior_ids
 }
 
 // Backs DataStore.writeTddSessionBehaviors.
 interface WriteTddBehaviorsInput {
-  tddSessionId: number;
+  tddSessionId: number;            // -> parent_tdd_session_id
   behaviors: ReadonlyArray<TddBehaviorInput>;
 }
 
 // Output for each row inserted by writeTddSessionBehaviors.
 interface TddBehaviorOutput {
   id: number;
-  name: string;
-  position: number;
+  behavior: string;
+  ordinal: number;
 }
 
 // Backs DataStore.writeTddPhase. Opens a new phase AND closes the
@@ -997,7 +995,7 @@ interface WriteTddPhaseInput {
   phase: Phase;
   startedAt: string;
   citedArtifactId?: number;        // the artifact justifying the
-                                   // transition (per α D11)
+                                   // transition (per Decision D11)
   behaviorId?: number;
 }
 
@@ -1010,8 +1008,12 @@ interface WriteTddPhaseOutput {
 // Backs DataStore.writeTddArtifact. Per Decision D7, the only
 // caller is the `record tdd-artifact` CLI subcommand, driven by
 // the post-tool-use TDD hooks -- never the agent directly.
+// Note: the `tddPhaseId` input field maps to the
+// `tdd_artifacts.phase_id` column (NOT `tdd_phase_id` — no such
+// column exists in the live schema). The input name is kept for
+// callsite clarity.
 interface WriteTddArtifactInput {
-  tddPhaseId: number;
+  tddPhaseId: number;              // -> tdd_artifacts.phase_id
   artifactKind: ArtifactKind;
   filePath?: string;
   testCaseId?: number;
@@ -1040,19 +1042,25 @@ interface RunChangedFile {
 }
 
 // Backs DataStore.writeRunChangedFiles.
+// Note: `run_changed_files.run_id` is `NOT NULL` in the live
+// schema. The `record run-workspace-changes` CLI auto-resolves
+// the latest run id when `testRunId` is omitted, which is why
+// the input field is functionally optional at the CLI surface
+// even though the underlying column is required.
 interface WriteRunChangedFilesInput {
-  testRunId?: number;              // optional: hooks fire on
-                                   // commit, not on test run, so
-                                   // these can be null
+  testRunId?: number;              // optional at the CLI: auto-
+                                   // resolved to the latest run id
+                                   // when omitted. Underlying
+                                   // run_changed_files.run_id is
+                                   // NOT NULL.
   commitSha: string;               // FK target on commits(sha)
   files: ReadonlyArray<RunChangedFile>;
 }
 ```
 
-### Final DataReader Output Types (2.0.0-final)
+### TDD Lifecycle DataReader Output Types
 
-`packages/shared/src/services/DataReader.ts` adds 4 new output
-types for the TDD lifecycle and workspace-history reads:
+`packages/shared/src/services/DataReader.ts`:
 
 ```typescript
 // Backs DataReader.getCurrentTddPhase. Returns the most-recent
@@ -1266,14 +1274,14 @@ async onTestRunEnd(testModules, unhandledErrors, reason)
   |     +-- DataStore.writeModules(runId, modules) -> moduleIds
   |     +-- DataStore.writeSuites(moduleId, suites)
   |     +-- DataStore.writeTestCases(moduleId, tests) -> testCaseIds
-  |     +-- (β) For each error in the report:
+  |     +-- For each error in the report:
   |     |       processFailure(error, options) ->
   |     |         { frames: StackFrameInput[], signatureHash }
   |     |       DataStore.writeFailureSignature(
   |     |         { signatureHash, firstSeenRunId: runId,
   |     |           firstSeenAt: now })
   |     +-- DataStore.writeErrors(runId, errors)
-  |         (β: errors carry signatureHash + frames -> live layer
+  |         (errors carry signatureHash + frames -> live layer
   |          writes test_errors.signature_hash and per-frame
   |          stack_frames.source_mapped_line/function_boundary_line)
   |     +-- DataStore.writeCoverage(runId, coverage)
@@ -1322,19 +1330,18 @@ async onTestRunEnd(testModules, unhandledErrors, reason)
   write to stdout.
 - `cache path` prints the deterministic XDG path. `cache clean`
   removes the data directory.
-- **(β) `record` subcommand:**
+- **`record` subcommand:**
   - `record turn --cc-session-id <id> <payload-json>`:
     `parseAndValidateTurnPayload` (in `lib/record-turn.ts`)
     decodes the payload via `Schema.decodeUnknown(TurnPayload)`,
     `recordTurnEffect` resolves the session via
     `DataReader.getSessionByCcId`, then writes the turn via
-    `DataStore.writeTurn` (omitting `turnNo` to take β's
-    auto-assignment)
+    `DataStore.writeTurn` (omitting `turnNo` for auto-assignment)
   - `record session-start`: invokes
     `recordSessionStart(input)` -> `DataStore.writeSession`
   - `record session-end`: invokes
     `recordSessionEnd(input)` -> `DataStore.endSession`
-  - All three use `CliLive` (which now includes `DataStoreLive`
+  - All three use `CliLive` (which includes `DataStoreLive`
     in addition to `DataReaderLive`).
 
 ### Flow 4: MCP Server (`packages/mcp/src/bin.ts`)
@@ -1351,7 +1358,7 @@ async onTestRunEnd(testModules, unhandledErrors, reason)
   `ProjectDiscovery`, or `OutputRenderer`.
 - `run_tests` uses `spawnSync("npx vitest run", ...)` with timeout.
 
-### Flow 5: Plugin -> MCP Server spawn (Phase 6)
+### Flow 5: Plugin -> MCP Server spawn
 
 - `plugin/bin/mcp-server.mjs` (zero-deps) reads
   `process.env.CLAUDE_PROJECT_DIR ?? process.cwd()`.
@@ -1366,23 +1373,21 @@ async onTestRunEnd(testModules, unhandledErrors, reason)
 - Forward exit code; re-raise termination signals; print PM-specific
   install instructions on non-zero exit.
 
-### Flow 6: Plugin record hooks -> CLI -> DataStore (β)
+### Flow 6: Plugin record hooks -> CLI -> DataStore
 
-The β `*-record.sh` hook scripts each call the user's installed
+The `*-record.sh` hook scripts each call the user's installed
 `vitest-agent-reporter` bin (the CLI) via the same PM detection
 pattern as the MCP loader (Flow 5).
 
-- **SessionStart -> `session-start.sh`** (β
-  `session-start-record.sh` was deleted in RC and folded into
-  this script): reads the Claude Code SessionStart envelope
-  from stdin, extracts `cc_session_id` / project / cwd, calls
-  `triage` CLI to gather orientation context, then calls
-  `<pm-exec> vitest-agent-reporter record session-start
+- **SessionStart -> `session-start.sh`:** reads the Claude Code
+  SessionStart envelope from stdin, extracts `cc_session_id` /
+  project / cwd, calls `triage` CLI to gather orientation context,
+  then calls `<pm-exec> vitest-agent-reporter record session-start
   --cc-session-id ... --project ... --cwd ...
   --triage-was-non-empty <bool>`. The CLI runs
   `recordSessionStart` -> `DataStore.writeSession`. Finally
   emits `hookSpecificOutput.additionalContext` with the
-  triage markdown (RC W3 + W5 integration in one script).
+  triage markdown.
 - **UserPromptSubmit -> `user-prompt-submit-record.sh`:** builds
   a `UserPromptPayload` JSON, calls
   `<pm-exec> vitest-agent-reporter record turn --cc-session-id
@@ -1404,11 +1409,10 @@ pattern as the MCP loader (Flow 5).
   `recordSessionEnd` -> `DataStore.endSession`.
 - **PreCompact -> `pre-compact-record.sh`:** builds a
   `HookFirePayload` (carrying `hook_kind: "PreCompact"`) and
-  calls `record turn`. β only captures the firing event in the
-  turn log; RC's interpretive hooks add a prompt-injection nudge
-  on top.
+  calls `record turn`, then calls `wrapup --kind=pre_compact`
+  and emits the result as a top-level `systemMessage` field.
 
-### Flow 7: tRPC idempotency middleware (RC)
+### Flow 7: tRPC idempotency middleware
 
 When a mutation tool wired with `idempotentProcedure`
 (currently `hypothesis_record` and `hypothesis_validate`)
@@ -1473,8 +1477,7 @@ both branches "see" the same cached value.
 - Now async (Vitest awaits plugin hooks)
 - Mutate `vitest.config.reporters` to inject `AgentReporter`
 - Access `vitest.config.outputFile` for cache directory resolution
-  (Phase 6 dropped the `vitest.vite.config.cacheDir` fallback in
-  favor of XDG-based default)
+  (XDG-based default; no `vitest.vite.config.cacheDir` fallback)
 - Access `vitest.config.coverage.thresholds` for coverage threshold
 - Pass `project.name` as `projectFilter` for multi-project isolation
 
@@ -1489,15 +1492,14 @@ GFM content is appended (not overwritten) to support multiple steps.
 ### Integration 4: Consumer LLM Agents
 
 **MCP pattern (preferred):** Agents connect via MCP stdio transport and
-use the 41 tools for structured data access (24 from Phase 5/6 plus
-7 read-only β tools surfacing α's session/turn/TDD/hypothesis/
-failure-signature substrate plus 4 RC tools: `triage_brief`,
-`wrapup_prompt`, `hypothesis_record`, `hypothesis_validate` -- the
-latter two via the tRPC idempotency middleware -- plus 6 final
-tools for TDD lifecycle reads/writes
+use the 41 tools for structured data access: read-only queries
+(`test_status`, `test_overview`, `test_coverage`, etc.), discovery tools,
+session/turn/TDD/hypothesis reads, triage and wrapup reads,
+hypothesis writes (`hypothesis_record`, `hypothesis_validate` -- via the
+tRPC idempotency middleware), TDD lifecycle reads/writes
 (`tdd_session_start`, `tdd_session_end`, `tdd_session_resume`,
-`decompose_goal_into_behaviors`, `tdd_phase_transition_request`)
-plus the read-only `commit_changes`).
+`decompose_goal_into_behaviors`, `tdd_phase_transition_request`),
+and the workspace history tool (`commit_changes`).
 
 **CLI pattern:** Run `vitest-agent-reporter status` for quick overview,
 `vitest-agent-reporter overview` for test landscape, or
@@ -1509,7 +1511,7 @@ SQLite tools if needed.
 
 ### Integration 5: Effect Ecosystem
 
-**Runtime dependencies (distributed across the four 2.0 packages):**
+**Runtime dependencies (distributed across the four packages):**
 
 In `vitest-agent-reporter-shared`:
 
@@ -1518,13 +1520,11 @@ In `vitest-agent-reporter-shared`:
 - `@effect/platform-node` -- Node.js live implementations
 - `@effect/sql` + `@effect/sql-sqlite-node` -- SQLite client and migrator
 - `std-env` -- agent and CI runtime detection
-- `xdg-effect ^1.0.1` (Phase 6) -- XDG path resolution
-- `config-file-effect ^0.2.0` (Phase 6) -- TOML config loading
-- `workspaces-effect ^0.5.1` (Phase 6) -- workspace name discovery
-- `acorn ^8.16.0` (Phase 7 / α) -- AST parser for
-  `findFunctionBoundary`
-- `acorn-typescript ^1.4.13` (Phase 8 / β) -- TS plugin for acorn,
-  closes α D10's deferred TS support
+- `xdg-effect ^1.0.1` -- XDG path resolution
+- `config-file-effect ^0.2.0` -- TOML config loading
+- `workspaces-effect ^0.5.1` -- workspace name discovery
+- `acorn ^8.16.0` -- AST parser for `findFunctionBoundary`
+- `acorn-typescript ^1.4.13` -- TypeScript plugin for acorn
 
 In `vitest-agent-reporter`: shared + the Effect/SQL stack
 (transitively via shared) + Vitest peer.
@@ -1534,14 +1534,12 @@ In `vitest-agent-reporter-cli`: shared + `@effect/cli` + Effect/SQL.
 In `vitest-agent-reporter-mcp`: shared, `@modelcontextprotocol/sdk`,
 `@trpc/server`, `zod`, and the Effect/SQL deps.
 
-**Phase 5 dependencies added (now in the appropriate packages):**
-
 - `@effect/sql-sqlite-node` -- SQLite database layer (in shared)
 - `@modelcontextprotocol/sdk` -- MCP server (in mcp)
 - `@trpc/server` -- tRPC router for MCP tool procedures (in mcp)
 - `zod` -- MCP tool input validation, required by tRPC (in mcp)
 
-### Integration 6: Model Context Protocol (Phase 5c)
+### Integration 6: Model Context Protocol
 
 **Transport:** stdio (standard input/output)
 
@@ -1552,119 +1550,112 @@ In `vitest-agent-reporter-mcp`: shared, `@modelcontextprotocol/sdk`,
 **Context:** `McpContext` carrying a `ManagedRuntime` with DataReader,
 DataStore, ProjectDiscovery, and OutputRenderer services
 
-**Registration (Phase 6):** Via the inline `mcpServers` config in
+**Registration:** Via the inline `mcpServers` config in
 `plugin/.claude-plugin/plugin.json`. The plugin's
 `bin/mcp-server.mjs` loader spawns `vitest-agent-reporter-mcp`
-through the user's package manager (Flow 5). The 1.x `npx
-vitest-agent-reporter-mcp` registration approach is gone (it could
-fall back to a registry download and exceed Claude Code's MCP
-startup window).
+through the user's package manager (Flow 5). See Decision 30 for the
+loader design.
 
-### Integration 7: Claude Code Plugin (Phase 5d, loader rewritten in Phase 6, β record hooks, RC interpretive nudges, final TDD orchestrator)
+### Integration 7: Claude Code Plugin
 
 **Plugin format:** File-based plugin at `plugin/` directory
 
 **Discovery:** Claude Code discovers the plugin via `.claude-plugin/plugin.json`
 
 **MCP registration:** Inline `mcpServers` config in `plugin.json`
-points at `${CLAUDE_PLUGIN_ROOT}/bin/mcp-server.mjs`. The Phase 6
-rewrite of that loader detects the user's package manager and spawns
+points at `${CLAUDE_PLUGIN_ROOT}/bin/mcp-server.mjs`. The loader
+detects the user's package manager and spawns
 `vitest-agent-reporter-mcp` through it (`pnpm exec`,
-`npx --no-install`, `yarn run`, or `bun x`). See Component 24 and
-Decision 30 for details.
+`npx --no-install`, `yarn run`, or `bun x`). See Decision 30 for
+details.
 
 **Hooks:**
 
-- `SessionStart` -> `hooks/session-start.sh` (context injection +
-  triage). **(RC)** Rewritten to call the new `triage` CLI and
-  emit `hookSpecificOutput.additionalContext` with the triage
-  markdown (or generic context fallback), additionally writing
-  the `sessions` row directly with `--triage-was-non-empty`. The
-  β `session-start-record.sh` is **deleted** -- its job folds
-  into this script. The duplicate `SessionStart` entry in
-  `hooks.json` is removed
-- `UserPromptSubmit` -> `hooks/user-prompt-submit-record.sh`
-  invokes `record turn` with a `UserPromptPayload`. **(RC)**
-  Upgraded from record-only to record + inject. After recording,
-  calls `wrapup --kind=user_prompt_nudge --user-prompt-hint
-  <prompt>` and emits the result as
-  `hookSpecificOutput.additionalContext`. The text-match logic
-  for "is this a failure prompt?" lives in `format-wrapup`,
-  not the hook
+- `SessionStart` -> `hooks/session-start.sh` -- calls the `triage`
+  CLI and emits `hookSpecificOutput.additionalContext` with the
+  triage markdown (or generic context fallback); additionally writes
+  the `sessions` row via `record session-start
+  --triage-was-non-empty <bool>`
+- `UserPromptSubmit` -> `hooks/user-prompt-submit-record.sh` --
+  invokes `record turn` with a `UserPromptPayload`, then calls
+  `wrapup --kind=user_prompt_nudge --user-prompt-hint <prompt>` and
+  emits the result as `hookSpecificOutput.additionalContext`. The
+  text-match logic for "is this a failure prompt?" lives in
+  `format-wrapup`, not the hook
 - `PreToolUse` matching `mcp__vitest-agent-reporter__.*` ->
-  `hooks/pre-tool-use-mcp.sh` (auto-allow MCP tools whose
+  `hooks/pre-tool-use-mcp.sh` -- auto-allows 41 MCP tools whose
   operation suffix is enumerated in
   `hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt`; unknown ops
-  fall through to the standard permission prompt). **(RC)** The
-  allowlist enumerated 35 entries. **(final)** The allowlist
-  now enumerates 41 entries covering the 6 final tools as well
-  (TDD lifecycle + commit_changes).
-  **(β)** Parallel `hooks/pre-tool-use-record.sh` invokes
-  `record turn` with a `ToolCallPayload`. **Stays record-only on
-  RC** -- it fires too often for prompt injection to be tolerable.
-  **(final)** New `hooks/pre-tool-use-bash-tdd.sh` matches the
-  `Bash` tool when `agent_type='tdd-orchestrator'` and blocks
-  anti-pattern flags (`--update`, `-u`, `--reporter=silent`,
+  fall through to the standard permission prompt. Parallel
+  `hooks/pre-tool-use-record.sh` invokes `record turn` with a
+  `ToolCallPayload` (record-only; fires too often for prompt
+  injection). `hooks/pre-tool-use-bash-tdd.sh` matches the `Bash`
+  tool for the orchestrator (via `lib/match-tdd-agent.sh`) and
+  blocks anti-pattern flags (`--update`, `-u`, `--reporter=silent`,
   `--bail`, `-t`, `--testNamePattern`, snapshot edits, edits to
   `coverage.exclude` / `setupFiles` / `globalSetup` in vitest
-  config). Returns `permissionDecision: "deny"` JSON on match
+  config); returns `permissionDecision: "deny"` JSON on match
 - `PostToolUse` on `Bash` -> `hooks/post-test-run.sh` (test
-  detection). **(β)** Parallel
-  `hooks/post-tool-use-record.sh` runs on every tool result and
-  invokes `record turn` with a `ToolResultPayload` (plus a
-  second `record turn` with a `FileEditPayload` for
-  `Edit`/`Write`/`MultiEdit`). **Stays record-only on RC** --
-  same reasoning as PreToolUse
-- `Stop` (RC -- new event registration) -> `hooks/stop-record.sh`
-  records a `hook_fire` turn AND invokes `wrapup --kind=stop`,
-  emitting the result as `hookSpecificOutput.additionalContext`
-- `SessionEnd` -> `hooks/session-end-record.sh` invokes the
-  CLI `record session-end` to update `sessions.ended_at` /
-  `sessions.end_reason`. **(RC)** Upgraded from record-only to
-  record + inject. After recording, calls
-  `wrapup --kind=session_end` and emits the result as
-  `hookSpecificOutput.additionalContext`
-- `PreCompact` -> `hooks/pre-compact-record.sh` invokes
-  `record turn` with a `HookFirePayload`. **(RC)** Upgraded
-  from record-only to record + inject. After recording, calls
-  `wrapup --kind=pre_compact` and emits the result as
-  `hookSpecificOutput.additionalContext`
-- `SubagentStart` (final -- new event registration) ->
-  `hooks/subagent-start-tdd.sh`. Scoped to
-  `agent_type='tdd-orchestrator'`. Writes the `sessions` row
-  with `agent_kind='subagent'`, `agent_type='tdd-orchestrator'`,
-  and `parent_session_id` set to the parent main-session id
-- `SubagentStop` (final -- new event registration) ->
-  `hooks/subagent-stop-tdd.sh`. Scoped to the orchestrator.
-  Calls `record session-end` with `end_reason="subagent_stop"`,
-  generates a `wrapup --kind=tdd_handoff` note, and records
-  that note as a turn on the parent session
-- `PostToolUse` (final, orchestrator-scoped) ->
+  detection). Parallel `hooks/post-tool-use-record.sh` runs on
+  every tool result and invokes `record turn` with a
+  `ToolResultPayload` (plus a second `record turn` with a
+  `FileEditPayload` for `Edit`/`Write`/`MultiEdit`)
+- `Stop` -> `hooks/stop-record.sh` -- records a `hook_fire` turn
+  AND invokes `wrapup --kind=stop`, emitting the result as a
+  top-level `systemMessage` field. Claude Code's hook output schema
+  only permits `hookSpecificOutput.additionalContext` on
+  `PreToolUse`, `UserPromptSubmit`, `PostToolUse`, and
+  `PostToolBatch`; `Stop` / `SessionEnd` / `PreCompact` must use
+  top-level fields like `systemMessage` instead
+- `SessionEnd` -> `hooks/session-end-record.sh` -- invokes
+  `record session-end` to update `sessions.ended_at` /
+  `sessions.end_reason`, then calls `wrapup --kind=session_end` and
+  emits the result as a top-level `systemMessage` field
+- `PreCompact` -> `hooks/pre-compact-record.sh` -- invokes
+  `record turn` with a `HookFirePayload`, then calls
+  `wrapup --kind=pre_compact` and emits the result as a
+  top-level `systemMessage` field
+- `SubagentStart` -> `hooks/subagent-start-tdd.sh` -- scoped via
+  `lib/match-tdd-agent.sh` (matches the orchestrator under either
+  `"TDD Orchestrator"` or the `"tdd-orchestrator"` slug; Claude
+  Code silently ignores the custom `agent_type:` frontmatter field,
+  but the helper accepts both forms for resilience). Writes the
+  `sessions` row with `agent_kind='subagent'`,
+  `agent_type='tdd-orchestrator'`, and `parent_session_id` set to
+  the parent main-session id
+- `SubagentStop` -> `hooks/subagent-stop-tdd.sh` -- scoped via
+  `lib/match-tdd-agent.sh`. Calls `record session-end` with
+  `end_reason="subagent_stop"`, generates a
+  `wrapup --kind=tdd_handoff` note, and records that note as a turn
+  on the parent session
+- `PostToolUse` (orchestrator-scoped) ->
   `hooks/post-tool-use-tdd-artifact.sh` (records
   test_failed_run / test_passed_run from Bash test runs and
   test_written / code_written from Edit/Write outcomes via
   `record tdd-artifact`) and
   `hooks/post-tool-use-test-quality.sh` (scans test-file
-  edits for escape-hatch tokens and records
-  `test_weakened` artifacts)
-- `PostToolUse` (final, repo-scoped) ->
-  `hooks/post-tool-use-git-commit.sh`. **NOT scoped** to the
-  orchestrator -- fires for all agents on every successful
-  `git commit` / `git push` Bash invocation. Parses git
-  metadata and shells to `record run-workspace-changes`,
+  edits for escape-hatch tokens and records `test_weakened` artifacts)
+- `PostToolUse` (repo-scoped) ->
+  `hooks/post-tool-use-git-commit.sh` -- fires for all agents on
+  every successful `git commit` / `git push` Bash invocation.
+  Parses git metadata and shells to `record run-workspace-changes`,
   which writes `commits` (idempotent on `sha`) and
   `run_changed_files`. Backs the `commit_changes` MCP tool
 
-**Agents:** (final) `tdd-orchestrator.md` (subagent definition,
-iron-law system prompt, 8-state state machine, 9 inline sub-skill
-primitives -- `agent_type: tdd-orchestrator`, matched by W2 hooks)
+**Agents:** `tdd-orchestrator.md` (subagent definition, iron-law
+system prompt, 8-state state machine, 9 inline sub-skill
+primitives). Frontmatter `agent_type: tdd-orchestrator` is custom
+plugin metadata that Claude Code silently ignores. Claude Code's hook
+envelope `agent_type` field equals the agent's `name:` value (so
+`"TDD Orchestrator"`). The W2 hooks match via `lib/match-tdd-agent.sh`,
+which accepts both the human name and the legacy slug
 
 **Skills:** TDD, debugging, configuration, coverage-improvement
-(markdown files); (final) `tdd-primitives/<9 dirs>/SKILL.md` --
+(markdown files); `tdd-primitives/<9 dirs>/SKILL.md` --
 9 standalone sub-skill primitives reusable outside the TDD
 orchestrator (Decision D6)
 
-**Commands:** setup, configure (markdown files); (final) `tdd.md`
+**Commands:** setup.md, configure.md, tdd.md
 (the `/tdd <goal>` slash command that hands off to the
 `tdd-orchestrator` subagent)
 

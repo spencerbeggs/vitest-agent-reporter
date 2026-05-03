@@ -20,7 +20,7 @@ The Claude Code plugin's `SessionStart` hook now calls the CLI and injects the b
 
 The β record-only hooks for `SessionEnd`, `PreCompact`, and `UserPromptSubmit` graduate to interpretive: each still writes its turn AND injects a tailored prompt. A new `Stop` hook is registered for the first time. Wrap-up content comes from a single shared generator in `format-wrapup`, keyed by a `kind` parameter:
 
-- `stop` — Before-you-finish nudge after each main agent turn
+- `stop` — Before-you-finish nudge after a turn finishes; hypothesis lines are gated on subagent sessions (the TDD orchestrator) since `hypothesis_record` is not part of the main-agent workflow
 - `session_end` — full wrap-up at end of session
 - `pre_compact` — what-matters-next prompt before context compaction
 - `tdd_handoff` — pointer-shaped handoff message after a TDD subagent finishes

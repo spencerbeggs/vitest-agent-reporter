@@ -2,7 +2,7 @@
 
 The `vitest-agent-reporter-mcp` binary provides an
 [MCP](https://modelcontextprotocol.io/) server over stdio transport,
-exposing 24 tools for querying test data, managing notes, running
+exposing 41 tools for querying test data, managing notes, running
 tests, and discovering project structure. LLM agent hosts like Claude
 Code can call these tools directly during a session.
 
@@ -190,8 +190,9 @@ Execute vitest for specific files or patterns.
 | `files` | `string[]` | No | Test file paths to run |
 | `project` | `string` | No | Project name to filter |
 | `timeout` | `number` | No | Timeout in seconds (default: 120) |
+| `format` | `string` | No | Output format: `"markdown"` (default) or `"json"` |
 
-Returns JSON with the test run result.
+Returns a markdown digest or a JSON-serialized `AgentReport` depending on `format`.
 
 ### Discovery Tools
 
@@ -321,6 +322,206 @@ Full-text search across note titles and content.
 | `query` | `string` | Yes | Search query |
 
 Returns an array of matching note objects.
+
+### Session and Turn Tools
+
+These tools expose the Claude Code session and turn log recorded by the
+plugin hooks.
+
+#### `session_list`
+
+List Claude Code sessions.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Filter by project name |
+| `agentKind` | `string` | No | Filter by kind: `"main"` or `"subagent"` |
+| `limit` | `number` | No | Max results (default: 50) |
+
+#### `session_get`
+
+Read a single Claude Code session by database ID.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `number` | Yes | Session database ID |
+
+#### `turn_search`
+
+Search the turn log for a session.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `sessionId` | `number` | No | Filter by session ID |
+| `type` | `string` | No | Filter by turn type (`user_prompt`, `tool_call`, `tool_result`, `file_edit`, `hook_fire`, `note`, `hypothesis`) |
+| `since` | `string` | No | ISO 8601 lower-bound timestamp |
+| `limit` | `number` | No | Max results (default: 50) |
+
+#### `failure_signature_get`
+
+Read a failure signature by its hash, including up to 10 recent matching
+test errors.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `hash` | `string` | Yes | 16-char hex signature hash |
+
+#### `acceptance_metrics`
+
+Compute the four acceptance-quality ratios: phase-evidence integrity,
+compliance-hook responsiveness, orientation usefulness, and anti-pattern
+detection rate.
+
+No parameters.
+
+### Triage and Wrap-Up Tools
+
+#### `triage_brief`
+
+Orientation summary for a new session: recent run status, open failures,
+and triage context.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `project` | `string` | No | Filter to a specific project |
+| `maxLines` | `number` | No | Max lines in the output |
+
+#### `wrapup_prompt`
+
+Interpretive wrap-up nudge injected by Stop, SessionEnd, PreCompact, and
+UserPromptSubmit hooks.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `ccSessionId` | `string` | No | Claude Code session ID |
+| `kind` | `string` | No | One of: `stop`, `session_end`, `pre_compact`, `tdd_handoff`, `user_prompt_nudge` |
+| `userPromptHint` | `string` | No | Prompt text for `user_prompt_nudge` variant |
+
+### Hypothesis Tools
+
+Hypothesis writes go through the tRPC idempotency middleware so duplicate
+calls from a retrying agent replay the cached response instead of
+double-writing.
+
+#### `hypothesis_record`
+
+Record a new agent hypothesis with optional evidence links.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `sessionId` | `number` | Yes | Database session ID |
+| `content` | `string` | Yes | Hypothesis text |
+| `citedTestErrorId` | `number` | No | `test_errors.id` FK |
+| `citedStackFrameId` | `number` | No | `stack_frames.id` FK |
+| `createdTurnId` | `number` | No | `turns.id` FK |
+
+Returns `{ id: number }`.
+
+#### `hypothesis_validate`
+
+Update a hypothesis outcome.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `number` | Yes | Hypothesis ID |
+| `outcome` | `string` | Yes | One of: `confirmed`, `refuted`, `abandoned` |
+| `validatedAt` | `string` | Yes | ISO 8601 timestamp |
+| `validatedTurnId` | `number` | No | `turns.id` FK |
+
+#### `hypothesis_list`
+
+List hypotheses with optional filters.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `sessionId` | `number` | No | Filter by session |
+| `outcome` | `string` | No | Filter by outcome (`confirmed`, `refuted`, `abandoned`, `open`) |
+| `limit` | `number` | No | Max results (default: 50) |
+
+### TDD Lifecycle Tools
+
+These tools drive the TDD orchestrator subagent's state machine. Write
+tools go through idempotency middleware where appropriate.
+
+#### `tdd_session_start`
+
+Open a new TDD session with a goal. Idempotent on `(sessionId, goal)`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `goal` | `string` | Yes | TDD session goal |
+| `sessionId` | `number` | No | Database session ID (use when `ccSessionId` is unavailable) |
+| `ccSessionId` | `string` | No | Claude Code session ID |
+| `parentTddSessionId` | `number` | No | Parent TDD session for delegation |
+| `startedAt` | `string` | No | ISO 8601 timestamp (defaults to now) |
+
+Returns `{ id: number }`.
+
+#### `tdd_session_end`
+
+Close a TDD session. Idempotent on `(tddSessionId, outcome)`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `tddSessionId` | `number` | Yes | TDD session ID |
+| `outcome` | `string` | Yes | One of: `succeeded`, `blocked`, `abandoned` |
+| `summaryNoteId` | `number` | No | Optional note FK |
+
+#### `tdd_session_resume`
+
+Get a markdown digest of an open TDD session.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `number` | Yes | TDD session ID |
+
+#### `tdd_session_get`
+
+Read a TDD session with all its phases and artifacts.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `number` | Yes | TDD session ID |
+
+#### `decompose_goal_into_behaviors`
+
+Split a TDD goal into ordered atomic behaviors. Idempotent on
+`(tddSessionId, goal)`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `tddSessionId` | `number` | Yes | TDD session ID |
+| `goal` | `string` | Yes | Goal text to decompose |
+
+Returns the ordered behavior list.
+
+#### `tdd_phase_transition_request`
+
+Request a TDD phase transition. Validates the cited evidence artifact
+against the three D2 binding rules before writing the new phase row.
+**Not** idempotent -- a retry after state change legitimately yields a
+different result.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `tddSessionId` | `number` | Yes | TDD session ID |
+| `requestedPhase` | `string` | Yes | Target phase (`spike`, `red`, `red.triangulate`, `green`, `green.fake-it`, `refactor`, `extended-red`, `green-without-red`) |
+| `citedArtifactId` | `number` | No | Evidence artifact ID (required for `red→green` and `green→refactor`) |
+| `behaviorId` | `number` | No | Behavior this transition is for |
+| `reason` | `string` | No | Free-text reason |
+
+Returns `{ accepted: true, phase }` or
+`{ accepted: false, denialReason, remediation }`.
+
+### Workspace History Tools
+
+#### `commit_changes`
+
+Workspace git commit history joined with per-run changed files.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `sha` | `string` | No | Specific commit SHA to look up; omit for the 20 most recent |
 
 ## Notes System
 

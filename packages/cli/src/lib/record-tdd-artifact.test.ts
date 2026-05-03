@@ -13,6 +13,7 @@ import {
 	migration0002,
 	migration0003,
 	migration0004,
+	migration0005,
 } from "vitest-agent-reporter-shared";
 import { recordTddArtifactEffect } from "./record-tdd-artifact.js";
 
@@ -26,6 +27,7 @@ const buildLive = () => {
 			"0002_comprehensive": migration0002,
 			"0003_idempotent_responses": migration0003,
 			"0004_test_cases_created_turn_id": migration0004,
+			"0005_failure_signatures_last_seen_at": migration0005,
 		}),
 	}).pipe(Layer.provide(Layer.merge(SqliteLayer, PlatformLayer)));
 	return Layer.mergeAll(
@@ -111,5 +113,119 @@ describe("recordTddArtifactEffect", () => {
 			),
 		);
 		expect(exit._tag).toBe("Failure");
+	});
+
+	it("auto-opens a spike phase when the TDD session has no open phase", async () => {
+		const result = await run(
+			Effect.gen(function* () {
+				const ds = yield* DataStoreTag;
+				const sessionId = yield* ds.writeSession({
+					cc_session_id: "cc-no-phase",
+					project: "demo",
+					cwd: "/tmp/demo",
+					agent_kind: "subagent",
+					agent_type: "tdd-orchestrator",
+					started_at: "2026-04-29T00:00:00Z",
+				});
+				// TDD session with no phase yet — exercises the
+				// Option.isNone(phaseOpt) branch that auto-opens
+				// a spike phase.
+				yield* ds.writeTddSession({
+					sessionId,
+					goal: "g",
+					startedAt: "2026-04-29T00:00:01Z",
+				});
+
+				return yield* recordTddArtifactEffect({
+					ccSessionId: "cc-no-phase",
+					artifactKind: "test_written",
+					recordedAt: "2026-04-29T00:00:02Z",
+				});
+			}),
+		);
+		expect(result.id).toBeGreaterThan(0);
+		expect(result.phaseId).toBeGreaterThan(0);
+	});
+
+	it("forwards all optional FK fields when provided", async () => {
+		const result = await run(
+			Effect.gen(function* () {
+				const ds = yield* DataStoreTag;
+				const sessionId = yield* ds.writeSession({
+					cc_session_id: "cc-all-fks",
+					project: "demo",
+					cwd: "/tmp/demo",
+					agent_kind: "subagent",
+					agent_type: "tdd-orchestrator",
+					started_at: "2026-04-29T00:00:00Z",
+				});
+				const tddId = yield* ds.writeTddSession({
+					sessionId,
+					goal: "g",
+					startedAt: "2026-04-29T00:00:01Z",
+				});
+				yield* ds.writeTddPhase({
+					tddSessionId: tddId,
+					phase: "red",
+					startedAt: "2026-04-29T00:00:02Z",
+				});
+
+				// Set up real FK targets so the optional field
+				// inserts don't fail FK constraints.
+				const fileId = yield* ds.ensureFile("/abs/path/to/file.ts");
+				const moduleFileId = yield* ds.ensureFile("/abs/path/to/file.test.ts");
+				yield* ds.writeSettings(
+					"hash-1",
+					{
+						vitest_version: "4.1.5",
+					},
+					{},
+				);
+				const runId = yield* ds.writeRun({
+					invocationId: "inv-1",
+					project: "demo",
+					subProject: null,
+					settingsHash: "hash-1",
+					timestamp: "2026-04-29T00:00:03Z",
+					commitSha: null,
+					branch: null,
+					reason: "passed",
+					duration: 10,
+					total: 1,
+					passed: 1,
+					failed: 0,
+					skipped: 0,
+					scoped: false,
+				});
+				const moduleIds = yield* ds.writeModules(runId, [
+					{
+						fileId: moduleFileId,
+						relativeModuleId: "file.test.ts",
+						state: "passed",
+						duration: 5,
+					},
+				]);
+				const testCaseIds = yield* ds.writeTestCases(moduleIds[0]!, [
+					{
+						name: "case",
+						fullName: "case",
+						state: "passed",
+					},
+				]);
+
+				return yield* recordTddArtifactEffect({
+					ccSessionId: "cc-all-fks",
+					artifactKind: "test_failed_run",
+					fileId,
+					testCaseId: testCaseIds[0]!,
+					testRunId: runId,
+					testFirstFailureRunId: runId,
+					diffExcerpt: "- a\n+ b",
+					recordedAt: "2026-04-29T00:00:04Z",
+				});
+			}),
+		);
+		expect(result.id).toBeGreaterThan(0);
+		expect(result.phaseId).toBeGreaterThan(0);
 	});
 });

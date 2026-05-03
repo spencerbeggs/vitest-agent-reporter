@@ -409,25 +409,84 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 			);
 
 		const writeTurn = (input: TurnInput): Effect.Effect<number, DataStoreError> =>
-			Effect.gen(function* () {
-				yield* Effect.logDebug("writeTurn").pipe(
-					Effect.annotateLogs({ session_id: input.session_id, type: input.type }),
+			sql
+				.withTransaction(
+					Effect.gen(function* () {
+						yield* Effect.logDebug("writeTurn").pipe(
+							Effect.annotateLogs({ session_id: input.session_id, type: input.type }),
+						);
+						if (input.turn_no !== undefined) {
+							yield* sql`INSERT INTO turns (session_id, turn_no, type, payload, occurred_at) VALUES (${input.session_id}, ${input.turn_no}, ${input.type}, ${input.payload}, ${input.occurred_at})`;
+						} else {
+							// Atomic auto-assignment: compute next turn_no inside the same INSERT
+							// so concurrent writers can't both compute the same value before either
+							// inserts. UNIQUE(session_id, turn_no) is enforced by the schema as a
+							// safety net.
+							yield* sql`INSERT INTO turns (session_id, turn_no, type, payload, occurred_at) SELECT ${input.session_id}, COALESCE(MAX(turn_no), 0) + 1, ${input.type}, ${input.payload}, ${input.occurred_at} FROM turns WHERE session_id = ${input.session_id}`;
+						}
+						const rows = yield* sql<{ id: number }>`SELECT last_insert_rowid() as id`;
+						const turnId = rows[0].id;
+
+						// Per-turn fanout: file_edit payloads land in file_edits; tool_result
+						// payloads land in tool_invocations. tool_call does NOT produce a
+						// tool_invocations row -- only tool_result does, so the per-call
+						// outcome (success/duration_ms) is captured exactly once. Other
+						// payload types (user_prompt, hypothesis, hook_fire, note) write
+						// only the turns row; their detail lives in turns.payload JSON.
+						if (input.type === "file_edit" || input.type === "tool_result") {
+							const payload = yield* Effect.try({
+								try: () => JSON.parse(input.payload) as Record<string, unknown>,
+								catch: (e) =>
+									new DataStoreError({
+										operation: "write",
+										table: input.type === "file_edit" ? "file_edits" : "tool_invocations",
+										reason: `invalid turn payload JSON: ${(e as Error).message}`,
+									}),
+							});
+
+							if (input.type === "file_edit") {
+								const filePath = payload.file_path as string;
+								yield* sql`INSERT OR IGNORE INTO files (path) VALUES (${filePath})`;
+								const fileRows = yield* sql<{ id: number }>`SELECT id FROM files WHERE path = ${filePath}`;
+								const fileId = fileRows[0].id;
+								yield* sql`
+									INSERT INTO file_edits (turn_id, file_id, edit_kind, lines_added, lines_removed, diff)
+									VALUES (
+										${turnId},
+										${fileId},
+										${payload.edit_kind as string},
+										${(payload.lines_added as number | undefined) ?? null},
+										${(payload.lines_removed as number | undefined) ?? null},
+										${(payload.diff as string | undefined) ?? null}
+									)
+								`;
+							} else {
+								// tool_result
+								yield* sql`
+									INSERT INTO tool_invocations (turn_id, tool_name, params_hash, result_summary, duration_ms, success)
+									VALUES (
+										${turnId},
+										${payload.tool_name as string},
+										${null},
+										${(payload.result_summary as string | undefined) ?? null},
+										${(payload.duration_ms as number | undefined) ?? null},
+										${boolToInt(payload.success as boolean) ?? 0}
+									)
+								`;
+							}
+						}
+
+						return turnId;
+					}),
+				)
+				.pipe(
+					Effect.annotateLogs("service", "DataStore"),
+					Effect.mapError((e) =>
+						e instanceof DataStoreError
+							? e
+							: new DataStoreError({ operation: "write", table: "turns", reason: extractSqlReason(e) }),
+					),
 				);
-				if (input.turn_no !== undefined) {
-					yield* sql`INSERT INTO turns (session_id, turn_no, type, payload, occurred_at) VALUES (${input.session_id}, ${input.turn_no}, ${input.type}, ${input.payload}, ${input.occurred_at})`;
-				} else {
-					// Atomic auto-assignment: compute next turn_no inside the same INSERT
-					// so concurrent writers can't both compute the same value before either
-					// inserts. UNIQUE(session_id, turn_no) is enforced by the schema as a
-					// safety net.
-					yield* sql`INSERT INTO turns (session_id, turn_no, type, payload, occurred_at) SELECT ${input.session_id}, COALESCE(MAX(turn_no), 0) + 1, ${input.type}, ${input.payload}, ${input.occurred_at} FROM turns WHERE session_id = ${input.session_id}`;
-				}
-				const rows = yield* sql<{ id: number }>`SELECT last_insert_rowid() as id`;
-				return rows[0].id;
-			}).pipe(
-				Effect.annotateLogs("service", "DataStore"),
-				Effect.mapError((e) => new DataStoreError({ operation: "write", table: "turns", reason: extractSqlReason(e) })),
-			);
 
 		const endSession = (
 			ccSessionId: string,
@@ -463,7 +522,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				yield* Effect.logDebug("writeFailureSignature").pipe(
 					Effect.annotateLogs({ signatureHash: input.signatureHash, runId: input.runId }),
 				);
-				yield* sql`INSERT INTO failure_signatures (signature_hash, first_seen_run_id, first_seen_at, occurrence_count) VALUES (${input.signatureHash}, ${input.runId}, ${input.seenAt}, 1) ON CONFLICT(signature_hash) DO UPDATE SET occurrence_count = occurrence_count + 1`;
+				yield* sql`INSERT INTO failure_signatures (signature_hash, first_seen_run_id, first_seen_at, last_seen_at, occurrence_count) VALUES (${input.signatureHash}, ${input.runId}, ${input.seenAt}, ${input.seenAt}, 1) ON CONFLICT(signature_hash) DO UPDATE SET occurrence_count = occurrence_count + 1, last_seen_at = excluded.last_seen_at`;
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
 				Effect.mapError(
@@ -524,7 +583,27 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 					)
 					RETURNING id
 				`;
-				return rows[0].id;
+				const tddSessionId = rows[0].id;
+
+				// Open the initial `spike` phase atomically with the session row so
+				// `getCurrentTddPhase` returns Some immediately after start. Older
+				// `tdd_sessions` rows that predate this change still get a lazy
+				// open from `record tdd-artifact`'s defensive fallback.
+				yield* sql`
+					INSERT INTO tdd_phases
+						(tdd_session_id, behavior_id, phase, started_at, transition_reason, parent_phase_id)
+					VALUES
+						(
+							${tddSessionId},
+							${null},
+							${"spike"},
+							${input.startedAt},
+							${"opened by tdd_session_start"},
+							${null}
+						)
+				`;
+
+				return tddSessionId;
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
 				Effect.mapError(

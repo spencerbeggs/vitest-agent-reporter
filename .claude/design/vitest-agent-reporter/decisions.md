@@ -3,13 +3,9 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-04-30
-last-synced: 2026-04-30
-post-phase5-sync: 2026-04-23
-post-2-0-sync: 2026-04-29
-post-rc-sync: 2026-04-30
-post-final-sync: 2026-04-30
-completeness: 95
+updated: 2026-05-03
+last-synced: 2026-05-03
+completeness: 100
 related:
   - vitest-agent-reporter/architecture.md
   - vitest-agent-reporter/components.md
@@ -63,27 +59,21 @@ and was unnecessary since the Reporter API provides project info natively.
 **Chosen approach:** Reporter-native grouping via `TestProject` API. Zero
 configuration; works in monorepos and single repos; no mirror projects;
 single reporter instance. Uses `testModule.project.name` for grouping.
-Phase 5 added `splitProject()` to separate `"project:subProject"` for
-normalized database storage.
+`splitProject()` separates `"project:subProject"` for normalized database
+storage.
 
-### Decision 3: Four-Environment Detection (Phase 5 update)
+### Decision 3: Four-Environment Detection
 
 **Context:** The reporter needs to behave differently depending on who is
 running tests and in what context.
 
-**Phase 1 approach:** Hand-rolled `detectEnvironment()` checking 9+
-individual env vars.
+**Chosen approach:** EnvironmentDetector service with four granular
+environments: `agent-shell` (LLM agent in a shell), `terminal` (human in
+terminal), `ci-github` (GitHub Actions specifically), `ci-generic` (other
+CI systems). The ExecutorResolver then maps these to three executor roles
+(`human`, `agent`, `ci`) for output behavior.
 
-**Phase 2 approach:** AgentDetection Effect service backed by `std-env`
-with three environments: agent, CI, human.
-
-**Phase 5 approach (current):** EnvironmentDetector service with four
-granular environments: `agent-shell` (LLM agent in a shell), `terminal`
-(human in terminal), `ci-github` (GitHub Actions specifically),
-`ci-generic` (other CI systems). The ExecutorResolver then maps these to
-three executor roles (`human`, `agent`, `ci`) for output behavior.
-
-**Why changed:** The CI split (`ci-github` vs `ci-generic`) enables
+**Why chosen:** The CI split (`ci-github` vs `ci-generic`) enables
 GFM-specific behavior without conflating all CI environments. The
 `agent-shell` vs `terminal` distinction supports finer-grained output
 format selection. The two-stage pipeline (environment detection -> executor
@@ -100,52 +90,45 @@ runtime via `isIstanbulCoverageMap()` to avoid forcing a specific coverage
 provider peer dependency. Istanbul interfaces are kept as TypeScript
 interfaces, not schemas.
 
-### Decision 5: Effect Schema Data Structures (Phase 2)
+### Decision 5: Effect Schema Data Structures
 
 **Context:** Report and manifest data needs to be both type-safe in
 TypeScript and serializable to/from JSON files on disk.
 
-**Phase 1 approach:** Zod 4 schemas in `schemas.ts`, types via
-`z.infer<>` in `types.ts`, codecs via `z.codec()`.
-
-**Phase 2 approach (current):** Effect Schema definitions split across
+**Chosen approach:** Effect Schema definitions split across
 `packages/shared/src/schemas/` directory. TypeScript types derived via
 `typeof Schema.Type`. JSON encode/decode via `Schema.decodeUnknown` /
 `Schema.encodeUnknown`. Schemas are exported from the public API so
 consumers can validate report files.
 
-**Why migrated:** Effect Schema integrates naturally with the Effect
-service architecture. Eliminates the Zod dependency. Unified ecosystem
-means schemas compose with Effect services without bridging.
+**Why chosen:** Effect Schema integrates naturally with the Effect service
+architecture. Unified ecosystem means schemas compose with Effect services
+without bridging.
 
-**Note:** Phase 5c re-introduced `zod` as a dependency for tRPC procedure
-input validation in the MCP server. This is separate from the data schema
-layer -- Effect Schema remains the source of truth for data structures,
-while Zod is used only for MCP tool input schemas where `@trpc/server`
-requires it.
+**Note:** `zod` is a runtime dependency for tRPC procedure input validation
+in the MCP server. This is separate from the data schema layer -- Effect
+Schema remains the source of truth for data structures, while Zod is used
+only for MCP tool input schemas where `@trpc/server` requires it.
 
-### Decision 6: Effect Services over Plain Functions (Phase 2)
+### Decision 6: Effect Services over Plain Functions
 
 **Context:** The reporter and CLI share functionality (cache reading,
 coverage processing). Both need testable I/O without mocking Node APIs
 directly.
 
-**Phase 2 approach:** Five Effect services: AgentDetection, CacheWriter,
-CacheReader, CoverageAnalyzer, ProjectDiscovery.
-
-**Phase 5 approach (current):** Ten Effect services: DataStore, DataReader,
+**Chosen approach:** Ten Effect services: DataStore, DataReader,
 EnvironmentDetector, ExecutorResolver, FormatSelector, DetailResolver,
 OutputRenderer, CoverageAnalyzer, ProjectDiscovery, HistoryTracker. Live
 layers use `@effect/platform` FileSystem and `@effect/sql-sqlite-node`;
 test layers swap in mock implementations.
 
-**Why expanded:** The output pipeline needed distinct stages
+**Why chosen:** The output pipeline needed distinct stages
 (detect -> resolve -> select -> resolve detail -> render) to be
 individually testable. The data layer split (DataStore write vs DataReader
 read) enables different composition in different contexts (reporter writes,
 CLI/MCP reads).
 
-### Decision 7: Scoped Effect.runPromise in Reporter (Phase 2)
+### Decision 7: Scoped Effect.runPromise in Reporter
 
 **Context:** Vitest instantiates the reporter class -- we don't control
 construction. We need to use Effect services inside class methods.
@@ -161,10 +144,10 @@ concerns (no resource leak, no disposal needed). For the plugin,
 `configureVitest` is async (Vitest awaits plugin hooks), so
 `Effect.runPromise` is also safe there.
 
-**Note:** The MCP server (Phase 5c) does use `ManagedRuntime` because it
-is a long-running process where per-call construction would be wasteful.
+**Note:** The MCP server does use `ManagedRuntime` because it is a
+long-running process where per-call construction would be wasteful.
 
-### Decision 8: CLI-First Overview (Phase 2)
+### Decision 8: CLI-First Overview
 
 **Context:** Overview/status data could be generated on every test run
 (in the reporter's `onInit` hook) or on-demand by a separate tool.
@@ -190,7 +173,7 @@ see Decision 27 for the rename):
   reporter. Does not strip reporters. Writes to database only.
   Warns if `agent` reporter missing from chain
 - `"own"` -- strips built-in console reporters, uses our formatter, writes
-  our own GFM. Phase 1 behavior
+  our own GFM
 
 **Why chosen:** Users who already have Vitest's built-in agent reporter
 configured should not have it ripped out by our plugin. The complement
@@ -247,9 +230,9 @@ should maximize signal-to-noise ratio.
   `mcp: true`)
 - Relative file paths throughout
 - No redundant "All tests passed" line (header already conveys this)
-- No cache file pointer line (removed post-Phase-5; not useful to agents)
+- No cache file pointer line (not useful to agents)
 
-### Decision 13: History Always-On (Phase 3)
+### Decision 13: History Always-On
 
 **Context:** Failure history could be an opt-in feature (toggle in
 `AgentReporterOptions`) or always enabled alongside the existing report
@@ -270,21 +253,17 @@ cache.
 **Implementation:** `DataStore.writeHistory` is called unconditionally
 for each test case in `onTestRunEnd`.
 
-### Decision 14: Vitest-Native Threshold Format (Phase 4)
+### Decision 14: Vitest-Native Threshold Format
 
-**Context:** Phase 1-3 used a single `coverageThreshold: number` (minimum
-across all metrics). Vitest supports a richer format with per-metric
-thresholds, per-glob patterns, negative numbers (relative thresholds),
-`100` shorthand, and `perFile` mode.
+**Context:** Vitest supports a rich format for coverage thresholds with
+per-metric thresholds, per-glob patterns, negative numbers (relative
+thresholds), `100` shorthand, and `perFile` mode.
 
-**Phase 4 approach (current):** `coverageThresholds` accepts the full
-Vitest thresholds format (`Record<string, unknown>`). Parsed by
+**Chosen approach:** `coverageThresholds` accepts the full Vitest
+thresholds format (`Record<string, unknown>`). Parsed by
 `resolveThresholds()` into a typed `ResolvedThresholds` structure.
 
-**Breaking change:** `coverageThreshold: number` replaced by
-`coverageThresholds: Record<string, unknown>`.
-
-### Decision 15: Three-Level Coverage Model (Phase 4)
+### Decision 15: Three-Level Coverage Model
 
 **Context:** Users need both hard enforcement (fail the build) and
 aspirational goals (track progress toward 100%). A single threshold
@@ -297,20 +276,20 @@ serves one purpose but not both.
 3. **Baselines** (stored in SQLite `coverage_baselines` table) --
    auto-ratcheting high-water marks
 
-### Decision 16: Coverage Trend Tracking (Phase 4)
+### Decision 16: Coverage Trend Tracking
 
 **Context:** Point-in-time coverage data doesn't show whether coverage is
 improving or degrading over time.
 
 **Chosen approach:** Per-project trend tracking with 50-entry sliding
-window (now stored in SQLite `coverage_trends` table). Only recorded on
+window stored in the SQLite `coverage_trends` table. Only recorded on
 full (non-scoped) test runs. Target change detection via hash comparison
 resets trend history when targets change.
 
-### Decision 17: Tiered Console Output (Phase 4)
+### Decision 17: Tiered Console Output
 
-**Context:** Phase 1-3 console output showed the same format regardless
-of run health.
+**Context:** LLM agents benefit from progressive disclosure -- minimal
+noise on green runs, progressively more detail as problems accumulate.
 
 **Chosen approach:** Three tiers based on run health:
 
@@ -319,17 +298,15 @@ of run health.
 - **Red** (failures/threshold violations/regressions): full detail +
   CLI hints
 
-**Phase 5 update:** Tiered output is now implemented in the markdown
-formatter (`packages/shared/src/formatters/markdown.ts`) and controlled by the
+Tiered output is implemented in the markdown formatter
+(`packages/shared/src/formatters/markdown.ts`) and controlled by the
 DetailResolver service, which maps `(executor, runHealth)` to a
 `DetailLevel` enum.
 
-### Decision 18: SQLite over JSON Files (Phase 5a)
+### Decision 18: SQLite over JSON Files
 
-**Context:** Phase 2-4 stored all data in JSON files: per-project report
-files, history files, trends files, baselines file, and a manifest file.
-This created issues with concurrent access, atomicity, querying across
-projects, and file proliferation in monorepos.
+**Context:** JSON file storage creates issues with concurrent access,
+atomicity, querying across projects, and file proliferation in monorepos.
 
 **Options considered:**
 
@@ -342,27 +319,26 @@ projects, and file proliferation in monorepos.
    - Why chosen: The benefits of structured queries, relational integrity,
      and single-file storage dramatically simplify the data layer
 
-2. **Keep JSON files:**
+2. **JSON files:**
    - Pros: Human-readable, no external dependencies
    - Cons: No cross-project queries, no atomicity, file proliferation,
-     no FTS, manual file management in CacheWriter/CacheReader
-   - Why rejected: The growing number of file types (reports, history,
-     trends, baselines, manifest) created increasing complexity
+     no FTS, growing number of file types creates increasing complexity
+   - Why rejected: The growing number of data types (reports, history,
+     trends, baselines, manifest) made per-file management unscalable
 
 3. **Embedded key-value store (LevelDB, etc.):**
    - Pros: Simple API, single file
    - Cons: No relational queries, no SQL, custom migration story
    - Why rejected: We need relational queries for cross-project analysis
 
-**Implementation:** 25-table normalized schema via `@effect/sql-sqlite-node`
-with `@effect/sql-sqlite-node` SqliteMigrator. WAL journal mode for
-concurrent reads. All composition layers (`ReporterLive`, `CliLive`,
-`McpLive`) are now functions of `dbPath` that construct the SqliteClient
-layer inline.
+**Implementation:** 41-table normalized schema via `@effect/sql-sqlite-node`
+SqliteMigrator. WAL journal mode for concurrent reads. All composition
+layers (`ReporterLive`, `CliLive`, `McpLive`) are functions of `dbPath`
+that construct the SqliteClient layer inline.
 
-### Decision 19: tRPC for MCP Routing (Phase 5c)
+### Decision 19: tRPC for MCP Routing
 
-**Context:** The MCP server needs to expose 24 tools. Each tool needs
+**Context:** The MCP server needs to expose 41 tools. Each tool needs
 input validation, type-safe context access, and testable procedure logic.
 
 **Options considered:**
@@ -391,7 +367,7 @@ input validation, type-safe context access, and testable procedure logic.
 service access. Each procedure calls `ctx.runtime.runPromise(effect)` to
 execute Effect programs. Zod is used only for MCP tool input schemas.
 
-### Decision 20: File-Based Claude Code Plugin (Phase 5d)
+### Decision 20: File-Based Claude Code Plugin
 
 **Context:** Claude Code supports file-based plugins via a `.claude-plugin/`
 directory with hooks, skills, and commands. The plugin needs to integrate
@@ -415,7 +391,7 @@ no compilation or runtime needed.
 and no tests. Making it a pnpm workspace would add unnecessary
 configuration overhead.
 
-### Decision 21: spawnSync for run_tests (Phase 5c)
+### Decision 21: spawnSync for run_tests
 
 **Context:** The `run_tests` MCP tool needs to execute `vitest run` and
 return results. The MCP server is a long-running stdio process.
@@ -433,11 +409,11 @@ the MCP server indefinitely.
 `run_tests` is executing. This is acceptable because agents typically
 wait for test results before proceeding.
 
-### Decision 22: Output Pipeline Architecture (Phase 5b)
+### Decision 22: Output Pipeline Architecture
 
-**Context:** Phase 1-4 had formatting logic scattered across the reporter,
-plugin, and utility files. The format was determined by a combination of
-`consoleOutput`, `consoleStrategy`, and environment detection.
+**Context:** Formatting logic needed clear stage separation with individual
+testability. The format depends on a combination of environment, executor
+role, explicit overrides, and run health.
 
 **Chosen approach:** Five chained Effect services forming a pipeline:
 
@@ -452,11 +428,10 @@ independently testable. The pipeline can be short-circuited (e.g., explicit
 `--format` flag bypasses FormatSelector's automatic selection). New
 formatters can be added without modifying the pipeline services.
 
-### Decision 23: Normalized Project Identity (Phase 5a)
+### Decision 23: Normalized Project Identity
 
 **Context:** Vitest project names can include colons for sub-projects
-(e.g., `"my-app:unit"`, `"my-app:e2e"`). Phase 1-4 treated these as
-opaque strings.
+(e.g., `"my-app:unit"`, `"my-app:e2e"`).
 
 **Chosen approach:** `splitProject()` utility separates the project name
 at the first colon into `project` and `subProject` fields. Both fields
@@ -582,27 +557,21 @@ internal helper.
 
 ### Decision 29: Plugin MCP Server Loader (RETIRED)
 
-> Retired in 2.0 (Phase 6). Superseded by Decision 30 (PM-detect +
-> spawn loader). The previous `file://` dynamic-import + `node_modules`
-> walk is gone -- `vitest-agent-reporter-mcp` is now its own package
-> with its own bin, so the user's package manager can resolve and
-> execute it directly. Original rationale preserved in git history at
-> commit 813eef2.
+> Retired. Superseded by Decision 30 (PM-detect + spawn loader). The
+> previous `file://` dynamic-import + `node_modules` walk is gone --
+> `vitest-agent-reporter-mcp` is now its own package with its own bin,
+> so the user's package manager can resolve and execute it directly.
+> Original rationale preserved in git history at commit 813eef2.
 
-### Decision 30: Plugin MCP Loader as PM-Detect + Spawn (Phase 6)
+### Decision 30: Plugin MCP Loader as PM-Detect + Spawn
 
-**Context:** Decision 29's loader (`file://` dynamic import of the
-package's `./mcp` export, after walking the user's `node_modules`)
-worked but it was fragile in three specific ways: (a) it depended on
-the published package declaring an exact `./mcp` export with `import`
-condition compatible with Node's strict-exports rules; (b) it
-duplicated Node's resolution algorithm, which meant any deviation in
-install layout (yarn berry PnP, custom store directories) broke it;
-(c) when it failed, the error surfaced as "couldn't find ./mcp
-export" rather than the actual problem ("the package isn't
-installed"). The 2.0 package split also retired the `./mcp` subpath
-export from the reporter package -- the MCP server is now its own
-package with its own bin, so the workaround is no longer needed.
+**Context:** A `file://` dynamic-import + `node_modules` walk approach
+was fragile: it depended on an exact `./mcp` subpath export, duplicated
+Node's resolution algorithm (breaking under yarn berry PnP and custom
+store directories), and surfaced errors as "couldn't find ./mcp export"
+rather than "the package isn't installed". The four-package split retired
+the `./mcp` subpath export -- the MCP server is now its own package with
+its own bin.
 
 **Chosen approach:** rewrite `plugin/bin/mcp-server.mjs` body as a
 zero-deps PM-detect + spawn script:
@@ -664,22 +633,16 @@ project root the loader resolved.
   yarn berry strict, bun varies). The README documents this so
   install UX surprises are mitigated
 
-### Decision 31: Deterministic XDG Path Resolution (Phase 6)
+### Decision 31: Deterministic XDG Path Resolution
 
-**Context:** The 1.x `resolveDbPath` was an artifact-probing resolver
-that walked
-`node_modules/.vite/vitest/<hash>/.../vitest-agent-reporter/data.db`
-to find an existing database. This was the root cause of
-[issue #39](https://github.com/spencerbeggs/vitest-agent-reporter/issues/39):
-on a fresh project where the DB didn't exist yet, the resolver fell back
-to a literal path that often disagreed with where Vitest later
-created it. The MCP server baked the wrong path into `McpLive` at
-startup, so every query tool errored with "Cannot open database
-because the directory does not exist" until the user reconnected MCP.
-The 1.3.1 anchor fix (Decision 28's neighbor) was incomplete; the
-real bug was treating the path as a function of the filesystem (does
-this artifact exist?) rather than a function of identity (which
-workspace is this?).
+**Context:** The prior `resolveDbPath` was an artifact-probing resolver
+that walked `node_modules/.vite/vitest/<hash>/.../data.db` to find an
+existing database. On a fresh project the resolver fell back to a literal
+path that disagreed with where data was actually written, causing the MCP
+server to error on every query tool until the user reconnected. The root
+bug was treating the path as a function of the filesystem (does this
+artifact exist?) rather than a function of identity (which workspace is
+this?).
 
 **Chosen approach:** the data path is now a deterministic function
 of the workspace's identity, derived from XDG env vars and the
@@ -730,10 +693,9 @@ for the full precedence table.
 The default config (no TOML override, no workspace `name`) raises
 `WorkspaceRootNotFoundError` instead of falling back to a path hash.
 Silent fallbacks make the DB location depend on filesystem layout
-instead of identity, which is the bug class 2.0 leaves behind.
-Anyone hitting this error has a one-line fix (set `projectKey` in
-the config TOML or add `name` to their root `package.json`) and
-gains the benefits above for free.
+instead of identity. Anyone hitting this error has a one-line fix (set
+`projectKey` in the config TOML or add `name` to their root
+`package.json`) and gains the benefits above for free.
 
 **Why a TOML config file (vs JSON or .json5):**
 
@@ -755,23 +717,23 @@ gains the benefits above for free.
   behavior. Path-hashing avoids collisions but loses worktree
   consistency, disk-move resilience, and human readability -- we
   chose collision-with-escape-hatch over hashing
-- Three new external dependencies (`xdg-effect`,
-  `config-file-effect`, `workspaces-effect`). All three are
-  spencerbeggs-published Effect-native libraries; the alternative
-  was inlining ~500 LOC of XDG + TOML + workspace-discovery logic
-  per the issue plan, which was rejected as undermaintainable
-- Existing 1.x users lose history on first 2.0 run. Documented as a
-  breaking change in the changeset; no migration code (the new
+- Three external dependencies (`xdg-effect`, `config-file-effect`,
+  `workspaces-effect`). All three are spencerbeggs-published
+  Effect-native libraries; the alternative was inlining ~500 LOC of
+  XDG + TOML + workspace-discovery logic, which was rejected as
+  undermaintainable
+- Users on the prior 1.x path lose history on first 2.0 run.
+  Documented as a breaking change; no migration code (the new
   location is determined a priori, the old location was probed at
-  runtime, so a one-time copy isn't even straightforward)
+  runtime, so a one-time copy is not straightforward)
 
 ### Decision 32: Keep `ensureMigrated` Instead of `xdg-effect`'s `SqliteState.Live`
 
 **Context:** `xdg-effect` ships a `SqliteState.Live` that combines an
-XDG-resolved path, a SQLite client, and a migrator into a single
-layer. The 2.0 plan flagged it as a candidate to replace our
-`SqliteClient` + `SqliteMigrator` + `ensureMigrated` triplet -- one
-fewer dependency to maintain. The investigation went the other way.
+XDG-resolved path, a SQLite client, and a migrator into a single layer.
+It was evaluated as a candidate to replace the `SqliteClient` +
+`SqliteMigrator` + `ensureMigrated` triplet. The investigation went the
+other way.
 
 **Decision:** keep `ensureMigrated` and our existing migrator setup.
 Don't adopt `SqliteState.Live`.
@@ -802,9 +764,8 @@ Don't adopt `SqliteState.Live`.
   and we can always swap later if `SqliteState.Live` grows
   process-level coordination
 
-This decision resolves the open question raised in the 2.0 plan
-under "Open Implementation Questions". Decision 28 remains in force
-as the canonical fix for the SQLITE_BUSY race.
+Decision 28 remains in force as the canonical fix for the SQLITE_BUSY
+race.
 
 ### Decision 33: Four-Package Split
 
@@ -868,13 +829,10 @@ while giving us independent versioning at the npm layer.
 
 **Why "shared" (not "schema") for the base package name:**
 
-The package was originally drafted as `vitest-agent-reporter-schema`
-to emphasize the Effect Schema role. As Phase 6 progressed it became
-clear the package owns much more than schemas -- services, layers,
-formatters, utilities, errors, migrations, the entire XDG path
-stack. The rename to `vitest-agent-reporter-shared` (commit 1f2eaa5)
-better reflects the actual role: anything depended on by more than
-one runtime package.
+The name `vitest-agent-reporter-shared` reflects the actual role:
+anything depended on by more than one runtime package. The package owns
+not only schemas but also services, layers, formatters, utilities,
+errors, migrations, and the entire XDG path stack.
 
 **Trade-offs:**
 
@@ -887,15 +845,14 @@ one runtime package.
   `from "vitest-agent-reporter-shared"` instead of
   `from "vitest-agent-reporter"`. Documented as a breaking change
 
-### Decision D9: Last Drop-and-Recreate Migration (2.0.0-α)
+### Decision D9: Last Drop-and-Recreate Migration
 
-**Context:** The 2.0.0-α schema rewrite (`0002_comprehensive`) adds
-15 new tables, augments `test_errors`/`stack_frames` with new
-columns, and replaces `notes_fts` with corrected triggers. Two
-choices: (a) a single drop-and-recreate that reinitializes the
-entire schema, or (b) a sequence of `CREATE TABLE` /
-`ALTER TABLE` / `DROP TRIGGER` migrations that preserve 1.x data
-in place.
+**Context:** The `0002_comprehensive` schema rewrite adds 15 new tables,
+augments `test_errors`/`stack_frames` with new columns, and replaces
+`notes_fts` with corrected triggers. Two choices: (a) a single
+drop-and-recreate that reinitializes the entire schema, or (b) a
+sequence of `CREATE TABLE` / `ALTER TABLE` / `DROP TRIGGER` migrations
+that preserve prior data in place.
 
 **Decision:** ship `0002_comprehensive` as a drop-and-recreate.
 After this migration, **no future migration is allowed to drop and
@@ -903,32 +860,26 @@ recreate**. 2.0.x and beyond are ALTER-only; for any breaking
 schema shape that ALTER cannot express, ship a one-shot
 export/import path on a major bump rather than dropping data.
 
-**Why drop-and-recreate now:**
+**Why drop-and-recreate for `0002`:**
 
-- 1.x data is already gone for the average user: 2.0.0 changed the
-  DB location from `node_modules/.vite/.../data.db` to the XDG
-  workspace-keyed path (Decision 31, intentionally no-migration).
-  Anyone upgrading 1.x → 2.0 already lost their history. Adding a
-  preserving 1.x → 2.0.0-α migration on top would only help users
-  who were already on a 2.0 alpha and accumulated some history
-  there, which is a small population
-- The schema diff is large. Writing per-column ALTER scripts for
-  every 1.x table to add the 2.0.0-α shape (notably the
-  `test_errors.signature_hash` FK requiring `failure_signatures`
-  to exist first, the `stack_frames` source-map columns, the
-  trigger rewrite for `notes_fts`) and then verifying the result
-  matches a fresh `CREATE TABLE` is a meaningful amount of test
-  code for marginal value
-- The drop ordering itself is the cost we're paying once: drop
-  children before parents, drop FTS triggers *before*
-  `notes`/`notes_fts` so cascading triggers don't fire against an
-  already-dropped virtual table. That code stays in
+- Prior data was already lost when the DB location changed from
+  `node_modules/.vite/.../data.db` to the XDG workspace-keyed path
+  (Decision 31, intentionally no-migration). Adding a preserving
+  migration would only help a small pre-release audience
+- The schema diff is large. Writing per-column ALTER scripts to add
+  the new shape (notably the `test_errors.signature_hash` FK requiring
+  `failure_signatures` to exist first, the `stack_frames` source-map
+  columns, the trigger rewrite for `notes_fts`) is a meaningful amount
+  of test code for marginal value
+- The drop ordering is paid once: drop children before parents, drop
+  FTS triggers before `notes`/`notes_fts` so cascading triggers don't
+  fire against an already-dropped virtual table. That code stays in
   `0002_comprehensive` forever; we don't pay it again
 
 **Why ALTER-only forever after:**
 
 - Drop-and-recreate is never a free choice once users have data in
-  the schema. Every drop-and-recreate after 2.0.0-α would be data
+  the schema. Every subsequent drop-and-recreate would be data
   loss for users on whatever the current minor was. Calling out
   "this is the last one" in the design contract makes the
   no-data-loss invariant enforceable in code review
@@ -940,18 +891,15 @@ export/import path on a major bump rather than dropping data.
 
 **Trade-offs:**
 
-- Anyone running a 2.0 alpha before 2.0.0-α loses their accumulated
-  alpha data. Acceptable given the alpha audience and the upside
-  of not maintaining a parallel ALTER path
+- Pre-release users with accumulated data lose it. Acceptable given the
+  upside of not maintaining a parallel ALTER path
 - Future major bumps that need a non-ALTER shape change require an
-  export/import script in shared; we don't have one yet, but we
-  haven't needed one yet either. The cost is deferred
-- The drop section in `0002_comprehensive` is forever: it's the
-  schema's "this is what 1.x looked like" archaeological record.
-  This is fine -- migrations are append-only and the drops are
+  export/import script in shared; the cost is deferred until needed
+- The drop section in `0002_comprehensive` is a permanent archaeological
+  record. This is fine -- migrations are append-only and the drops are
   bounded in size
 
-### Decision D10: Stable Failure Signatures via AST Function Boundary (2.0.0-α)
+### Decision D10: Stable Failure Signatures via AST Function Boundary
 
 **Context:** Failures need a stable identity that lets us
 deduplicate "the same failure across different test runs," count
@@ -1013,37 +961,23 @@ even the raw line is unknown, falls back to `raw:?`, which means
 all such failures collapse to one signature -- intentional, since
 we have no better discriminator.
 
-**Why acorn (vs other parsers) for the alpha:**
+**Why acorn:**
 
-- Zero-deps on the parser side; acorn is `^8.16.0` and well-
-  maintained
-- Returns AST nodes with `loc` data when `locations: true` is
-  passed, which is exactly the data we need
-- Throws cleanly on syntax errors so we can fall through to the
-  bucket fallback rather than blowing up the reporter
-- Smallest viable parser to land the schema + utility scaffolding;
-  swapping in TypeScript support is a one-line parser change later
-
-**TypeScript limitation (load-bearing for stable):**
-
-Acorn is a JavaScript-only parser. Vitest stack frames source-map
-back to the original `.ts` files, so `findFunctionBoundary` is
-called against TypeScript source in practice and throws on every
-type annotation, generic, decorator, or `as` cast. The catch
-falls through to the `raw:<bucket>` coordinate, so the alpha
-ships with `function_boundary_line` always NULL for TS projects --
-functional but ~10-line granularity instead of function-stable.
-Adding TS support (`acorn-typescript` plugin or
-`@typescript-eslint/typescript-estree`) is **deferred to Phase β**
-and bundled with the reporter wiring that subscribes failure-
-signature writes; that's when the granularity gap shifts from
-"polish" to "load-bearing for the headline metric."
+- Zero-deps on the parser side; acorn is `^8.16.0` and well-maintained
+- Returns AST nodes with `loc` data when `locations: true` is passed,
+  which is exactly the data we need
+- Throws cleanly on syntax errors so we can fall through to the bucket
+  fallback rather than blowing up the reporter
+- Extended with `acorn-typescript` (`^1.4.13`) via
+  `Parser.extend(tsPlugin())` so TypeScript sources with type
+  annotations, generics, decorators, and `as` casts parse without
+  throwing -- `function_boundary_line` is stable for TS projects
 
 **Trade-offs:**
 
-- New runtime dependency on `acorn` in shared (`^8.16.0`), with
-  matching `@types/acorn ^6.0.4` devDep. Acceptable -- acorn is
-  the canonical zero-deps JS parser and is widely audited
+- Runtime dependencies on `acorn ^8.16.0` and
+  `acorn-typescript ^1.4.13` in shared. Acceptable -- acorn is the
+  canonical zero-deps JS parser and is widely audited
 - Re-parsing source on every signature computation is moderately
   expensive (microseconds per parse). The reporter only hashes
   failure signatures, not every assertion, so the cost is bounded
@@ -1055,17 +989,15 @@ signature writes; that's when the granularity gap shifts from
   failures inside it. Considered acceptable -- those failures
   *are* structurally different post-refactor
 
-### Decision D11: TDD Phase-Transition Evidence Binding (2.0.0-α)
+### Decision D11: TDD Phase-Transition Evidence Binding
 
-**Context:** The TDD orchestrator subagent (out of scope on the
-2.0.0-α schema branch -- a later phase) needs to validate that an
-agent's request to transition between TDD phases (e.g.
-`red → green`) is backed by real evidence: a recent test failure
-for `red → green`, a recent test pass for `green → refactor`, etc.
-Without binding rules, an agent could cite *any* failing test
-from history to claim "the current behavior is in red," skipping
-the actual TDD discipline of writing a new failing test for the
-goal at hand.
+**Context:** The TDD orchestrator subagent needs to validate that an
+agent's request to transition between TDD phases (e.g. `red → green`) is
+backed by real evidence: a recent test failure for `red → green`, a
+recent test pass for `green → refactor`, etc. Without binding rules, an
+agent could cite *any* failing test from history to claim "the current
+behavior is in red," skipping the actual TDD discipline of writing a new
+failing test for the goal at hand.
 
 **Decision:** evidence binding is encoded in three rules,
 enforced by the pure `validatePhaseTransition` function in
@@ -1140,16 +1072,14 @@ currently raise it.
   `DenialReason` and a new branch in the function -- no schema
   change. Easy to evolve
 
-### β-N1: `FailureSignatureWriteInput` vs `FailureSignatureInput` (2.0.0-β)
+### Note N6: `FailureSignatureWriteInput` vs `FailureSignatureInput`
 
-**Context:** β added `DataStore.writeFailureSignature` so the
-reporter could persist computed failure signatures. The natural
-input name is `FailureSignatureInput`, but α already exported a
-type by that name from
-`packages/shared/src/utils/failure-signature.ts` -- the
-**compute-time** input to `computeFailureSignature` (the
-un-hashed `error_name` / `assertion_message` / `top_frame_*`
-fields that get hashed *into* the signature).
+**Context:** `DataStore.writeFailureSignature` persists computed failure
+signatures. The natural input name is `FailureSignatureInput`, but that
+name is already taken by `packages/shared/src/utils/failure-signature.ts`
+-- the **compute-time** input to `computeFailureSignature` (the un-hashed
+`error_name` / `assertion_message` / `top_frame_*` fields that get hashed
+*into* the signature).
 
 **Decision:** call the new persistence-time input
 `FailureSignatureWriteInput`. Keep the existing `FailureSignatureInput`
@@ -1158,12 +1088,11 @@ exported from each module.
 
 **Why this naming over the alternatives:**
 
-- **Renaming the α type** (e.g., to `FailureSignatureComputeInput`):
-  invasive (rewrites a public type that's already shipped in 2.0.0-α
-  test fixtures and any external schema-doc consumers). The
-  compute-time input is the older, simpler one -- the `Compute`
-  qualifier is implicit, the name was fine in isolation. Changing
-  it for the sake of namespace neatness is the wrong direction
+- **Renaming the compute-time type** (e.g., to
+  `FailureSignatureComputeInput`): invasive and the compute-time input
+  is the older, simpler one -- the `Compute` qualifier is implicit, the
+  name was fine in isolation. Changing it for namespace neatness is the
+  wrong direction
 - **Sharing the name** (overload `FailureSignatureInput`): would
   require a single union type covering both shapes, which makes
   every consumer pattern-match between the two cases. The shapes
@@ -1178,283 +1107,140 @@ exported from each module.
   the compute-time input doesn't
 
 **Trade-off:** the asymmetry (compute side has no `Compute`
-qualifier, write side has `Write`) is mild but real. It's the cost
-of keeping the α public surface stable. We accept it because the
-two inputs live in different files (`utils/` vs `services/`), so
-local readers see only one at a time and the asymmetry isn't load-
-bearing in any single context.
+qualifier, write side has `Write`) is mild but real. We accept it
+because the two inputs live in different files (`utils/` vs
+`services/`), so local readers see only one at a time and the
+asymmetry isn't load-bearing in any single context.
 
-### β-N2: Defer the spawnSync E2E Test Against the Built Bin (2.0.0-β)
+### Note N7: spawnSync E2E Test Gap
 
-**Context:** the β plan included an end-to-end test that would
-build the CLI bin to disk, spawn it via `spawnSync` against a
-clean test database, drive a full record-flow (session-start ->
-several turns -> session-end), then read back via DataReader and
-assert the rows landed correctly. Task 30 of the β plan.
+**Context:** An end-to-end test that builds the CLI bin to disk and spawns
+it via `spawnSync` against a clean test database (session-start -> several
+turns -> session-end -> DataReader assertions) was scoped and deferred.
 
-**Decision:** defer the e2e test to a later phase. β ships
-without it; the unit tests for `parseAndValidateTurnPayload`,
-`recordTurnEffect`, `recordSessionStart`, and `recordSessionEnd`
-already exercise the lib functions against an in-memory SqliteClient.
+**Decision:** skip the spawnSync e2e test. The unit tests for
+`parseAndValidateTurnPayload`, `recordTurnEffect`, `recordSessionStart`, and
+`recordSessionEnd` exercise the lib functions against an in-memory
+SqliteClient. The bin's wiring is thin (`bin.ts` resolves `dbPath`, builds
+`CliLive`, and hands the `Command.run` effect to the `@effect/cli` runtime).
 
-**Why defer:**
+**Why acceptable:** The build-and-spawn loop adds the rslib production
+build to the critical path of `pnpm test` and brings up a fresh Node
+process per test case. The hook scripts -- the CLI's actual real-world
+callers -- exercise the bin via the hook driver, which is a more realistic
+e2e. The `@effect/cli` command tree breaking silently is the main risk;
+manual smoke testing through hook scripts catches command-tree wiring.
 
-- The bin's wiring is thin. `bin.ts` resolves `dbPath`, builds
-  `CliLive`, and hands the `Command.run` effect to the
-  `@effect/cli` runtime. The lib functions (covered by unit
-  tests) carry the actual semantics. The bin's only unique
-  surface is "does the @effect/cli command tree wire up
-  correctly?" -- a question the framework's own integration
-  tests answer
-- The build-and-spawn loop is slow. Running it on every test
-  invocation adds the rslib production build to the critical
-  path of `pnpm test`, and the spawn brings up a fresh Node
-  process per test case. The cost-benefit ratio is poor for
-  what the test would prove
-- The hook scripts (which are the CLI's actual real-world
-  callers) shell out to the bin themselves. When we get to RC's
-  hook integration tests, those will exercise the bin via the
-  hook driver -- a more realistic e2e that subsumes Task 30
+### Note N1: tRPC idempotency middleware persist-failure handling
 
-**Trade-off:** if the `@effect/cli` command tree breaks (e.g., a
-subcommand silently dropping its options binding) we won't catch
-it via tests. Mitigation: the unit tests for the lib functions
-prove the side effects work given correct inputs; manual smoke
-testing of the bin through the hook scripts catches the
-command-tree wiring. We accept this gap until the RC hook tests
-land.
+The `hypothesis_record` and `hypothesis_validate` MCP mutation tools are
+wrapped by the tRPC idempotency middleware. The middleware **swallows**
+persist errors rather than surfacing them as tool errors.
 
----
+**Why swallow:** The procedure already succeeded. Surfacing a cache-write
+failure as a tool error inverts the success/failure signal: the agent sees
+"error" and retries, but the underlying write already succeeded, creating a
+duplicate. Worst case after a swallowed persist failure: the next call
+re-runs `next()` -- mild data hygiene cost (possibly two rows), no
+correctness issue. The composite PK on `mcp_idempotent_responses` is
+`(procedure_path, key)` with `INSERT ... ON CONFLICT DO NOTHING`, so a
+parallel insert race resolves to a no-op regardless.
 
-## Phase 9 / RC notes
+**Trade-off:** a permanently broken DataStore.write path means the cache
+row never lands and every call re-runs `next()`. Acceptable: the
+underlying procedure absorbs the cost gracefully.
 
-RC introduces no new numbered architectural decisions. Each of
-the W3/W5/W6 workstreams plus the W4 cheap wins is a direct
-integration of α primitives or β record paths -- the choices are
-downstream of D9 (last drop-and-recreate), D10 (failure
-signatures), and D11 (TDD evidence binding), all of which RC
-respects. The notes below capture two patterns worth recording
-explicitly so future readers don't re-derive them.
+### Note N2: `tdd_phase_transition_request` is NOT in the idempotency-key registry
 
-### Note RC-N1: tRPC idempotency middleware persist-failure handling
+The five idempotency-registered mutation tools are `hypothesis_record`,
+`hypothesis_validate`, `tdd_session_start`, `tdd_session_end`, and
+`decompose_goal_into_behaviors`. `tdd_phase_transition_request` is
+intentionally excluded.
 
-**Context:** the W6 hypothesis MCP write tools
-(`hypothesis_record`, `hypothesis_validate`) need to be safe
-against duplicate calls. The natural pattern is "check cache,
-otherwise run + persist" -- but the persist step itself can
-fail (transient SQLITE_BUSY, disk full, FK violation in a
-parallel migration window). Two flavors of failure mode are
-possible: a transient failure that fails the write but lets
-the next call succeed, or a persistent failure that rejects
-both writes. We need to pick a behavior on persist failure.
+**Why excluded:** The accept/deny is a deterministic function of
+artifact-log state at the moment of the request. Identical inputs at
+different times can legitimately produce different results (e.g., at T0 a
+transition is denied because the test was already failing on main; at T1
+the agent records a new failing test and the same transition is accepted).
+Caching the T0 deny would replay it against the changed state at T1 --
+which is wrong.
 
-**Decision:** the middleware **swallows** persist errors
-rather than surfacing them as tool errors. The flow is:
-
-1. `DataReader.findIdempotentResponse(path, key)` -> if cached,
-   return cached result with `_idempotentReplay: true`
-2. Otherwise `next()` (the inner procedure body, which writes
-   to the DataStore via `writeHypothesis`/`validateHypothesis`)
-3. After `next()` resolves: best-effort
-   `DataStore.recordIdempotentResponse(...)`. If this throws,
-   log it but **do not propagate** -- the procedure result is
-   still returned to the agent successfully
-
-**Why swallow:**
-
-- The procedure already succeeded. The agent's request was
-  honored. Surfacing a cache-write failure as a tool error
-  inverts the success/failure signal: the agent sees "error"
-  and retries, but the underlying write already succeeded, so
-  the retry now writes a duplicate hypothesis row. This is the
-  opposite of what idempotency is supposed to give us
-- Worst case after a swallowed persist failure: the next call
-  with the same key runs `next()` again instead of replaying.
-  Since `next()` itself is idempotent at the database layer
-  (e.g., `writeHypothesis` is just an `INSERT`; a duplicate
-  insert is benign because hypotheses don't enforce content
-  uniqueness, and the tool call's intent is to record the
-  hypothesis), the worst-case outcome is "two rows instead of
-  one" -- mild data hygiene cost, no correctness issue
-- The composite PK on `mcp_idempotent_responses` is
-  `(procedure_path, key)` with `INSERT ... ON CONFLICT DO
-  NOTHING`, so a parallel insert race resolves to a no-op.
-  Persistence is naturally retry-safe; we don't need to retry
-  here, just let the next call try again
-
-**Trade-off:** a permanently broken DataStore.write path
-(persistent SQLITE_BUSY, disk full, etc.) means the cache row
-never lands and every call re-runs `next()`. Acceptable: the
-underlying procedure already absorbs the cost gracefully, and
-the user's environment has bigger problems than idempotency at
-that point.
-
-### Note RC-N2: 0003 is additive and D9 stays intact
-
-The 2.0.0-RC migration `0003_idempotent_responses` is a single
-`CREATE TABLE` statement with no DROP. Per Decision D9 (the
-last drop-and-recreate), every migration after `0002` must be
-ALTER-only (or `CREATE TABLE` with no destructive component).
-0003 is the first migration to honor this contract. Future RC+
-migrations follow the same rule -- if a future change cannot
-be expressed without dropping data, it ships an
-export/import path on a major bump rather than silently
-dropping. D9 is not relaxed for RC.
-
----
-
-## Phase 10 / final notes
-
-The 2.0.0 stable / final release lands the TDD orchestrator
-subagent (W2), the W4 cheap wins (`ci-annotations` formatter,
-OSC-8 hyperlinks, `commit_changes` MCP tool), the W6 TDD
-lifecycle MCP write tools, and the anti-pattern detection hooks.
-**No new architectural decisions** are introduced. Everything
-in final is downstream of D1–D11 from earlier phases. The notes
-below capture three patterns worth recording explicitly so
-future readers don't re-derive them.
-
-### Note final-N1: `tdd_phase_transition_request` is NOT in the idempotency-key registry
-
-The W6 hypothesis MCP write tools (`hypothesis_record`,
-`hypothesis_validate`) opt into the tRPC idempotency middleware
-because they're "write the same content / outcome twice and
-expect the same answer" mutations. The four other final
-mutations -- `tdd_session_start`, `tdd_session_end`,
-`decompose_goal_into_behaviors`, and
-`tdd_phase_transition_request` -- have to be considered one at a
-time: do their accept/deny semantics make sense to replay from
-cache, or are they functions of mutable state that change
-between calls?
-
-**Decision:** `tdd_session_start`, `tdd_session_end`, and
-`decompose_goal_into_behaviors` go into `idempotencyKeys` (5
-entries total at final). `tdd_phase_transition_request` does
-**not**.
-
-**Why `tdd_phase_transition_request` stays out:**
-
-- The accept/deny is a deterministic function of artifact-log
-  state at the moment of the request. The validator
-  (`validatePhaseTransition`) checks: does the cited artifact
-  exist in the current phase window? Was the test authored in
-  this session? Was it already failing on main? Each of these
-  is a fact about the database **right now**
-- Identical inputs at different times can legitimately produce
-  different results. Example: at T0 the agent calls
-  `red → green` citing test artifact #42, the validator denies
-  (test was already failing on main). The agent records a new
-  failing test, gets a fresh artifact #43, and at T1 calls
-  `red → green` citing #43 -- which is now valid. If we'd
-  cached the T0 deny under the input-derived key, the T1 call
-  would replay the deny even though the underlying state
-  changed. That's wrong
-- The validator is itself the source of idempotency: it's a
-  pure function of the database state plus the cited artifact
-  id. If the agent really does retry an identical call (same
-  cited artifact) before any state change, the validator
-  produces the same answer naturally -- no caching needed
-- The cache writes to `mcp_idempotent_responses` would also
-  pollute the table with results that are only valid at one
-  moment in time, making future cache misses harder to reason
-  about
+The validator is itself the source of idempotency: it's a pure function of
+database state plus the cited artifact id. If the agent retries an
+identical call before any state change, the validator produces the same
+answer naturally without caching.
 
 **Why the other three mutations get cached:**
 
-- `tdd_session_start` -- key is `${sessionId}:${goal}`. Opening
-  the same TDD session twice with the same goal under the
-  same parent session is a no-op the agent shouldn't have to
-  think about. Replay returns the existing tdd_session id
-- `tdd_session_end` -- key is `${tddSessionId}:${outcome}`.
-  Closing the same session with the same outcome twice is a
-  no-op
-- `decompose_goal_into_behaviors` -- key is
-  `${tddSessionId}:${goal}`. Re-decomposing the same goal
-  produces the same set of behaviors (the heuristic is
-  deterministic on the input string), so caching is fine
+- `tdd_session_start` (key: `${sessionId}:${goal}`) -- opening the same
+  session twice is a no-op
+- `tdd_session_end` (key: `${tddSessionId}:${outcome}`) -- closing the
+  same session twice is a no-op
+- `decompose_goal_into_behaviors` (key: `${tddSessionId}:${goal}`) --
+  the heuristic is deterministic on the input string
 
-The pattern: idempotency replay is appropriate when the call's
-result is a function of its inputs alone. It's inappropriate
-when the call's result depends on mutable database state that
-the agent might be racing against (or that other agents,
-hooks, or the human operator might have changed between
-calls). `tdd_phase_transition_request` is naturally idempotent
-against stable state and intentionally non-idempotent against
-changing state -- exactly the property the validator was
-designed to enforce.
+### Note N3: D7 load-bearing constraint -- `tdd_artifact_record` is CLI-only
 
-### Note final-N2: 0004 is additive ALTER-only and D9 stays intact
-
-The 2.0.0 final migration `0004_test_cases_created_turn_id` is
-a single `ALTER TABLE test_cases ADD COLUMN created_turn_id
-INTEGER REFERENCES turns(id) ON DELETE SET NULL` plus a
-supporting index. No `CREATE TABLE`, no `DROP`. Per Decision
-D9 (the last drop-and-recreate was `0002`), every migration
-after `0002` must be ALTER-only or additive `CREATE TABLE`
-with no destructive component. `0003` honored that rule with
-`CREATE TABLE mcp_idempotent_responses`. `0004` is the first
-migration to be a pure `ALTER TABLE`, which is the most
-restrictive form of additive migration and the canonical
-shape D9 anticipates for the long tail. Tables count is
-unchanged at 41. D9 is not relaxed for final, and the
-"export/import on a major bump" escape hatch remains the only
-way out for any future shape change ALTER cannot express.
-
-The new column is required by D2 binding rule 1 (the
-validator joins through `test_cases.created_turn_id` to
-resolve `test_case_created_turn_at` and
-`test_case_authored_in_session`). Without the column, rule 1
-can't be enforced, and the validator would have to fall back
-to coarser heuristics that defeat the point of evidence
-binding. The column being on `test_cases` rather than `turns`
-or `test_runs` is also load-bearing: it's what the test was
-created **by**, which is the spatial coordinate the rule
-binds to.
-
-### Note final-N3: D7 stays load-bearing for `tdd_artifact_record` (CLI-only)
-
-The four write-side TDD lifecycle MCP tools that ship in final
-(`tdd_session_start`, `tdd_session_end`,
+TDD lifecycle write tools (`tdd_session_start`, `tdd_session_end`,
 `tdd_session_resume`, `decompose_goal_into_behaviors`,
-`tdd_phase_transition_request`) are accessible to the
-orchestrator subagent via the MCP tool surface. The fifth
-write -- recording an artifact under a phase
-(`tdd_artifacts.artifact_kind`) -- is **deliberately not**
-exposed as an MCP tool. It's only writable through the
-`record tdd-artifact` CLI subcommand, which itself is only
-called from plugin hooks (`post-tool-use-tdd-artifact.sh` and
+`tdd_phase_transition_request`) are accessible to the orchestrator via
+the MCP tool surface. Recording an artifact under a phase
+(`tdd_artifacts.artifact_kind`) is **deliberately not** an MCP tool. It
+is only writable through the `record tdd-artifact` CLI subcommand, driven
+by hooks (`post-tool-use-tdd-artifact.sh` and
 `post-tool-use-test-quality.sh`).
 
-This is Decision D7 (originally in α, restated here for final
-as a load-bearing constraint): hooks observe what the agent
-did so the agent never writes evidence about itself.
+This is Decision D7: hooks observe what the agent did so the agent never
+writes evidence about itself.
 
-**Why D7 matters specifically for final:**
+**Why load-bearing:** The anti-pattern detection scheme depends on
+`tdd_artifacts(kind='test_weakened')` rows being credible. If the agent
+could write its own artifacts, it could (or simply forget to) omit them --
+and the metric collapses. The evidence-binding validator depends on
+artifacts being timestamped at the moment the side effect happened. The
+orchestrator's `tools:` array intentionally excludes any artifact-write
+tool; the subagent has no Bash tool in scope and there is no MCP wrapper.
 
-- The W2 anti-pattern detection scheme depends on
-  `tdd_artifacts(kind='test_weakened')` rows being credible.
-  If the agent could write its own `test_weakened` artifacts,
-  the agent would have an incentive (or just an oversight) to
-  not record them -- and the metric collapses
-- The D2 evidence-binding validator depends on artifacts
-  being timestamped at the moment the side effect happened
-  (the test-run finishing, the file edit landing). The agent
-  reporting "yes, I just wrote a test" is a worse signal than
-  the hook observing "Edit tool just modified a `.test.ts`
-  file"
-- The orchestrator agent definition's `tools:` array
-  intentionally doesn't include any artifact-write tool. This
-  is enforced at the agent-frontmatter level, not just by
-  convention -- the subagent literally cannot call
-  `record tdd-artifact` directly because it has no Bash tool
-  in scope, and there's no MCP wrapper
+### Note N4: `writeTurn` fans out to `tool_invocations` and `file_edits`
 
-D7 stays load-bearing because removing it (i.e. shipping a
-`tdd_artifact_record` MCP write tool later) would invalidate
-the evidence-binding contract. If a future phase wants the
-agent to record artifacts, the right shape is a separate hook
-that the agent's tool calls trigger, not a direct write
-endpoint.
+`DataStore.writeTurn` wraps its inserts in `sql.withTransaction(...)` and
+fans out for two of the seven payload discriminators:
+
+- `file_edit` payloads -> one `file_edits` row per turn. `file_id`
+  resolved via `ensureFile(payload.file_path)`; `edit_kind`,
+  `lines_added`, `lines_removed`, and `diff` carried verbatim
+- `tool_result` payloads -> one `tool_invocations` row per turn.
+  `tool_name`, `result_summary`, `duration_ms`, and `success` carried
+  verbatim. `params_hash` is intentionally **NULL** pending future
+  cross-reference of the matching `tool_call` turn's `tool_input`
+- `tool_call`, `user_prompt`, `hypothesis`, `hook_fire`, `note`
+  payloads -> `turns` insert only
+
+**Why `tool_invocations` is keyed on `tool_result`:** A tool_call without
+a corresponding tool_result is in-flight or failed. Keying on `tool_result`
+gives a "completed invocations" projection without joining two turn rows.
+Consumers needing strict request/response pairing pair via
+`payload.tool_use_id`.
+
+**Why `params_hash` is NULL:** The matching `tool_call` turn was inserted
+earlier and is not in scope when `writeTurn` processes the `tool_result`.
+Leaving it NULL is preferable to inventing a placeholder.
+
+### Note N5: `failure_signatures.last_seen_at` recurrence tracking
+
+`failure_signatures` carries `first_seen_run_id`, `first_seen_at`,
+`occurrence_count`, and `last_seen_at` (nullable).
+`writeFailureSignature` sets `last_seen_at = firstSeenAt` on insert and
+refreshes it via the `ON CONFLICT(signature_hash) DO UPDATE` clause on
+recurrence alongside the `occurrence_count` increment.
+`getFailureSignatureByHash` surfaces `lastSeenAt: string | null`.
+
+**Why nullable (no backfill):** Pre-migration rows have no last-sighting
+timestamp that can be legitimately assigned. Setting it to NULL is honest
+and forces consumers to handle the legacy-data case explicitly. The field
+becomes non-null asymptotically as signatures recur after the migration.
+A backfill would need to traverse all `test_errors` rows -- more expensive
+than the ALTER+index D9 anticipated, and the runtime recovers naturally.
 
 ---
 
@@ -1495,7 +1281,7 @@ endpoint.
 
 ### Pattern: Effect Service / Layer Separation
 
-- **Where used:** All Effect services (Phase 2+)
+- **Where used:** All Effect services
 - **Why used:** Clean separation between service interface (Context.Tag)
   and implementation (Layer). Enables swapping live I/O for test mocks
 - **Implementation:** Service tags in `packages/shared/src/services/`
@@ -1514,7 +1300,7 @@ endpoint.
 
 ### Pattern: ManagedRuntime for Long-Lived Processes
 
-- **Where used:** MCP server (Phase 5c)
+- **Where used:** MCP server
 - **Why used:** The MCP server is a long-running stdio process where
   per-call layer construction would be wasteful
 - **Implementation:** `ManagedRuntime.make(McpLive(dbPath))` creates a
@@ -1533,7 +1319,7 @@ endpoint.
 
 ### Pattern: Pipeline Architecture
 
-- **Where used:** Output pipeline (Phase 5b)
+- **Where used:** Output pipeline
 - **Why used:** Each stage of output determination has a single
   responsibility and is independently testable
 - **Implementation:** Five chained services: detect -> resolve executor ->
@@ -1579,7 +1365,7 @@ endpoint.
   `source_test_map` table supports multiple mapping types for future
   expansion
 
-### Trade-off: Zod Re-introduction for tRPC (Phase 5c)
+### Trade-off: Zod for tRPC
 
 - **What we gained:** tRPC integration with type-safe procedures and
   testable caller factory

@@ -11,7 +11,7 @@ tools.
 
 - **SQLite persistence** -- normalized database replaces JSON files for
   richer queries and cross-run analysis
-- **MCP server** -- 24 tools over stdio for deep integration with LLM
+- **MCP server** -- 41 tools over stdio for deep integration with LLM
   agents (test data, notes, coverage, discovery, run tests)
 - **Claude Code plugin** -- auto-registers MCP tools, injects test
   context at session start, and provides teaching skills
@@ -83,7 +83,7 @@ Install the Claude Code plugin for the full agent experience:
 ```
 
 That's it. The plugin detects whether an agent, CI, or human is running
-tests and adjusts output automatically. Agents get 24 MCP tools for
+tests and adjusts output automatically. Agents get 41 MCP tools for
 querying test data, tracking coverage, and persisting notes -- with no
 manual MCP configuration.
 
@@ -174,7 +174,7 @@ plugin provides the full agent-native experience:
 
 The plugin provides:
 
-- **MCP auto-registration** -- all 24 tools available immediately with
+- **MCP auto-registration** -- all 41 tools available immediately with
   no manual `.mcp.json` configuration
 - **SessionStart hook** -- injects project status and available tools
   into Claude's context at the start of each session
@@ -197,7 +197,7 @@ npx vitest-agent-reporter-mcp
 ```
 
 <details>
-<summary>Full tool reference (24 tools)</summary>
+<summary>Full tool reference (41 tools)</summary>
 
 | Tool | Description |
 | --- | --- |
@@ -209,7 +209,9 @@ npx vitest-agent-reporter-mcp
 | `test_trends` | Per-project coverage trajectory with direction and sparkline |
 | `test_errors` | Detailed test errors with diffs and stack traces |
 | `test_for_file` | Find test modules that cover a given source file |
-| `run_tests` | Execute vitest for specific files or projects |
+| `test_get` | Read a single test case in detail (state, errors, history, classification) |
+| `file_coverage` | Per-file coverage with uncovered line ranges |
+| `run_tests` | Execute vitest for specific files or projects; accepts `format: "markdown" \| "json"` |
 | `cache_health` | Database health diagnostic |
 | `configure` | View captured Vitest settings for a test run |
 | `project_list` | List all projects with latest run summary |
@@ -223,6 +225,23 @@ npx vitest-agent-reporter-mcp
 | `note_update` | Update note content, pin state, or expiration |
 | `note_delete` | Delete a note |
 | `note_search` | Full-text search across note titles and content |
+| `session_list` | List Claude Code sessions with optional project and kind filters |
+| `session_get` | Read a Claude Code session by ID |
+| `turn_search` | Search turn log entries by session, type, or timestamp |
+| `failure_signature_get` | Read a failure signature by hash, with recent matching errors |
+| `tdd_session_get` | Read a TDD session with its phases and artifacts |
+| `hypothesis_list` | List hypotheses with optional session and outcome filters |
+| `acceptance_metrics` | Compute phase-evidence integrity and compliance ratios |
+| `triage_brief` | Orientation summary: recent runs, failures, and triage context |
+| `wrapup_prompt` | Interpretive prompt-injection nudges for wrap-up hooks |
+| `hypothesis_record` | Record a new agent hypothesis with optional evidence FKs |
+| `hypothesis_validate` | Mark a hypothesis as confirmed, refuted, or abandoned |
+| `tdd_session_start` | Open a new TDD session with a goal |
+| `tdd_session_end` | Close a TDD session with an outcome |
+| `tdd_session_resume` | Get a markdown digest of an open TDD session |
+| `decompose_goal_into_behaviors` | Split a TDD goal into ordered atomic behaviors |
+| `tdd_phase_transition_request` | Request a TDD phase transition; validated against evidence artifacts |
+| `commit_changes` | Workspace git commit history joined with per-run changed files |
 
 </details>
 

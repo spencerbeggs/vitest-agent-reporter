@@ -28,13 +28,13 @@ describe("validatePhaseTransition", () => {
 		expect(result.accepted).toBe(true);
 	});
 
-	it("rejects red→green when no test_failed_run artifact provided", () => {
+	it("rejects red→green with wrong_artifact_kind when cited artifact is the wrong kind", () => {
 		const result = validatePhaseTransition(
 			baseCtx({ cited_artifact: { ...baseCtx().cited_artifact, artifact_kind: "test_written" } }),
 		);
 		expect(result.accepted).toBe(false);
 		if (!result.accepted) {
-			expect(result.denialReason).toBe("missing_artifact_evidence");
+			expect(result.denialReason).toBe("wrong_artifact_kind");
 		}
 	});
 
@@ -48,7 +48,31 @@ describe("validatePhaseTransition", () => {
 		);
 	});
 
+	it("accepts red→green when cited artifact has no test_case_id (run-level evidence)", () => {
+		// Reproduces the dogfood bug: post-tool-use-tdd-artifact.sh records a
+		// test_failed_run artifact for a Bash test invocation but does not
+		// resolve a specific test_case_id. The artifact arrives with
+		// test_case_id: null and (because rule 1's session check defaults to
+		// false when no test is cited) test_case_authored_in_session: false.
+		// Rule 1 binds a *test* authoring window — when no specific test is
+		// cited there is nothing to bind, so the validator must skip rule 1.
+		const result = validatePhaseTransition(
+			baseCtx({
+				cited_artifact: {
+					...baseCtx().cited_artifact,
+					test_case_id: null,
+					test_case_created_turn_at: null,
+					test_case_authored_in_session: false,
+				},
+			}),
+		);
+		expect(result.accepted).toBe(true);
+	});
+
 	it("rejects D2 binding rule 1: cited test created before phase start", () => {
+		// Precondition: test_case_id is set (50, from baseCtx), so rule 1 applies.
+		// The phase-window check then trips because created_turn_at predates
+		// phase_started_at.
 		const result = validatePhaseTransition(
 			baseCtx({
 				cited_artifact: {
@@ -62,6 +86,10 @@ describe("validatePhaseTransition", () => {
 	});
 
 	it("rejects D2 binding rule 1: test not authored in this session", () => {
+		// Precondition: test_case_id is set (50, from baseCtx), so rule 1 applies.
+		// The session check then trips because authored_in_session is false. The
+		// null-test_case_id case is handled by the "accepts run-level evidence"
+		// test above — rule 1 is skipped entirely there.
 		const result = validatePhaseTransition(
 			baseCtx({
 				cited_artifact: {

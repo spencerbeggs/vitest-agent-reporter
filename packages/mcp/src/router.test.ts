@@ -641,5 +641,17 @@ describe("MCP Router", () => {
 			expect(r1.behaviors[0]?.id).toBe(r2.behaviors[0]?.id);
 			expect(r2._idempotentReplay).toBe(true);
 		});
+
+		it("treats embedded clarifying commas as a single behavior", async () => {
+			const tddId = await seedTddSession("cc-decompose-comma-clause", "comma-clause-goal");
+			const caller = createTestCaller();
+			const goal = "Add wrong_artifact_kind, distinct from missing_artifact_evidence, to the DenialReason union";
+			const r = (await caller.decompose_goal_into_behaviors({
+				tddSessionId: tddId,
+				goal,
+			})) as { behaviors: Array<{ behavior: string }> };
+			expect(r.behaviors).toHaveLength(1);
+			expect(r.behaviors[0]?.behavior).toBe(goal);
+		});
 	});
 });

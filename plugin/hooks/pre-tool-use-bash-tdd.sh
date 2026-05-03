@@ -12,12 +12,18 @@
 
 set -euo pipefail
 
-read -r hook_json
+# shellcheck source=lib/hook-output.sh
+. "$(dirname "$0")/lib/hook-output.sh"
+
+hook_json=$(cat)
 
 agent_type=$(echo "$hook_json" | jq -r '.agent_type // .matcher.agent_type // ""')
 
 # Only restrict inside the TDD orchestrator.
-if [ "$agent_type" != "tdd-orchestrator" ]; then
+# shellcheck source=lib/match-tdd-agent.sh
+. "$(dirname "$0")/lib/match-tdd-agent.sh"
+if ! is_tdd_orchestrator "$agent_type"; then
+	emit_noop
 	exit 0
 fi
 
@@ -26,7 +32,7 @@ tool_name=$(echo "$hook_json" | jq -r '.tool_name // ""')
 # We only restrict Bash, Edit, Write, MultiEdit.
 case "$tool_name" in
 	Bash|Edit|Write|MultiEdit) ;;
-	*) exit 0 ;;
+	*) emit_noop; exit 0 ;;
 esac
 
 if [ "$tool_name" = "Bash" ]; then
@@ -43,16 +49,58 @@ if [ "$tool_name" = "Bash" ]; then
 	)
 	for pattern in "${forbidden_patterns[@]}"; do
 		if [[ "$command" =~ $pattern ]]; then
-			jq -n --arg p "$pattern" --arg c "$command" '{
-				hookSpecificOutput: {
-					hookEventName: "PreToolUse",
-					permissionDecision: "deny",
-					permissionDecisionReason: "TDD orchestrator may not use \($p) (matched in: \($c)). Run tests via the run_tests MCP tool instead."
-				}
-			}'
+			emit_deny "TDD orchestrator may not use $pattern (matched in: $command). Run tests via the run_tests MCP tool instead."
 			exit 0
 		fi
 	done
+	# Soft nudge: detect Vitest invocations across PM variants and
+	# remind the orchestrator that run_tests is the preferred surface.
+	# Allows the command through; the orchestrator can read the
+	# additionalContext on its next turn and switch tools next time.
+	# Match any of:
+	#   1. Bare `vitest`/`jest` at the start of a command segment
+	#      (start of string, or after `&&`, `||`, `;`, `|`). Anchoring
+	#      avoids false positives like `grep vitest README.md`.
+	#   2. `<pm> [exec/run/x ]<vitest|test>` for the package-manager
+	#      runners npx/pnpx/pnpm/npm/yarn/bun/bunx. The intermediate
+	#      `exec`/`run`/`x` is optional so we catch shorthand forms
+	#      like `pnpm vitest run X` and single-word runners
+	#      (`bunx vitest`, `pnpx vitest`).
+	#   3. Bare bin path `./node_modules/.bin/vitest` (with or without
+	#      the leading `./`).
+	if echo "$command" | grep -E -q '(^|&&[[:space:]]*|\|\|[[:space:]]*|;[[:space:]]*|\|[[:space:]]*)(vitest|jest)([[:space:]]|$)|(^|[[:space:]])(npx|pnpx|pnpm|npm|yarn|bun|bunx)[[:space:]]+(exec[[:space:]]+|run[[:space:]]+|x[[:space:]]+)?(vitest|test)([[:space:]:]|$)|(^|[[:space:]])(\./)?node_modules/\.bin/(vitest|jest)([[:space:]:]|$)'; then
+		nudge=$(cat <<'EOF'
+<run_tests_nudge>
+You are about to run a Vitest invocation via the Bash tool. The
+vitest-agent-reporter plugin exposes a run_tests MCP tool that should
+be your default surface for test execution.
+
+Why run_tests is preferred:
+- It writes test_runs, test_history, and failure_signatures rows that
+  the evidence-based phase-transition validator depends on.
+- The PostToolUse TDD-artifact hook reads its structured response and
+  records test_failed_run / test_passed_run with the right metadata,
+  so your tdd_artifacts citations are well-formed.
+- It returns a structured AgentReport (markdown or JSON) so you do
+  not have to parse raw Vitest output.
+
+Bash vitest is acceptable only when you specifically need a Vitest
+CLI flag run_tests does not expose. The canonical case is
+--coverage for coverage-gap analysis. For ordinary red-green-refactor
+test runs, switch to:
+
+  run_tests({ project: "<name>", files: ["<path>", ...] })
+
+This Bash invocation will run as requested. Treat this nudge as a
+soft prompt: next test run, prefer run_tests unless you genuinely
+need the CLI flag.
+</run_tests_nudge>
+EOF
+		)
+		emit_additional_context "PreToolUse" "$nudge"
+		exit 0
+	fi
+	emit_noop
 	exit 0
 fi
 
@@ -60,18 +108,13 @@ fi
 # the test signal.
 file_path=$(echo "$hook_json" | jq -r '.tool_input.file_path // .tool_input.path // ""')
 if [ -z "$file_path" ]; then
+	emit_noop
 	exit 0
 fi
 
 # Snapshot files
 if [[ "$file_path" =~ \.snap$ ]]; then
-	jq -n --arg f "$file_path" '{
-		hookSpecificOutput: {
-			hookEventName: "PreToolUse",
-			permissionDecision: "deny",
-			permissionDecisionReason: "TDD orchestrator may not edit snapshot files: \($f). Snapshot mutations hide test changes."
-		}
-	}'
+	emit_deny "TDD orchestrator may not edit snapshot files: $file_path. Snapshot mutations hide test changes."
 	exit 0
 fi
 
@@ -80,16 +123,11 @@ case "$file_path" in
 	*vitest.config.*|*vitest.workspace.*|*vite.config.*)
 		new_content=$(echo "$hook_json" | jq -r '.tool_input.content // .tool_input.new_string // ""')
 		if [ -n "$new_content" ] && (echo "$new_content" | grep -E -q 'coverage\.exclude|setupFiles|globalSetup'); then
-			jq -n --arg f "$file_path" '{
-				hookSpecificOutput: {
-					hookEventName: "PreToolUse",
-					permissionDecision: "deny",
-					permissionDecisionReason: "TDD orchestrator may not edit coverage.exclude / setupFiles / globalSetup in \($f). These are signal-suppression vectors."
-				}
-			}'
+			emit_deny "TDD orchestrator may not edit coverage.exclude / setupFiles / globalSetup in $file_path. These are signal-suppression vectors."
 			exit 0
 		fi
 		;;
 esac
 
+emit_noop
 exit 0

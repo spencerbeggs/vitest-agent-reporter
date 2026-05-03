@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { add, fibonacci, multiply } from "./math.js";
+import { add, fibonacci, multiply, subtract } from "./math.js";
 
 describe("math", () => {
 	describe("add", () => {
@@ -23,6 +23,12 @@ describe("math", () => {
 
 		it("multiplies by zero", () => {
 			expect(multiply(5, 0)).toBe(0);
+		});
+	});
+
+	describe("subtract", () => {
+		it("should return the difference of two numbers", () => {
+			expect(subtract(5, 3)).toBe(2);
 		});
 	});
 
