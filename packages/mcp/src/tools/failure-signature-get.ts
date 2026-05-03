@@ -17,6 +17,7 @@ export const failureSignatureGet = publicProcedure
 					`**Hash:** ${sig.signatureHash}`,
 					"",
 					`- first_seen_at: ${sig.firstSeenAt}`,
+					`- last_seen_at: ${sig.lastSeenAt ?? "unknown"}`,
 					`- first_seen_run_id: ${sig.firstSeenRunId ?? "unknown"}`,
 					`- occurrence_count: ${sig.occurrenceCount}`,
 				];

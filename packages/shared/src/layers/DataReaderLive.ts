@@ -1519,7 +1519,7 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 						SELECT t.session_id, ti.tool_name
 						FROM turns t
 						JOIN tool_invocations ti ON ti.turn_id = t.id
-						WHERE t.turn_no <= 3 AND t.type = 'tool_call'
+						WHERE t.turn_no <= 3 AND t.type = 'tool_result'
 					),
 					referenced AS (
 						SELECT DISTINCT ts.session_id
