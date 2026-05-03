@@ -1,5 +1,5 @@
 import { Writable } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
 	coerceErrors,
 	formatReportJson,
@@ -268,6 +268,36 @@ describe("formatReportJson", () => {
 });
 
 describe("withStdioCaptured", () => {
+	// The wrapper falls through to whatever process.stdout.write /
+	// process.stderr.write was at first-patch time. Tests in this block
+	// deliberately write to those streams from outside the AsyncLocalStorage
+	// scope to verify the diversion is scope-local — but those writes would
+	// otherwise leak into the test runner's terminal.
+	//
+	// We swap the originals for silent recorders BEFORE any test triggers
+	// withStdioCaptured (ensureStdioPatched runs lazily on first call),
+	// so when the wrapper captures its fall-through references it captures
+	// the recorders. Real terminal output stays clean.
+	let realStdoutWrite: typeof process.stdout.write;
+	let realStderrWrite: typeof process.stderr.write;
+	const fallThroughChunks: string[] = [];
+
+	beforeAll(() => {
+		realStdoutWrite = process.stdout.write;
+		realStderrWrite = process.stderr.write;
+		const recorder = ((chunk: unknown, ..._rest: unknown[]) => {
+			fallThroughChunks.push(typeof chunk === "string" ? chunk : String(chunk));
+			return true;
+		}) as typeof process.stdout.write;
+		process.stdout.write = recorder;
+		process.stderr.write = recorder;
+	});
+
+	afterAll(() => {
+		process.stdout.write = realStdoutWrite;
+		process.stderr.write = realStderrWrite;
+	});
+
 	const collectInto = () => {
 		const chunks: string[] = [];
 		const sink = new Writable({
