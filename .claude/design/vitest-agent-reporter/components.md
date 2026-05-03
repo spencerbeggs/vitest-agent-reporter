@@ -4,7 +4,7 @@ module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
 updated: 2026-05-03
-last-synced: 2026-04-30
+last-synced: 2026-05-03
 completeness: 100
 related:
   - vitest-agent-reporter/architecture.md
@@ -1228,6 +1228,7 @@ Pure utility functions that don't warrant Effect service wrapping.
 | `failure-signature.ts` | `computeFailureSignature(input)` returns a 16-char `sha256` of `error_name`, normalized assertion shape, top-frame function name, and line coord (joined by a pipe character). `normalizeAssertionShape` strips assertion literals to angle-bracketed type tags (`number`, `string`, `boolean`, `null`, `undefined`, `object`, `expr` — each wrapped in `<` and `>`) so unrelated literal changes don't perturb the signature. The line coord prefers `fb:` followed by the function-boundary line; falls back to `raw:` followed by `floor(line/10)*10` (10-line bucket) when the boundary is unknown, then `raw:?` if no raw line is supplied either |
 | `validate-phase-transition.ts` | Pure `validatePhaseTransition(ctx) => PhaseTransitionResult` encoding the three D2 evidence-binding rules: (1) cited test was authored in the current phase window AND in the current session, (2) the cited artifact's `behavior_id` matches the requested behavior when one is specified, (3) for `red→green` transitions, the cited test wasn't already failing on main (`test_first_failure_run_id === test_run_id`). Enforces the required artifact kind per transition (`red→green` needs `test_failed_run`; `green→refactor` and `refactor→red` need `test_passed_run`); all other transitions are evidence-free and accepted unconditionally (including `spike→red`, the entry point for every TDD cycle). Returns a discriminated union with either `{ accepted: true, phase }` or `{ accepted: false, phase, denialReason, remediation: { suggestedTool, suggestedArgs, humanHint } }`. `DenialReason` is one of `missing_artifact_evidence`, `wrong_source_phase`, `unknown_session`, `session_already_ended`, `goal_not_started`, `refactor_without_passing_run`, `evidence_not_in_phase_window`, `evidence_not_for_behavior`, `evidence_test_was_already_failing` |
 | `hyperlink.ts` | `osc8(url, label, { enabled })` returns a labeled OSC-8 escape sequence (`\x1b]8;;<url>\x1b\\<label>\x1b]8;;\x1b\\`) when enabled, plain text otherwise. Wired into `formatters/markdown.ts` via a regex post-processor that wraps test-file paths in failing-test header lines, gated on `target === "stdout"` AND `!ctx.noColor`. The MCP `triage_brief` and `wrapup_prompt` tools call the `format-triage` / `format-wrapup` shared lib generators directly (not the markdown formatter), so MCP responses never receive OSC-8 codes -- terminal hyperlinks are a CLI-and-stdout-only concern per W4 spec |
+| `session-pointer.ts` | Tiny `node:fs` helpers for the per-workspace pointer file (`current-session-id`) that holds the active Claude Code `cc_session_id`, written next to `data.db` under the same workspace-keyed directory. Exports `SESSION_POINTER_FILENAME` (`"current-session-id"`); `getSessionPointerPath(dataPathOrDir)` accepts either the `<dataDir>/data.db` path returned by `resolveDataPath` or the dir itself and collapses both to `<dataDir>/current-session-id`; `readSessionPointer(dataPathOrDir)` returns the trimmed id or `null` when the file is missing or empty; `writeSessionPointer(dataPathOrDir, ccSessionId)` overwrites; `clearSessionPointer(dataPathOrDir)` is idempotent (uses `rmSync({ force: true })`). Written by the SessionStart hook and cleared by the SessionEnd hook. Read by the CLI's `resolveCcSessionId` helper to back the optional `--cc-session-id` flag on agent-driven subcommands. See Decision D12 |
 
 **Package manager detection:** The canonical detector lives at
 `packages/shared/src/utils/detect-pm.ts` and is used by reporter and
@@ -1306,7 +1307,10 @@ so installing the reporter pulls the CLI along with it.
   `coverage`, `history`, `trends`, `cache`, `doctor`, `record`,
   `triage`, and `wrapup` subcommands. The `record` subcommand
   dispatches to `turn`, `session-start`, `session-end`,
-  `tdd-artifact`, and `run-workspace-changes` actions
+  `tdd-artifact`, and `run-workspace-changes` actions. The `cache`
+  subcommand additionally dispatches to a `session-pointer` group
+  (`set` / `get` / `clear` / `path`) for the per-workspace
+  `current-session-id` file (Decision D12)
 - `packages/cli/src/index.ts` -- public `runCli()` re-export
 - `packages/cli/src/commands/{status,overview,coverage,history,trends,cache,doctor,record,triage,wrapup}.ts`
   -- one file per subcommand, each a thin wrapper over the matching
@@ -1314,7 +1318,9 @@ so installing the reporter pulls the CLI along with it.
   `session-start`, `session-end`, `tdd-artifact`, and
   `run-workspace-changes`. `triage.ts` and `wrapup.ts` delegate to
   the `format-triage` / `format-wrapup` shared lib generators.
-  `cache.ts` includes the `prune` action
+  `cache.ts` includes the `prune` action and the
+  `session-pointer set | get | clear | path` subcommand group
+  backing Decision D12
 - `packages/cli/src/lib/format-{status,overview,coverage,history,trends,doctor}.ts`
   -- testable pure formatting logic for the read-side commands
 - `packages/cli/src/lib/record-turn.ts` --
@@ -1340,6 +1346,18 @@ so installing the reporter pulls the CLI along with it.
   Effect Schema, calls `DataStore.writeCommit` (idempotent on
   `sha`), then `DataStore.writeRunChangedFiles` with the parsed
   changes. Hooks pre-stringify the file list before invoking
+- `packages/cli/src/lib/resolve-cc-session-id.ts` --
+  `resolveCcSessionId({ explicit?, projectDir? })` is a
+  self-contained Effect that returns the explicit id when
+  non-empty, else falls back to the per-workspace pointer file
+  via `readSessionPointer`, else `null`. Provides its own
+  `PathResolutionLive(projectDir) + NodeContext.layer` so
+  commands and tests can run it standalone. Backs the optional
+  `--cc-session-id` flag on `record turn`, `record session-end`,
+  `record tdd-artifact`, and `wrapup`. The `record.ts`
+  `requireResolvedCcSessionId` helper wraps this and fails with
+  a typed "no session id available" message when neither source
+  yields a value. See Decision D12
 
 **Commands:**
 
@@ -1361,21 +1379,36 @@ so installing the reporter pulls the CLI along with it.
   older sessions (FK CASCADE handles `tool_invocations` and
   `file_edits`). Sessions rows themselves are retained -- only
   the turn log is pruned. Idempotent
+- `cache session-pointer set <id>` / `get` / `clear` / `path`
+  -- four subcommands manipulating the per-workspace
+  `current-session-id` pointer file alongside `data.db`.
+  `set <id>` writes the pointer (called by `session-start.sh`),
+  `get` prints the active id (empty stdout when absent),
+  `clear` removes it (called by `session-end-record.sh`,
+  idempotent), `path` prints the absolute pointer path. Backs
+  Decision D12
 - `doctor` -- cache health diagnostic
 - `record turn` -- accepts
-  `--cc-session-id <id> <payload-json>`, validates the payload
-  against `TurnPayload`, resolves the session, writes a turn row.
-  Driven by the `user-prompt-submit-record.sh`,
+  `--cc-session-id <id>` (**optional**) and `<payload-json>`,
+  validates the payload against `TurnPayload`, resolves the
+  session, writes a turn row. When the flag is omitted, falls
+  back to the per-workspace pointer file via `resolveCcSessionId`
+  (Decision D12). Driven by the `user-prompt-submit-record.sh`,
   `pre-tool-use-record.sh`, `post-tool-use-record.sh`, and
-  `pre-compact-record.sh` plugin hooks
+  `pre-compact-record.sh` plugin hooks (which always pass the
+  flag explicitly)
 - `record session-start` -- accepts
   `--cc-session-id <id> --project <name> --cwd <path>` plus
   optional `--agent-kind` (defaults to `main`); writes a
-  `sessions` row. Driven by the `session-start-record.sh` hook
+  `sessions` row. The flag is **required** here -- this is the
+  call that authoritatively records the id, so it cannot fall
+  back to the pointer. Driven by the `session-start-record.sh`
+  hook
 - `record session-end` -- accepts
-  `--cc-session-id <id>` and optional `--end-reason`; updates
-  `sessions.ended_at` / `sessions.end_reason`. Driven by the
-  `session-end-record.sh` hook
+  `--cc-session-id <id>` (**optional**, falls back to the
+  pointer per Decision D12) and optional `--end-reason`;
+  updates `sessions.ended_at` / `sessions.end_reason`. Driven
+  by the `session-end-record.sh` hook
 - `triage` -- emits the W3 orientation triage brief
   via the shared `format-triage` generator. Accepts
   `--format <markdown|json>`, `--project <name>`, and
@@ -1385,15 +1418,18 @@ so installing the reporter pulls the CLI along with it.
   by users to inspect orientation context
 - `wrapup` -- emits the W5 wrap-up prompt via the
   shared `format-wrapup` generator. Accepts
-  `--since <iso>`, `--cc-session-id <id>`, `--kind <variant>`
-  (one of `stop`/`session_end`/`pre_compact`/`tdd_handoff`/
-  `user_prompt_nudge`), `--user-prompt-hint <text>`, and
-  `--format <markdown|json>`. Driven by the four interpretive
-  hooks (`stop-record.sh`, `session-end-record.sh`,
+  `--since <iso>`, `--cc-session-id <id>` (**optional** --
+  when neither `--session-id` nor `--cc-session-id` is given,
+  falls back to the per-workspace pointer per Decision D12),
+  `--kind <variant>` (one of `stop`/`session_end`/`pre_compact`/
+  `tdd_handoff`/`user_prompt_nudge`), `--user-prompt-hint
+  <text>`, and `--format <markdown|json>`. Driven by the four
+  interpretive hooks (`stop-record.sh`, `session-end-record.sh`,
   `pre-compact-record.sh`, `user-prompt-submit-record.sh`)
 - `record tdd-artifact` -- accepts
-  `--cc-session-id <id> --artifact-kind <kind>` plus optional
-  `--file-path`, `--test-case-id`, `--test-run-id`,
+  `--cc-session-id <id>` (**optional**, falls back to the
+  pointer per Decision D12) `--artifact-kind <kind>` plus
+  optional `--file-path`, `--test-case-id`, `--test-run-id`,
   `--test-first-failure-run-id`, `--diff-excerpt`, and
   `--recorded-at`. Resolves the active TDD phase (via
   `DataReader.getCurrentTddPhase`), then calls
@@ -1787,7 +1823,10 @@ PreCompact, SubagentStart, SubagentStop.
   triage markdown (or generic context fallback if the triage is
   empty), then writes the `sessions` row via
   `vitest-agent-reporter record session-start
-  --triage-was-non-empty <bool> ...`
+  --triage-was-non-empty <bool> ...`. Step 3a additionally calls
+  `cache session-pointer set "$cc_session_id"` so agent-driven
+  CLI invocations during the session can recover the active id
+  without an envelope (Decision D12)
 - **UserPromptSubmit** -- `user-prompt-submit-record.sh` reads
   the prompt envelope, invokes `record turn` with a
   `UserPromptPayload`, then calls
@@ -1843,8 +1882,10 @@ PreCompact, SubagentStart, SubagentStop.
 - **SessionEnd** -- `session-end-record.sh` invokes
   `record session-end --cc-session-id ... [--end-reason ...]`
   so `sessions.ended_at` and `sessions.end_reason` get
-  populated, then calls `wrapup --kind=session_end` and emits
-  the result as a top-level `systemMessage` field
+  populated. Step 1a then calls `cache session-pointer clear`
+  (idempotent) to remove the per-workspace pointer file
+  (Decision D12). Finally calls `wrapup --kind=session_end`
+  and emits the result as a top-level `systemMessage` field
   (`hookSpecificOutput.additionalContext` is invalid for
   `SessionEnd`)
 - **PreCompact** -- `pre-compact-record.sh` invokes `record turn`

@@ -16,10 +16,33 @@ import { recordSessionEnd, recordSessionStart } from "../lib/record-session.js";
 import { recordTddArtifactEffect } from "../lib/record-tdd-artifact.js";
 import { recordTurnEffect } from "../lib/record-turn.js";
 import { recordRunWorkspaceChangesEffect } from "../lib/record-workspace-changes.js";
+import { resolveCcSessionId } from "../lib/resolve-cc-session-id.js";
 
+// Required for `record session-start` (only the SessionStart hook calls it,
+// and the hook always has the id from the envelope).
 const ccSessionId = Options.text("cc-session-id").pipe(
 	Options.withDescription("Claude Code session id (from hook envelope)"),
 );
+
+// Optional for the rest. When omitted, the resolver reads the per-workspace
+// pointer file written by SessionStart. Hooks continue to pass the flag
+// explicitly; agent-invoked CLI calls can rely on the pointer.
+const ccSessionIdOptional = Options.optional(Options.text("cc-session-id")).pipe(
+	Options.withDescription("Claude Code session id; falls back to the pointer file when omitted"),
+);
+
+const requireResolvedCcSessionId = (explicit: string | undefined) =>
+	resolveCcSessionId({ explicit }).pipe(
+		Effect.flatMap((id) =>
+			id !== null
+				? Effect.succeed(id)
+				: Effect.fail(
+						new Error(
+							"--cc-session-id was not provided and no active session pointer was found. The pointer is written by SessionStart and cleared by SessionEnd; pass --cc-session-id explicitly when invoking outside a Claude Code session.",
+						),
+					),
+		),
+	);
 
 const occurredAt = Options.text("occurred-at").pipe(
 	Options.withDefault(new Date().toISOString()),
@@ -32,9 +55,12 @@ const payloadArg = Args.text({ name: "payload-json" }).pipe(
 
 const turnSubcommand = Command.make(
 	"turn",
-	{ ccSessionId, occurredAt, payload: payloadArg },
+	{ ccSessionId: ccSessionIdOptional, occurredAt, payload: payloadArg },
 	({ ccSessionId, occurredAt, payload }) =>
-		recordTurnEffect({ ccSessionId, payloadJson: payload, occurredAt }).pipe(
+		Effect.gen(function* () {
+			const resolved = yield* requireResolvedCcSessionId(ccSessionId._tag === "Some" ? ccSessionId.value : undefined);
+			return yield* recordTurnEffect({ ccSessionId: resolved, payloadJson: payload, occurredAt });
+		}).pipe(
 			Effect.flatMap((result) => Effect.sync(() => process.stdout.write(`${JSON.stringify(result)}\n`))),
 			Effect.catchAll((err) =>
 				Effect.sync(() => {
@@ -94,20 +120,28 @@ const sessionStartSubcommand = Command.make(
 const endedAt = Options.text("ended-at").pipe(Options.withDefault(new Date().toISOString()));
 const endReason = Options.optional(Options.text("end-reason"));
 
-const sessionEndSubcommand = Command.make("session-end", { ccSessionId, endedAt, endReason }, (opts) =>
-	recordSessionEnd({
-		ccSessionId: opts.ccSessionId,
-		endedAt: opts.endedAt,
-		endReason: opts.endReason._tag === "Some" ? opts.endReason.value : null,
-	}).pipe(
-		Effect.flatMap(() => Effect.sync(() => process.stdout.write(`{"ok":true}\n`))),
-		Effect.catchAll((err) =>
-			Effect.sync(() => {
-				process.stderr.write(`record session-end: ${err instanceof Error ? err.message : String(err)}\n`);
-				process.exit(1);
-			}),
+const sessionEndSubcommand = Command.make(
+	"session-end",
+	{ ccSessionId: ccSessionIdOptional, endedAt, endReason },
+	(opts) =>
+		Effect.gen(function* () {
+			const resolved = yield* requireResolvedCcSessionId(
+				opts.ccSessionId._tag === "Some" ? opts.ccSessionId.value : undefined,
+			);
+			return yield* recordSessionEnd({
+				ccSessionId: resolved,
+				endedAt: opts.endedAt,
+				endReason: opts.endReason._tag === "Some" ? opts.endReason.value : null,
+			});
+		}).pipe(
+			Effect.flatMap(() => Effect.sync(() => process.stdout.write(`{"ok":true}\n`))),
+			Effect.catchAll((err) =>
+				Effect.sync(() => {
+					process.stderr.write(`record session-end: ${err instanceof Error ? err.message : String(err)}\n`);
+					process.exit(1);
+				}),
+			),
 		),
-	),
 ).pipe(Command.withDescription("Update sessions.ended_at + end_reason"));
 
 const artifactKindOpt = Options.choice("artifact-kind", [
@@ -128,7 +162,7 @@ const recordedAtOpt = Options.text("recorded-at").pipe(Options.withDefault(new D
 const tddArtifactSubcommand = Command.make(
 	"tdd-artifact",
 	{
-		ccSessionId,
+		ccSessionId: ccSessionIdOptional,
 		artifactKind: artifactKindOpt,
 		filePath: filePathOpt,
 		testCaseId: testCaseIdOpt,
@@ -139,6 +173,9 @@ const tddArtifactSubcommand = Command.make(
 	},
 	(opts) =>
 		Effect.gen(function* () {
+			const resolvedCcSessionId = yield* requireResolvedCcSessionId(
+				opts.ccSessionId._tag === "Some" ? opts.ccSessionId.value : undefined,
+			);
 			// Resolve filePath -> fileId via DataStore.ensureFile if provided.
 			let fileId: number | undefined;
 			if (opts.filePath._tag === "Some") {
@@ -146,7 +183,7 @@ const tddArtifactSubcommand = Command.make(
 				fileId = yield* ds.ensureFile(opts.filePath.value);
 			}
 			return yield* recordTddArtifactEffect({
-				ccSessionId: opts.ccSessionId,
+				ccSessionId: resolvedCcSessionId,
 				artifactKind: opts.artifactKind as ArtifactKind,
 				...(fileId !== undefined && { fileId }),
 				...(opts.testCaseId._tag === "Some" && { testCaseId: opts.testCaseId.value }),

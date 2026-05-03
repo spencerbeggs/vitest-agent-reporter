@@ -3,8 +3,8 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-04-30
-last-synced: 2026-04-30
+updated: 2026-05-03
+last-synced: 2026-05-03
 completeness: 95
 related:
   - vitest-agent-reporter/architecture.md
@@ -69,7 +69,7 @@ packages/
                       normalize-workspace-key, resolve-workspace-key,
                       resolve-data-path, function-boundary,
                       failure-signature, validate-phase-transition,
-                      hyperlink (osc8)
+                      hyperlink (osc8), session-pointer
       lib/         -- format-triage, format-wrapup
                       (pure markdown generators feeding both CLI
                       subcommands and MCP tools)
@@ -90,15 +90,18 @@ packages/
     src/
       bin.ts, index.ts
       commands/    -- status, overview, coverage, history, trends,
-                      cache (incl. prune), doctor (each
-                      --format aware), record (with turn /
-                      session-start / session-end /
-                      tdd-artifact / run-workspace-changes
-                      subcommands), triage, wrapup
+                      cache (incl. prune and the
+                      session-pointer set/get/clear/path
+                      group), doctor (each --format aware),
+                      record (with turn / session-start /
+                      session-end / tdd-artifact /
+                      run-workspace-changes subcommands),
+                      triage, wrapup
       lib/         -- format-* (testable pure formatting logic);
                       record-turn, record-session,
                       record-tdd-artifact,
-                      record-run-workspace-changes
+                      record-run-workspace-changes,
+                      resolve-cc-session-id
       layers/      -- CliLive(dbPath, logLevel?, logFile?)
 
   mcp/       -- vitest-agent-reporter-mcp (bin: vitest-agent-reporter-mcp)
@@ -219,6 +222,23 @@ On systems without `XDG_DATA_HOME` set, this falls back to:
 `AppDirs.ensureData` from `xdg-effect` creates the directory if
 missing so better-sqlite3 can open the DB without separately mkdir'ing
 the parent.
+
+A second tiny file lives **alongside** `data.db` under the same
+workspace-keyed directory:
+
+```text
+$XDG_DATA_HOME/vitest-agent-reporter/<workspaceKey>/current-session-id
+```
+
+This is the per-workspace Claude Code session pointer (Decision D12).
+The SessionStart hook writes the active `cc_session_id` here and the
+SessionEnd hook clears it. Agent-driven CLI subcommands
+(`record turn`, `record session-end`, `record tdd-artifact`, `wrapup`)
+treat `--cc-session-id` as optional and read this file when the flag
+is omitted. Hooks always pass the flag explicitly, so the pointer is
+a fallback for callers that have no envelope to read. Multi-window
+concurrent sessions overwrite each other silently -- accepted as a
+single-window best-effort.
 
 ### Resolution precedence
 

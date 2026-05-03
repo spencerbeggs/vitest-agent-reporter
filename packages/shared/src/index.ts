@@ -94,5 +94,6 @@ export * from "./utils/normalize-workspace-key.js";
 export * from "./utils/resolve-data-path.js";
 export * from "./utils/resolve-workspace-key.js";
 export * from "./utils/safe-filename.js";
+export * from "./utils/session-pointer.js";
 export * from "./utils/split-project.js";
 export * from "./utils/validate-phase-transition.js";

@@ -44,6 +44,12 @@ else
 		|| true
 fi
 
+# 1a. Clear the per-workspace session pointer written by SessionStart.
+# Idempotent — safe even when the pointer is already absent.
+cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter cache session-pointer clear \
+	>/dev/null 2>&1 \
+	|| true
+
 # 2. Compute the wrap-up prompt.
 wrapup=$(cd "$cwd" && $pm_exec vitest-agent-reporter wrapup \
 	--cc-session-id "$cc_session_id" \
