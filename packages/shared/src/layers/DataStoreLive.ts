@@ -569,47 +569,53 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 			);
 
 		const writeTddSession = (input: TddSessionInput): Effect.Effect<number, DataStoreError> =>
-			Effect.gen(function* () {
-				yield* Effect.logDebug("writeTddSession").pipe(
-					Effect.annotateLogs({ sessionId: input.sessionId, goal: input.goal }),
+			sql
+				.withTransaction(
+					Effect.gen(function* () {
+						yield* Effect.logDebug("writeTddSession").pipe(
+							Effect.annotateLogs({ sessionId: input.sessionId, goal: input.goal }),
+						);
+						const rows = yield* sql<{ id: number }>`
+							INSERT INTO tdd_sessions (session_id, goal, started_at, parent_tdd_session_id)
+							VALUES (
+								${input.sessionId},
+								${input.goal},
+								${input.startedAt},
+								${input.parentTddSessionId ?? null}
+							)
+							RETURNING id
+						`;
+						const tddSessionId = rows[0].id;
+
+						// Open the initial `spike` phase in the same transaction as the
+						// session row so `getCurrentTddPhase` returns Some immediately after
+						// start and there is never a window where the session exists without
+						// an open phase. If either insert fails the whole transaction rolls
+						// back. Older `tdd_sessions` rows that predate this change still get
+						// a lazy open from `record tdd-artifact`'s defensive fallback.
+						yield* sql`
+							INSERT INTO tdd_phases
+								(tdd_session_id, behavior_id, phase, started_at, transition_reason, parent_phase_id)
+							VALUES
+								(
+									${tddSessionId},
+									${null},
+									${"spike"},
+									${input.startedAt},
+									${"opened by tdd_session_start"},
+									${null}
+								)
+						`;
+
+						return tddSessionId;
+					}),
+				)
+				.pipe(
+					Effect.annotateLogs("service", "DataStore"),
+					Effect.mapError(
+						(e) => new DataStoreError({ operation: "write", table: "tdd_sessions", reason: extractSqlReason(e) }),
+					),
 				);
-				const rows = yield* sql<{ id: number }>`
-					INSERT INTO tdd_sessions (session_id, goal, started_at, parent_tdd_session_id)
-					VALUES (
-						${input.sessionId},
-						${input.goal},
-						${input.startedAt},
-						${input.parentTddSessionId ?? null}
-					)
-					RETURNING id
-				`;
-				const tddSessionId = rows[0].id;
-
-				// Open the initial `spike` phase atomically with the session row so
-				// `getCurrentTddPhase` returns Some immediately after start. Older
-				// `tdd_sessions` rows that predate this change still get a lazy
-				// open from `record tdd-artifact`'s defensive fallback.
-				yield* sql`
-					INSERT INTO tdd_phases
-						(tdd_session_id, behavior_id, phase, started_at, transition_reason, parent_phase_id)
-					VALUES
-						(
-							${tddSessionId},
-							${null},
-							${"spike"},
-							${input.startedAt},
-							${"opened by tdd_session_start"},
-							${null}
-						)
-				`;
-
-				return tddSessionId;
-			}).pipe(
-				Effect.annotateLogs("service", "DataStore"),
-				Effect.mapError(
-					(e) => new DataStoreError({ operation: "write", table: "tdd_sessions", reason: extractSqlReason(e) }),
-				),
-			);
 
 		const endTddSession = (input: EndTddSessionInput): Effect.Effect<void, DataStoreError> =>
 			Effect.gen(function* () {
