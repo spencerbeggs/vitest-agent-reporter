@@ -1510,16 +1510,24 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 
 				// Metric 3: orientation usefulness — sessions with non-empty
 				// triage that referenced an orientation tool in their first
-				// three tool calls.
+				// three completed tool invocations (tool_result turns, numbered
+				// sequentially per session via ROW_NUMBER so interleaved
+				// user_prompt/tool_call turns don't compress the window).
 				const m3 = yield* sql<{ total: number; referenced_count: number }>`
 					WITH triaged_sessions AS (
 						SELECT id AS session_id FROM sessions WHERE triage_was_non_empty = 1
 					),
+					ranked_tool_results AS (
+						SELECT session_id, id AS turn_id,
+							ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY turn_no) AS result_no
+						FROM turns
+						WHERE type = 'tool_result'
+					),
 					first_three_tool_calls AS (
-						SELECT t.session_id, ti.tool_name
-						FROM turns t
-						JOIN tool_invocations ti ON ti.turn_id = t.id
-						WHERE t.turn_no <= 3 AND t.type = 'tool_result'
+						SELECT r.session_id, ti.tool_name
+						FROM ranked_tool_results r
+						JOIN tool_invocations ti ON ti.turn_id = r.turn_id
+						WHERE r.result_no <= 3
 					),
 					referenced AS (
 						SELECT DISTINCT ts.session_id
