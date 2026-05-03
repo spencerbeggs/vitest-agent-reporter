@@ -84,7 +84,7 @@ for the complete reference.
 | Hook | Trigger | Behavior |
 | --- | --- | --- |
 | `SessionStart` | Claude session begins | Injects project test status and MCP tool reference into context |
-| `PreToolUse` (`mcp__vitest-agent-reporter__*`) | Before any vitest-agent-reporter MCP tool call | Auto-allows the call without a permission prompt when the tool is on the bundled allowlist (all 41 current tools are listed) |
+| `PreToolUse` (`mcp__vitest-agent-reporter__*` / `mcp__plugin_vitest-agent-reporter_vitest-reporter__*`) | Before any vitest-agent-reporter MCP tool call | Auto-allows the call without a permission prompt when the tool is on the bundled allowlist (all 41 current tools are listed) |
 | `PostToolUse` (Bash) | After any Bash tool call | Detects test runs; suggests MCP tools when tests fail |
 
 The `PreToolUse` allowlist lives at

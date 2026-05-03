@@ -10,6 +10,8 @@ tools:
   - Glob
   - ToolSearch
   - TodoWrite
+  - TaskList
+  - TaskGet
   - mcp__plugin_vitest-agent-reporter_vitest-reporter__acceptance_metrics
   - mcp__plugin_vitest-agent-reporter_vitest-reporter__cache_health
   - mcp__plugin_vitest-agent-reporter_vitest-reporter__commit_changes
@@ -188,7 +190,7 @@ All of these mean: the human can't see your work. Call `TodoWrite`.
 
 ## Workflow
 
-1. On launch, you receive a `goal` argument. First resolve the active main session — call `session_list({ agentKind: "main", limit: 1 })` and use the most recently started row's `cc_session_id` as your `ccSessionId`. Claude Code does not give the orchestrator its own `cc_session_id` directly, and parent-session `cc_session_id` lookup via `getSessionByCcId` is the binding the post-tool-use hooks rely on for artifact recording — get this wrong and your `tdd_artifacts` rows land under a stale agent session, breaking evidence-based phase transitions. Then open a TDD session: `tdd_session_start({ goal, ccSessionId })`. **Then call `TodoWrite` with one todo for the goal (or defer to step 2 if you'll decompose). This is mandatory — see Progress reporting.**
+1. On launch, you receive a `goal` argument and a `ccSessionId` value passed explicitly by the parent agent in the launch prompt. Use that value directly — do **not** call `session_list` to derive a `cc_session_id`. The parent resolved its own session before spawning you; calling `session_list({ agentKind: "main", limit: 1 })` here risks picking up a stale row from a concurrent Claude Code window against the same workspace. The parent-session `cc_session_id` is the binding the post-tool-use hooks rely on for artifact recording — use the provided value or your `tdd_artifacts` rows land under the wrong session, breaking evidence-based phase transitions. Open a TDD session: `tdd_session_start({ goal, ccSessionId })`. **Then call `TodoWrite` with one todo for the goal (or defer to step 2 if you'll decompose). This is mandatory — see Progress reporting.**
 2. If the goal is non-trivial, decompose: `decompose_goal_into_behaviors({ tddSessionId, goal })`. **Then call `TodoWrite` with one todo per behavior. Mandatory.**
 3. For the first pending behavior: **call `TodoWrite` with the active behavior's `status: "in_progress"` and `activeForm: "Writing failing test (red)"`.** Then write a failing test (derive-test-name-from-behavior + derive-test-shape-from-name). Run it (`run_tests`). When it fails, the PostToolUse hooks record `tdd_artifacts(kind='test_failed_run')`.
 4. Request the red→green transition: `tdd_phase_transition_request({ tddSessionId, requestedPhase: "green", citedArtifactId: <the test_failed_run id> })`. **On accept, call `TodoWrite` with the active behavior's `activeForm: "Making test pass (green)"`.** You're in green.

@@ -6,6 +6,12 @@ import { publicProcedure } from "../context.js";
 
 const FORBIDDEN_CHARS = /[;|&`$(){}[\]<>!#]/;
 
+// Serializes concurrent withStdioCaptured calls — overlapping invocations
+// corrupt each other's saved originals when process.stdout.write is mutated
+// globally. Promise-chain mutex: each call awaits the previous gate before
+// touching the globals, then releases its own gate in finally.
+let _serialGate = Promise.resolve<void>(undefined);
+
 /**
  * Run `fn` with `process.stdout.write` and `process.stderr.write`
  * temporarily replaced by `stream.write`. Restores the originals on
@@ -21,6 +27,12 @@ const FORBIDDEN_CHARS = /[;|&`$(){}[\]<>!#]/;
  * @internal
  */
 export async function withStdioCaptured<T>(stream: Writable, fn: () => Promise<T>): Promise<T> {
+	const prev = _serialGate;
+	let releaseLock!: () => void;
+	_serialGate = new Promise<void>((res) => {
+		releaseLock = res;
+	});
+	await prev;
 	// Save unbound references — JavaScript's method-call binding restores
 	// `this` automatically when reassigned onto `process.stdout` /
 	// `process.stderr`. Pre-binding here would leak a fresh bound wrapper
@@ -36,6 +48,7 @@ export async function withStdioCaptured<T>(stream: Writable, fn: () => Promise<T
 	} finally {
 		process.stdout.write = originalStdoutWrite;
 		process.stderr.write = originalStderrWrite;
+		releaseLock();
 	}
 }
 

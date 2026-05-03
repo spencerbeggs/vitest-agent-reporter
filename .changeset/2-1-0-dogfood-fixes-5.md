@@ -7,12 +7,16 @@
 
 ## Bug Fixes
 
-### TDD orchestrator now resolves the active main `cc_session_id` at launch
+### TDD orchestrator session discovery race eliminated
 
-The orchestrator subagent had no documented mechanism to discover its own current `cc_session_id`, so it was passing whichever value it happened to find — frequently a stale row from an earlier conversation. The downstream effect was that `tdd_sessions.session_id` linked to a long-ended agent session, the `post-tool-use-tdd-artifact.sh` hook resolved the live `cc_session_id` to that stale row's id (or to no row at all), and `tdd_artifacts` writes silently fell on the floor under `|| true`. The visible symptom was `tdd_phase_transition_request` denying `red→green` with `missing_artifact_evidence` even after several `run_tests` failures during the red phase. Confirmed empirically against TDD session 5 of this week's dogfooding: zero artifacts under its red phase despite multiple MCP test runs.
+The orchestrator's launch step previously called `session_list({ agentKind: "main", limit: 1 })` to derive the parent `cc_session_id`. When two Claude Code windows were open against the same workspace, this returned the most recently started main session — not necessarily the one that spawned the orchestrator. The downstream effect was that `tdd_sessions.session_id` linked to a session the artifact hooks couldn't resolve, so `tdd_artifacts` writes fell on the floor and `tdd_phase_transition_request` denied `red→green` with `missing_artifact_evidence`.
 
-The orchestrator's launch step now calls `session_list({ agentKind: "main", limit: 1 })` first and uses the most recent row's `cc_session_id` as its `ccSessionId` argument to `tdd_session_start`.
+The `/tdd` command now looks up the parent's own `cc_session_id` via `session_list` before spawning the orchestrator and passes it explicitly in the launch prompt. The orchestrator's launch step uses the provided value directly rather than calling `session_list` itself.
 
-### Orchestrator gains read-side tools for codebase navigation, task tracking, and full MCP coverage
+### Orchestrator gains `TaskList` and `TaskGet`
 
-The orchestrator could not search the codebase by pattern, find files by glob, list its own task backlog, or load deferred MCP tool schemas. Its MCP tool list also enumerated only 15 of the 41 server tools, omitting routine reads like `coverage`, `triage_brief`, `session_list`, and `commit_changes`. The `tools:` array now includes `Grep`, `Glob`, `ToolSearch`, `TaskList`, `TaskGet`, and the wildcard `mcp__plugin_vitest-agent-reporter_vitest-reporter__*`. The write surface (`Edit`, `Write`, `Bash`, the four MCP mutations the orchestrator already had) is unchanged, and the iron law plus the restricted-Bash and post-tool-use hooks continue to enforce the TDD discipline regardless of which read tools are available.
+The orchestrator's `tools:` array was missing `TaskList` and `TaskGet`, preventing it from reading its own task backlog or checking task status mid-session. Both are now included alongside the existing `TodoWrite`, `Grep`, `Glob`, and `ToolSearch` entries.
+
+### `withStdioCaptured` concurrency guard
+
+The `run_tests` MCP tool's `withStdioCaptured` helper mutates `process.stdout.write` and `process.stderr.write` globally. Concurrent calls corrupted each other's saved originals, causing the wrong write function to be restored in `finally`. A module-level promise-chain mutex now serializes calls so process-global write mutation is never overlapping.
