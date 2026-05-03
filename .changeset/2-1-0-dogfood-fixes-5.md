@@ -19,4 +19,4 @@ The orchestrator's `tools:` array was missing `TaskList` and `TaskGet`, preventi
 
 ### `withStdioCaptured` concurrency guard
 
-The `run_tests` MCP tool's `withStdioCaptured` helper mutates `process.stdout.write` and `process.stderr.write` globally. Concurrent calls corrupted each other's saved originals, causing the wrong write function to be restored in `finally`. A module-level promise-chain mutex now serializes calls so process-global write mutation is never overlapping.
+The `run_tests` MCP tool's `withStdioCaptured` helper mutates `process.stdout.write` and `process.stderr.write` globally. Concurrent calls could corrupt each other's saved originals, causing the wrong write function to be restored in `finally`. The fix now scopes stdio capture to the active async context with `AsyncLocalStorage`, so overlapping runs keep their captured writes isolated instead of sharing a single module-level guard.
