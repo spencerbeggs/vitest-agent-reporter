@@ -192,7 +192,9 @@ Execute vitest for specific files or patterns.
 | `timeout` | `number` | No | Timeout in seconds (default: 120) |
 | `format` | `string` | No | Output format: `"markdown"` (default) or `"json"` |
 
-Returns a markdown digest or a JSON-serialized `AgentReport` depending on `format`.
+Returns a markdown digest when `format` is `"markdown"`. When `format` is
+`"json"`, the tool returns a JSON object wrapper: on success,
+`{ report, classifications? }`; on failure, `{ error, ... }`.
 
 ### Discovery Tools
 
