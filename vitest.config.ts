@@ -1,5 +1,5 @@
 import { defineConfig } from "vitest/config";
-import { AgentPlugin } from "vitest-agent-reporter";
+import { AgentPlugin } from "vitest-agent";
 
 export default defineConfig({
 	plugins: [
@@ -27,7 +27,15 @@ export default defineConfig({
 			{
 				extends: true,
 				test: {
-					name: "vitest-agent-reporter-shared",
+					name: "vitest-agent",
+					include: ["packages/agent/src/**/*.{test,spec}.ts"],
+					exclude: ["**/*.e2e.{test,spec}.ts"],
+				},
+			},
+			{
+				extends: true,
+				test: {
+					name: "vitest-agent-sdk",
 					include: ["packages/shared/src/**/*.{test,spec}.ts"],
 					exclude: ["**/*.e2e.{test,spec}.ts"],
 				},
@@ -35,7 +43,7 @@ export default defineConfig({
 			{
 				extends: true,
 				test: {
-					name: "vitest-agent-reporter-mcp",
+					name: "vitest-agent-mcp",
 					include: ["packages/mcp/src/**/*.{test,spec}.ts"],
 					exclude: ["**/*.e2e.{test,spec}.ts"],
 				},
@@ -43,7 +51,7 @@ export default defineConfig({
 			{
 				extends: true,
 				test: {
-					name: "vitest-agent-reporter-cli",
+					name: "vitest-agent-cli",
 					include: ["packages/cli/src/**/*.{test,spec}.ts"],
 					exclude: ["**/*.e2e.{test,spec}.ts"],
 				},
@@ -69,6 +77,7 @@ export default defineConfig({
 			provider: "v8",
 			include: [
 				"packages/reporter/src/**/*.ts",
+				"packages/agent/src/**/*.ts",
 				"packages/shared/src/**/*.ts",
 				"packages/mcp/src/**/*.ts",
 				"packages/cli/src/**/*.ts",
@@ -82,10 +91,11 @@ export default defineConfig({
 				"packages/cli/src/index.ts",
 				"packages/cli/src/layers/**",
 				"packages/mcp/**",
-				// Reporter glue
+				// Reporter and agent glue
 				"packages/reporter/src/index.ts",
-				"packages/reporter/src/reporter.ts",
-				"packages/reporter/src/layers/**",
+				"packages/agent/src/index.ts",
+				"packages/agent/src/reporter.ts",
+				"packages/agent/src/layers/**",
 				// Shared composition layers and bundles with no testable logic
 				"packages/shared/src/services/*.ts",
 				"packages/shared/src/errors/*.ts",

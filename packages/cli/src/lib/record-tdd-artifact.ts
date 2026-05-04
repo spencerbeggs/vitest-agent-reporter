@@ -10,8 +10,8 @@
  */
 
 import { Effect, Option } from "effect";
-import type { ArtifactKind, DataStoreError } from "vitest-agent-reporter-shared";
-import { DataReader, DataStore } from "vitest-agent-reporter-shared";
+import type { ArtifactKind, DataStoreError } from "vitest-agent-sdk";
+import { DataReader, DataStore } from "vitest-agent-sdk";
 
 export interface RecordTddArtifactInput {
 	readonly ccSessionId: string;

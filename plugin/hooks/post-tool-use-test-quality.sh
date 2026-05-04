@@ -16,28 +16,35 @@
 
 set -e
 
-read -r hook_json
+# shellcheck source=lib/hook-output.sh
+. "$(dirname "$0")/lib/hook-output.sh"
+
+hook_json=$(cat)
 
 agent_type=$(echo "$hook_json" | jq -r '.agent_type // ""')
-if [ "$agent_type" != "tdd-orchestrator" ]; then
+# shellcheck source=lib/match-tdd-agent.sh
+. "$(dirname "$0")/lib/match-tdd-agent.sh"
+if ! is_tdd_orchestrator "$agent_type"; then
+	emit_noop
 	exit 0
 fi
 
 tool_name=$(echo "$hook_json" | jq -r '.tool_name // ""')
 case "$tool_name" in
 	Edit|Write|MultiEdit) ;;
-	*) exit 0 ;;
+	*) emit_noop; exit 0 ;;
 esac
 
 file_path=$(echo "$hook_json" | jq -r '.tool_input.file_path // .tool_input.path // ""')
 case "$file_path" in
 	*.test.ts|*.test.tsx|*.test.js|*.test.jsx|*.spec.ts|*.spec.tsx|*.spec.js|*.spec.jsx) ;;
-	*) exit 0 ;;
+	*) emit_noop; exit 0 ;;
 esac
 
 cc_session_id=$(echo "$hook_json" | jq -r '.session_id // ""')
 cwd=$(echo "$hook_json" | jq -r '.cwd // ""')
 if [ -z "$cc_session_id" ] || [ -z "$cwd" ]; then
+	emit_noop
 	exit 0
 fi
 
@@ -79,6 +86,7 @@ for pattern in "${weakened_patterns[@]}"; do
 done
 
 if [ -z "$matched" ]; then
+	emit_noop
 	exit 0
 fi
 
@@ -89,16 +97,17 @@ pm_exec=$(detect_pm_exec "$cwd")
 recorded_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 diff_excerpt=$(echo "$new_content" | head -c 4096)
 
-cd "$cwd" && $pm_exec vitest-agent-reporter record tdd-artifact \
+cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record tdd-artifact \
 	--cc-session-id "$cc_session_id" \
 	--artifact-kind "test_weakened" \
 	--file-path "$file_path" \
 	--diff-excerpt "$diff_excerpt" \
 	--recorded-at "$recorded_at" \
 	>/dev/null 2>&1 \
-	|| echo "record tdd-artifact (test_weakened) failed (non-fatal)" >&2
+	|| true
 
 # Emit a soft warning back to the orchestrator's transcript.
 echo "WARNING: detected weakening token $matched in $file_path — recorded as tdd_artifacts(kind='test_weakened')" >&2
 
+emit_noop
 exit 0

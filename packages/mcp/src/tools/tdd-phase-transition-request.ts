@@ -1,6 +1,6 @@
 import { Effect, Option, Schema } from "effect";
-import type { Phase } from "vitest-agent-reporter-shared";
-import { DataReader, DataStore, validatePhaseTransition } from "vitest-agent-reporter-shared";
+import type { Phase } from "vitest-agent-sdk";
+import { DataReader, DataStore, validatePhaseTransition } from "vitest-agent-sdk";
 import { publicProcedure } from "../context.js";
 
 const phaseLiteral = Schema.Literal(

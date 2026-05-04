@@ -8,13 +8,17 @@
 
 set -e
 
-read -r hook_json
+# shellcheck source=lib/hook-output.sh
+. "$(dirname "$0")/lib/hook-output.sh"
+
+hook_json=$(cat)
 
 cc_session_id=$(jq -r '.session_id // ""' <<< "$hook_json")
 cwd=$(jq -r '.cwd // ""' <<< "$hook_json")
 reason=$(jq -r '.reason // ""' <<< "$hook_json")
 
 if [ -z "$cc_session_id" ] || [ -z "$cwd" ]; then
+	emit_noop
 	exit 0
 fi
 
@@ -26,18 +30,18 @@ ended_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # 1. Record the session end.
 if [ -n "$reason" ]; then
-	cd "$cwd" && $pm_exec vitest-agent-reporter record session-end \
+	cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record session-end \
 		--cc-session-id "$cc_session_id" \
 		--ended-at "$ended_at" \
 		--end-reason "$reason" \
 		>/dev/null 2>&1 \
-		|| echo "record session-end failed (non-fatal)" >&2
+		|| true
 else
-	cd "$cwd" && $pm_exec vitest-agent-reporter record session-end \
+	cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record session-end \
 		--cc-session-id "$cc_session_id" \
 		--ended-at "$ended_at" \
 		>/dev/null 2>&1 \
-		|| echo "record session-end failed (non-fatal)" >&2
+		|| true
 fi
 
 # 2. Compute the wrap-up prompt.
@@ -46,14 +50,14 @@ wrapup=$(cd "$cwd" && $pm_exec vitest-agent-reporter wrapup \
 	--kind session_end \
 	--format markdown 2>/dev/null || echo "")
 
-# 3. Inject if non-empty.
+# 3. Surface via systemMessage. Claude Code's SessionEnd envelope
+# does not accept hookSpecificOutput.additionalContext — that field
+# is restricted to PreToolUse / UserPromptSubmit / PostToolUse /
+# PostToolBatch.
 if [ -n "$wrapup" ]; then
-	jq -n --arg ctx "$wrapup" '{
-		hookSpecificOutput: {
-			hookEventName: "SessionEnd",
-			additionalContext: $ctx
-		}
-	}'
+	emit_system_message "$wrapup"
+else
+	emit_noop
 fi
 
 exit 0

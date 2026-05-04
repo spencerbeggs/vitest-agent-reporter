@@ -4,7 +4,7 @@
  * @packageDocumentation
  */
 
-import type { AgentReport, CacheManifest } from "vitest-agent-reporter-shared";
+import type { AgentReport, CacheManifest } from "vitest-agent-sdk";
 
 export function formatStatus(manifest: CacheManifest, reports: Map<string, AgentReport>): string {
 	const lines: string[] = [];

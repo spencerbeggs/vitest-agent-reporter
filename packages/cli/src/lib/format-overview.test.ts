@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CacheManifest, TestFileEntry } from "vitest-agent-reporter-shared";
+import type { CacheManifest, TestFileEntry } from "vitest-agent-sdk";
 import { formatOverview } from "./format-overview.js";
 
 function makeManifest(projects: CacheManifest["projects"] = []): CacheManifest {

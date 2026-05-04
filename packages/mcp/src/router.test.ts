@@ -3,19 +3,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { afterAll, describe, expect, it } from "vitest";
-import { DataStore, DataStoreTestLayer, OutputPipelineLive, ProjectDiscoveryTest } from "vitest-agent-reporter-shared";
+import { DataStore, DataStoreTestLayer, OutputPipelineLive, ProjectDiscoveryTest } from "vitest-agent-sdk";
 import type { McpContext } from "./context.js";
-import { createCallerFactory } from "./context.js";
+import { createCallerFactory, createCurrentSessionIdRef } from "./context.js";
 import { appRouter } from "./router.js";
 
 const TestLayer = Layer.mergeAll(DataStoreTestLayer, OutputPipelineLive, ProjectDiscoveryTest.layer([]));
 const testRuntime = ManagedRuntime.make(TestLayer);
 
-function createTestCaller(cwd: string = process.cwd()) {
+function createTestCaller(cwd: string = process.cwd(), initialSessionId: string | null = null) {
 	const factory = createCallerFactory(appRouter);
 	return factory({
 		runtime: testRuntime as unknown as McpContext["runtime"],
 		cwd,
+		currentSessionId: createCurrentSessionIdRef(initialSessionId),
 	});
 }
 
@@ -640,6 +641,18 @@ describe("MCP Router", () => {
 			};
 			expect(r1.behaviors[0]?.id).toBe(r2.behaviors[0]?.id);
 			expect(r2._idempotentReplay).toBe(true);
+		});
+
+		it("treats embedded clarifying commas as a single behavior", async () => {
+			const tddId = await seedTddSession("cc-decompose-comma-clause", "comma-clause-goal");
+			const caller = createTestCaller();
+			const goal = "Add wrong_artifact_kind, distinct from missing_artifact_evidence, to the DenialReason union";
+			const r = (await caller.decompose_goal_into_behaviors({
+				tddSessionId: tddId,
+				goal,
+			})) as { behaviors: Array<{ behavior: string }> };
+			expect(r.behaviors).toHaveLength(1);
+			expect(r.behaviors[0]?.behavior).toBe(goal);
 		});
 	});
 });

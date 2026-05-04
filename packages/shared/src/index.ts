@@ -1,5 +1,5 @@
 /**
- * vitest-agent-reporter-shared
+ * vitest-agent-sdk
  *
  * Shared library for the vitest-agent-reporter package family. Carries
  * everything both runtime packages (reporter, mcp, cli) need: Effect
@@ -9,6 +9,8 @@
  * @packageDocumentation
  */
 
+// Reporter contract (consumed by vitest-agent plugin + reporter implementations)
+export * from "./contracts/reporter.js";
 // Errors
 export * from "./errors/DataStoreError.js";
 export * from "./errors/DiscoveryError.js";
@@ -49,6 +51,7 @@ export { default as migration0001 } from "./migrations/0001_initial.js";
 export { default as migration0002 } from "./migrations/0002_comprehensive.js";
 export { default as migration0003 } from "./migrations/0003_idempotent_responses.js";
 export { default as migration0004 } from "./migrations/0004_test_cases_created_turn_id.js";
+export { default as migration0005 } from "./migrations/0005_failure_signatures_last_seen_at.js";
 // Schemas
 export * from "./schemas/AgentReport.js";
 export * from "./schemas/Baselines.js";

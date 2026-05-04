@@ -298,6 +298,15 @@ export interface WriteRunChangedFilesInput {
 	readonly files: ReadonlyArray<RunChangedFile>;
 }
 
+export type RunInvocationMethod = "bash" | "mcp" | "cli";
+
+// ccSessionId is the Claude Code UUID string; the live layer resolves it to
+// sessions.id (integer PK) before writing run_triggers.agent_session_id.
+export interface AssociateRunSessionInput {
+	readonly ccSessionId: string;
+	readonly invocationMethod: RunInvocationMethod;
+}
+
 export class DataStore extends Context.Tag("vitest-agent-reporter/DataStore")<
 	DataStore,
 	{
@@ -375,5 +384,7 @@ export class DataStore extends Context.Tag("vitest-agent-reporter/DataStore")<
 		readonly pruneSessions: (
 			keepRecent: number,
 		) => Effect.Effect<{ readonly affectedSessions: number; readonly prunedTurns: number }, DataStoreError>;
+		readonly associateLatestRunWithSession: (input: AssociateRunSessionInput) => Effect.Effect<void, DataStoreError>;
+		readonly backfillTestCaseTurns: (ccSessionId: string) => Effect.Effect<number, DataStoreError>;
 	}
 >() {}

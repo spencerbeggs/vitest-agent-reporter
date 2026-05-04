@@ -6,8 +6,8 @@
 
 import { Command, Options } from "@effect/cli";
 import { Effect, Option } from "effect";
-import type { AgentReport } from "vitest-agent-reporter-shared";
-import { DataReader, splitProject } from "vitest-agent-reporter-shared";
+import type { AgentReport } from "vitest-agent-sdk";
+import { DataReader, splitProject } from "vitest-agent-sdk";
 import { formatStatus } from "../lib/format-status.js";
 
 const formatOption = Options.withDefault(Options.choice("format", ["markdown", "json"]), "markdown");

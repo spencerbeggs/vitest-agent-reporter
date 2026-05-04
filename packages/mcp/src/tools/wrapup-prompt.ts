@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import { formatWrapupEffect } from "vitest-agent-reporter-shared";
+import { formatWrapupEffect } from "vitest-agent-sdk";
 import { publicProcedure } from "../context.js";
 
 export const wrapupPrompt = publicProcedure

@@ -1,4 +1,4 @@
-# vitest-agent-reporter-cli
+# vitest-agent-cli
 
 The `@effect/cli`-based bin (`vitest-agent-reporter`) for on-demand test
 landscape queries. Reads cached test data from SQLite via `DataReader`;
@@ -53,7 +53,7 @@ src/
   `formatFatalError(cause)` to stderr. Don't swap to `Effect.runPromise`
   at the top level; `runMain` handles signals and exit codes correctly
   for a CLI process.
-- **Bin name vs package name.** Package `vitest-agent-reporter-cli`
+- **Bin name vs package name.** Package `vitest-agent-cli`
   publishes the bin `vitest-agent-reporter` (no `-cli` suffix). The
   reporter's "Next steps" output references this short name.
 
@@ -63,6 +63,14 @@ src/
   glue), `lib/format-<name>.ts` (the pure formatter), and
   `lib/format-<name>.test.ts`. Wire into the root `Command` group in
   `bin.ts`.
+- `record test-case-turns --cc-session-id <id>` is the canonical
+  pattern for subcommands that call multiple `DataStore`/`DataReader`
+  methods and return JSON to stdout (not markdown). It calls
+  `DataStore.backfillTestCaseTurns(ccSessionId)` then
+  `DataReader.getLatestTestCaseForSession(ccSessionId)` and outputs
+  `{ "updated": N, "latestTestCaseId": <id|null> }`. Follow this
+  pattern for any subcommand that needs to both mutate and read back
+  a result.
 - Need a new `DataReader` query: add it to `-shared`'s `DataReader`
   service, then consume it from `lib/format-*.ts`. Don't reach into
   SQLite directly from the CLI.
@@ -79,5 +87,5 @@ src/
 
 ## Design references
 
-@../../.claude/design/vitest-agent-reporter/components.md
-@../../.claude/design/vitest-agent-reporter/data-structures.md
+@../../.claude/design/vitest-agent/components.md
+@../../.claude/design/vitest-agent/data-structures.md

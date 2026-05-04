@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { HistoryRecord } from "vitest-agent-reporter-shared";
+import type { HistoryRecord } from "vitest-agent-sdk";
 import { formatHistory } from "./format-history.js";
 
 function makeRecord(project: string, tests: HistoryRecord["tests"]): HistoryRecord {

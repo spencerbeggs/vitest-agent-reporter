@@ -1,5 +1,5 @@
 /**
- * vitest-agent-reporter-cli
+ * vitest-agent-cli
  *
  * On-demand CLI for vitest-agent-reporter. Reads cached test data and
  * reports status, overview, coverage, history, trends, and cache health.

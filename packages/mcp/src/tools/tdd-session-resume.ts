@@ -1,5 +1,5 @@
 import { Effect, Option, Schema } from "effect";
-import { DataReader } from "vitest-agent-reporter-shared";
+import { DataReader } from "vitest-agent-sdk";
 import { publicProcedure } from "../context.js";
 
 export const tddSessionResume = publicProcedure

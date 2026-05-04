@@ -4,6 +4,7 @@ import { cacheHealth } from "./tools/cache-health.js";
 import { commitChanges } from "./tools/commit-changes.js";
 import { configure } from "./tools/configure.js";
 import { testCoverage } from "./tools/coverage.js";
+import { getCurrentSessionId, setCurrentSessionId } from "./tools/current-session-id.js";
 import { decomposeGoal } from "./tools/decompose-goal.js";
 import { testErrors } from "./tools/errors.js";
 import { failureSignatureGet } from "./tools/failure-signature-get.js";
@@ -78,6 +79,8 @@ export const appRouter = router({
 	triage_brief: triageBrief,
 	wrapup_prompt: wrapupPrompt,
 	commit_changes: commitChanges,
+	get_current_session_id: getCurrentSessionId,
+	set_current_session_id: setCurrentSessionId,
 });
 
 export type AppRouter = typeof appRouter;

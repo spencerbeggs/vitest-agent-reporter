@@ -39,6 +39,7 @@ export interface PhaseTransitionContext {
 
 export type DenialReason =
 	| "missing_artifact_evidence"
+	| "wrong_artifact_kind"
 	| "wrong_source_phase"
 	| "unknown_session"
 	| "session_already_ended"
@@ -102,7 +103,7 @@ export const validatePhaseTransition = (ctx: PhaseTransitionContext): PhaseTrans
 		return {
 			accepted: false,
 			phase: ctx.current_phase,
-			denialReason: "missing_artifact_evidence",
+			denialReason: "wrong_artifact_kind",
 			remediation: {
 				suggestedTool: "run_tests",
 				suggestedArgs: {},
@@ -111,34 +112,67 @@ export const validatePhaseTransition = (ctx: PhaseTransitionContext): PhaseTrans
 		};
 	}
 
-	// D2 binding rule 1: cited test was created in this phase window AND authored in this session
-	if (
-		ctx.cited_artifact.test_case_created_turn_at !== null &&
-		ctx.cited_artifact.test_case_created_turn_at < ctx.phase_started_at
-	) {
+	// D2 binding rule 1: cited test was created in this phase window AND authored
+	// in this session. Rule 1 binds a *test* authoring window, so it requires a
+	// specific test_case_id to bind to.
+	//
+	// Run-level artifacts (test_case_id IS NULL) — e.g. test_failed_run /
+	// test_passed_run rows recorded by post-tool-use-tdd-artifact.sh on a Bash
+	// test invocation that didn't resolve a specific test — carry no anchor
+	// for the binding. Skipping rule 1 in that case would let *any* run-level
+	// failure (including one from a different session, a different phase, or a
+	// pre-existing failure on main) advance the phase machine. So instead we
+	// deny: the agent must run a specific test via run_tests so the resulting
+	// artifact carries a test_case_id, then cite that artifact.
+	if (ctx.cited_artifact.test_case_id === null) {
 		return {
 			accepted: false,
 			phase: ctx.current_phase,
-			denialReason: "evidence_not_in_phase_window",
+			denialReason: "missing_artifact_evidence",
 			remediation: {
 				suggestedTool: "run_tests",
 				suggestedArgs: {},
 				humanHint:
-					"The cited test was authored before this phase started. Write a new failing test inside the current phase.",
+					"The cited artifact has no specific test (test_case_id is null), so it cannot be bound to this phase. Run a specific failing test via run_tests so the resulting artifact carries a test_case_id, then cite that artifact.",
 			},
 		};
 	}
-	if (!ctx.cited_artifact.test_case_authored_in_session) {
-		return {
-			accepted: false,
-			phase: ctx.current_phase,
-			denialReason: "evidence_not_in_phase_window",
-			remediation: {
-				suggestedTool: "run_tests",
-				suggestedArgs: {},
-				humanHint: "The cited test was not authored in this TDD session. Write the test yourself in the current phase.",
-			},
-		};
+
+	// The authoring-window check only applies to test_failed_run artifacts
+	// (red→green). For test_passed_run artifacts (green→refactor, refactor→red),
+	// the test was intentionally written in a prior phase — applying the window
+	// check would incorrectly deny every green→refactor transition where the test
+	// was written in the red phase (which is the normal TDD pattern).
+	if (expected.kind === "test_failed_run") {
+		if (
+			ctx.cited_artifact.test_case_created_turn_at !== null &&
+			ctx.cited_artifact.test_case_created_turn_at < ctx.phase_started_at
+		) {
+			return {
+				accepted: false,
+				phase: ctx.current_phase,
+				denialReason: "evidence_not_in_phase_window",
+				remediation: {
+					suggestedTool: "run_tests",
+					suggestedArgs: {},
+					humanHint:
+						"The cited test was authored before this phase started. Write a new failing test inside the current phase.",
+				},
+			};
+		}
+		if (!ctx.cited_artifact.test_case_authored_in_session) {
+			return {
+				accepted: false,
+				phase: ctx.current_phase,
+				denialReason: "evidence_not_in_phase_window",
+				remediation: {
+					suggestedTool: "run_tests",
+					suggestedArgs: {},
+					humanHint:
+						"The cited test was not authored in this TDD session. Write the test yourself in the current phase.",
+				},
+			};
+		}
 	}
 
 	// D2 binding rule 2: behavior match (if the orchestrator requests transitioning a specific behavior)

@@ -12,7 +12,17 @@ arguments:
 
 I'll help you implement {{ goal }} using test-driven development.
 
-Spawning the `tdd-orchestrator` subagent. The subagent will:
+Before spawning the orchestrator, look up the current session id:
+
+1. Call `session_list({ agentKind: "main", limit: 1 })` to find the most recently started main session row.
+2. Note the `cc_session_id` from that row.
+
+Then spawn the `tdd-orchestrator` subagent with a prompt that includes:
+
+- The goal: `{{ goal }}`
+- The resolved `ccSessionId` from step 2
+
+The subagent will:
 
 1. Open a TDD session for this goal.
 2. Decompose the goal into single-behavior atoms if it's non-trivial.

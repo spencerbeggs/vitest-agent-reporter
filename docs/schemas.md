@@ -63,7 +63,7 @@ type AgentReportType = typeof AgentReport.Type;
 
 For consumers who want to read data via Effect services, the package
 re-exports `DataReader` / `DataReaderLive` (and `DataStore` /
-`DataStoreLive`) from `vitest-agent-reporter-shared`:
+`DataStoreLive`) from `vitest-agent-sdk`:
 
 ```typescript
 import {
@@ -98,7 +98,7 @@ await Effect.runPromise(Effect.provide(program, live));
 build a private composition layer that adds the SQLite client, the
 migrator, and `NodeContext`; programmatic consumers need to do the
 same. To resolve the right database file, use `resolveDataPath` from
-`vitest-agent-reporter-shared` or read it from
+`vitest-agent-sdk` or read it from
 `vitest-agent-reporter cache path`.
 
 For write operations, swap `DataReader`/`DataReaderLive` for

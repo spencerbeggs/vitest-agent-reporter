@@ -6,8 +6,8 @@
 
 import { Command, Options } from "@effect/cli";
 import { Effect, Option } from "effect";
-import type { ResolvedThresholds, TrendRecord } from "vitest-agent-reporter-shared";
-import { DataReader, splitProject } from "vitest-agent-reporter-shared";
+import type { ResolvedThresholds, TrendRecord } from "vitest-agent-sdk";
+import { DataReader, splitProject } from "vitest-agent-sdk";
 import { formatTrends } from "../lib/format-trends.js";
 
 const formatOption = Options.withDefault(Options.choice("format", ["markdown", "json"]), "markdown");

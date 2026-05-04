@@ -4,8 +4,8 @@
  * @packageDocumentation
  */
 
-import type { ResolvedThresholds, TrendRecord } from "vitest-agent-reporter-shared";
-import { getRecentDirection } from "vitest-agent-reporter-shared";
+import type { ResolvedThresholds, TrendRecord } from "vitest-agent-sdk";
+import { getRecentDirection } from "vitest-agent-sdk";
 
 interface TrendProject {
 	project: string;

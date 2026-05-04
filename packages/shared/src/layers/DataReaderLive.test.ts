@@ -8,6 +8,7 @@ import migration0001 from "../migrations/0001_initial.js";
 import migration0002 from "../migrations/0002_comprehensive.js";
 import migration0003 from "../migrations/0003_idempotent_responses.js";
 import migration0004 from "../migrations/0004_test_cases_created_turn_id.js";
+import migration0005 from "../migrations/0005_failure_signatures_last_seen_at.js";
 import { DataReader } from "../services/DataReader.js";
 import { DataStore } from "../services/DataStore.js";
 import { DataReaderLive } from "./DataReaderLive.js";
@@ -22,6 +23,7 @@ const MigratorLayer = SqliteMigrator.layer({
 		"0002_comprehensive": migration0002,
 		"0003_idempotent_responses": migration0003,
 		"0004_test_cases_created_turn_id": migration0004,
+		"0005_failure_signatures_last_seen_at": migration0005,
 	}),
 }).pipe(Layer.provide(Layer.merge(SqliteLayer, PlatformLayer)));
 
@@ -1375,6 +1377,36 @@ describe("DataReaderLive", () => {
 			);
 			expect(Option.isNone(result)).toBe(true);
 		});
+
+		it("returns Some(spike) immediately after writeTddSession", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const reader = yield* DataReader;
+
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-cur-spike",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({
+						sessionId,
+						goal: "spike-on-start",
+						startedAt: "2026-04-29T00:00:01Z",
+					});
+
+					return yield* reader.getCurrentTddPhase(tddId);
+				}),
+			);
+			expect(Option.isSome(result)).toBe(true);
+			if (Option.isSome(result)) {
+				expect(result.value.phase).toBe("spike");
+				expect(result.value.startedAt).toBe("2026-04-29T00:00:01Z");
+				expect(result.value.behaviorId).toBeNull();
+			}
+		});
 	});
 
 	describe("getTddArtifactWithContext", () => {
@@ -1509,6 +1541,66 @@ describe("DataReaderLive", () => {
 			expect(result[0].sha).toBe("deadbeef");
 			expect(result[0].files).toHaveLength(1);
 			expect(result[0].files[0].filePath).toBe("/abs/src/x.ts");
+		});
+	});
+
+	describe("getFailureSignatureByHash", () => {
+		it("should surface lastSeenAt on FailureSignatureDetail", async () => {
+			const detail = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const reader = yield* DataReader;
+
+					yield* ds.writeSettings("ls-detail-1", settingsInput, {});
+					const runId = yield* ds.writeRun({ ...runInput, settingsHash: "ls-detail-1" });
+
+					const seenAt = "2026-05-02T10:00:00Z";
+					yield* ds.writeFailureSignature({
+						signatureHash: "abcdef0123456789",
+						runId,
+						seenAt,
+					});
+
+					return yield* reader.getFailureSignatureByHash("abcdef0123456789");
+				}),
+			);
+			expect(Option.isSome(detail)).toBe(true);
+			if (Option.isSome(detail)) {
+				expect(detail.value.signatureHash).toBe("abcdef0123456789");
+				expect(detail.value.firstSeenAt).toBe("2026-05-02T10:00:00Z");
+				expect(detail.value.lastSeenAt).toBe("2026-05-02T10:00:00Z");
+			}
+		});
+
+		it("should reflect the bumped lastSeenAt after a recurrence", async () => {
+			const detail = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const reader = yield* DataReader;
+
+					yield* ds.writeSettings("ls-detail-2", settingsInput, {});
+					const runId = yield* ds.writeRun({ ...runInput, settingsHash: "ls-detail-2" });
+
+					yield* ds.writeFailureSignature({
+						signatureHash: "fedcba9876543210",
+						runId,
+						seenAt: "2026-05-02T10:00:00Z",
+					});
+					yield* ds.writeFailureSignature({
+						signatureHash: "fedcba9876543210",
+						runId,
+						seenAt: "2026-05-03T11:00:00Z",
+					});
+
+					return yield* reader.getFailureSignatureByHash("fedcba9876543210");
+				}),
+			);
+			expect(Option.isSome(detail)).toBe(true);
+			if (Option.isSome(detail)) {
+				expect(detail.value.firstSeenAt).toBe("2026-05-02T10:00:00Z");
+				expect(detail.value.lastSeenAt).toBe("2026-05-03T11:00:00Z");
+				expect(detail.value.occurrenceCount).toBe(2);
+			}
 		});
 	});
 });

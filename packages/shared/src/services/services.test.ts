@@ -1,5 +1,5 @@
 /**
- * vitest-agent-reporter-shared
+ * vitest-agent-sdk
  *
  * Tests for Effect Context.Tag service definitions provided by the shared
  * package. CoverageAnalyzer lives in the reporter package and is tested

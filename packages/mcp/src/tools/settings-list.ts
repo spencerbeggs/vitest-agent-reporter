@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import { DataReader } from "vitest-agent-reporter-shared";
+import { DataReader } from "vitest-agent-sdk";
 import { publicProcedure } from "../context.js";
 
 export const settingsList = publicProcedure.input(Schema.standardSchemaV1(Schema.Struct({}))).query(async ({ ctx }) => {

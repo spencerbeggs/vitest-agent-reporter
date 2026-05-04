@@ -4,7 +4,7 @@ import { layer as sqliteClientLayer } from "@effect/sql-sqlite-node/SqliteClient
 import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
 import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
-import type { DataReader, DataStore } from "vitest-agent-reporter-shared";
+import type { DataReader, DataStore } from "vitest-agent-sdk";
 import {
 	DataReaderLive,
 	DataReader as DataReaderTag,
@@ -13,7 +13,8 @@ import {
 	migration0002,
 	migration0003,
 	migration0004,
-} from "vitest-agent-reporter-shared";
+	migration0005,
+} from "vitest-agent-sdk";
 import { recordRunWorkspaceChangesEffect } from "./record-workspace-changes.js";
 
 const PlatformLayer = NodeContext.layer;
@@ -26,6 +27,7 @@ const buildLive = () => {
 			"0002_comprehensive": migration0002,
 			"0003_idempotent_responses": migration0003,
 			"0004_test_cases_created_turn_id": migration0004,
+			"0005_failure_signatures_last_seen_at": migration0005,
 		}),
 	}).pipe(Layer.provide(Layer.merge(SqliteLayer, PlatformLayer)));
 	return Layer.mergeAll(

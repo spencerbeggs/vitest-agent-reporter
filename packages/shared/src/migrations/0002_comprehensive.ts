@@ -619,6 +619,7 @@ const migration = Effect.gen(function* () {
 			invocation_method TEXT CHECK (invocation_method IS NULL OR invocation_method IN (
 				'mcp', 'cli', 'bash', 'ide-runner', 'pre-commit-hook'
 			)),
+			-- FK to sessions.id (integer PK), NOT the cc_session_id UUID string.
 			agent_session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
 			watch_trigger_files TEXT
 		)

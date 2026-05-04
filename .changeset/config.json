@@ -17,9 +17,7 @@
 	"access": "restricted",
 	"baseBranch": "main",
 	"updateInternalDependencies": "patch",
-	"fixed": [
-		["vitest-agent-reporter", "vitest-agent-reporter-shared", "vitest-agent-reporter-cli", "vitest-agent-reporter-mcp"]
-	],
+	"fixed": [["vitest-agent-reporter", "vitest-agent-sdk", "vitest-agent-cli", "vitest-agent-mcp"]],
 	"ignore": ["example-basic"],
 	"privatePackages": {
 		"tag": true,

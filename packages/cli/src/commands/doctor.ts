@@ -6,7 +6,7 @@
 
 import { Command, Options } from "@effect/cli";
 import { Effect, Option } from "effect";
-import { DataReader, resolveDataPath, splitProject } from "vitest-agent-reporter-shared";
+import { DataReader, resolveDataPath, splitProject } from "vitest-agent-sdk";
 import type { CheckResult } from "../lib/format-doctor.js";
 import { formatDoctor } from "../lib/format-doctor.js";
 

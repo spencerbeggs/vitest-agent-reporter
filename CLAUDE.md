@@ -9,13 +9,14 @@ This is a pnpm monorepo. Workspaces are defined in `pnpm-workspace.yaml`:
 
 | Workspace | Path | Purpose |
 | --------- | ---- | ------- |
-| `vitest-agent-reporter-shared` | `packages/shared/` | Shared schemas, data layer, services, formatters, utilities (no internal deps) |
-| `vitest-agent-reporter` | `packages/reporter/` | Vitest reporter and plugin |
-| `vitest-agent-reporter-cli` | `packages/cli/` | CLI bin (`vitest-agent-reporter`) |
-| `vitest-agent-reporter-mcp` | `packages/mcp/` | MCP server bin (`vitest-agent-reporter-mcp`) |
+| `vitest-agent-sdk` | `packages/shared/` | Shared schemas, data layer, services, formatters, utilities (no internal deps) |
+| `vitest-agent` | `packages/agent/` | Vitest plugin (`AgentPlugin`), internal reporter class, `CoverageAnalyzer`, `ReporterLive` |
+| `vitest-agent-reporter` | `packages/reporter/` | Named `VitestAgentReporterFactory` implementations (no Vitest-API code) |
+| `vitest-agent-cli` | `packages/cli/` | CLI bin (`vitest-agent-reporter`) |
+| `vitest-agent-mcp` | `packages/mcp/` | MCP server bin (`vitest-agent-mcp`) |
 | `examples/*` | `examples/` | Usage examples |
 
-The four publishable packages live under `packages/`. The `plugin/`
+The five publishable packages live under `packages/`. The `plugin/`
 directory at the repo root is a file-based Claude Code plugin (NOT a pnpm
 workspace). Root-level configs (`turbo.json`, `biome.jsonc`, etc.) apply
 to all workspaces. To scope commands to a specific package, use
@@ -23,24 +24,33 @@ to all workspaces. To scope commands to a specific package, use
 
 ### Package boundaries and dependency direction
 
-- `vitest-agent-reporter-shared` -- carries everything both runtime
+- `vitest-agent-sdk` -- carries everything multiple runtime
   packages need: Effect schemas, SQLite migrations + data layer
   (`DataStore` / `DataReader` and their live layers), output pipeline
   services and formatters, path resolution (`resolveDataPath`,
-  workspace-key resolver, config-file loader), errors, and supporting
-  utilities. Has no dependency on the other three packages.
-- `vitest-agent-reporter` -- imports from `-shared`. Owns
-  `AgentReporter`, `AgentPlugin`, and `CoverageAnalyzer` (the only
-  service that needs Vitest's istanbul `CoverageMap`). Declares
-  `vitest-agent-reporter-cli` and `vitest-agent-reporter-mcp` as
-  **required** peerDependencies (`peerDependenciesMeta.optional: false`).
-- `vitest-agent-reporter-cli` -- imports from `-shared`. Owns the
+  workspace-key resolver, config-file loader), errors, public
+  reporter contract types (`ReporterKit`, `VitestAgentReporterFactory`,
+  etc.), and supporting utilities. Has no dependency on the other four
+  packages.
+- `vitest-agent` -- imports from `-shared`. Owns `AgentPlugin`,
+  the internal `AgentReporter` Vitest-API class, `CoverageAnalyzer`
+  (the only service that needs Vitest's istanbul `CoverageMap`),
+  `ReporterLive`, and reporter-side utilities (`build-reporter-kit`,
+  `route-rendered-output`, `process-failure`, etc.). Declares
+  `vitest-agent-reporter`, `vitest-agent-cli`, and `vitest-agent-mcp`
+  as **required** peerDependencies (`peerDependenciesMeta.optional: false`).
+- `vitest-agent-reporter` -- imports from `-shared`. Owns named
+  `VitestAgentReporterFactory` implementations only (`defaultReporter`,
+  `markdownReporter`, `terminalReporter`, `jsonReporter`,
+  `silentReporter`, `ciAnnotationsReporter`, `githubSummaryReporter`).
+  No Vitest-API code.
+- `vitest-agent-cli` -- imports from `-shared`. Owns the
   `@effect/cli` commands and `CliLive`.
-- `vitest-agent-reporter-mcp` -- imports from `-shared`. Owns the MCP
-  server, tRPC router, 24 tools, and `McpLive`.
+- `vitest-agent-mcp` -- imports from `-shared`. Owns the MCP
+  server, tRPC router, 41 tools, and `McpLive`.
 
-The four packages release in lockstep; reporter, cli, and mcp pin
-`-shared` at `workspace:*` and the reporter pins cli/mcp at
+The five packages release in lockstep; agent, reporter, cli, and mcp
+pin `-shared` at `workspace:*` and agent pins reporter/cli/mcp at
 `workspace:*`.
 
 ## Project Status
@@ -58,7 +68,7 @@ server family for LLM coding agents. Six primary capabilities:
    `ci-generic`), reporter chain management, cache directory resolution,
    and coverage threshold/target extraction.
 3. **`vitest-agent-reporter` CLI** -- `@effect/cli`-based bin (shipped by
-   the `vitest-agent-reporter-cli` package) with `status`, `overview`,
+   the `vitest-agent-cli` package) with `status`, `overview`,
    `coverage`, `history`, `trends`, `cache`, and `doctor` subcommands.
    All commands support `--format`.
 4. **Suggested actions & failure history** -- actionable suggestions in
@@ -69,7 +79,7 @@ server family for LLM coding agents. Six primary capabilities:
    `coverageThresholds` format, aspirational `coverageTargets`, and
    auto-ratcheting baselines with per-project trend tracking.
 6. **MCP server & Claude Code plugin** -- 24 MCP tools via tRPC router
-   (shipped by `vitest-agent-reporter-mcp`), plus a file-based Claude
+   (shipped by `vitest-agent-mcp`), plus a file-based Claude
    Code plugin at `plugin/` with a `PreToolUse` hook that auto-allows
    all 24 MCP tools without per-call permission prompts.
 
@@ -82,7 +92,7 @@ Schema definitions with `typeof Schema.Type` for TypeScript types.
 Schemas are part of the public API and are re-exported from
 `vitest-agent-reporter` for backward-compatible consumer use.
 
-### Database location (2.0 change)
+### Database location
 
 The SQLite `data.db` lives at a deterministic XDG-derived path:
 
@@ -130,7 +140,7 @@ projectKey = "my-stable-key"
 Loaded via `config-file-effect`'s resolver chain (workspace root ->
 git root -> upward walk).
 
-### Plugin MCP loader (2.0 rewrite, retires Decision 29)
+### Plugin MCP loader
 
 `plugin/bin/mcp-server.mjs` is now a zero-deps Node script that:
 
@@ -138,7 +148,7 @@ git root -> upward walk).
    `process.cwd()`).
 2. Detects the user's package manager via `packageManager` field +
    lockfile inspection (npm, pnpm, yarn, bun).
-3. Spawns `<pm exec> vitest-agent-reporter-mcp` with `stdio: 'inherit'`
+3. Spawns `<pm exec> vitest-agent-mcp` with `stdio: 'inherit'`
    and `cwd: projectDir`. Forwards exit code and signals.
 4. Exports `VITEST_AGENT_REPORTER_PROJECT_DIR=<projectDir>` to the child
    so the MCP server uses the correct workspace root for path
@@ -146,7 +156,7 @@ git root -> upward walk).
    `CLAUDE_PROJECT_DIR` to MCP subprocesses).
 5. On failure, prints PM-specific install instructions to stderr.
 
-The reporter's required peerDependency on `vitest-agent-reporter-mcp`
+The agent's required peerDependency on `vitest-agent-mcp`
 plus this loader replaces the old Decision 29 `file://` dynamic-import
 plus `node_modules` walk approach.
 
@@ -154,30 +164,38 @@ plus `node_modules` walk approach.
 
 `packages/shared/src/` -- `services/` (Effect tags), `layers/` (live +
 test, including `LoggerLive`, `ConfigLive`, `PathResolutionLive`,
-`OutputPipelineLive`), `schemas/` (Effect Schema definitions; 2.0.0-α
-adds `schemas/turns/` with the seven `TurnPayload` discriminated-union
-payloads), `utils/` (pure functions, including `resolve-data-path`,
-`resolve-workspace-key`, `normalize-workspace-key`, `ensure-migrated`;
-2.0.0-α adds `function-boundary` (acorn AST walk),
+`OutputPipelineLive`), `schemas/` (Effect Schema definitions; `schemas/turns/`
+holds the seven `TurnPayload` discriminated-union payloads),
+`contracts/reporter.ts` (public `ReporterKit` / `VitestAgentReporterFactory`
+contract types), `utils/` (pure functions, including `resolve-data-path`,
+`resolve-workspace-key`, `normalize-workspace-key`, `ensure-migrated`,
+`function-boundary` (acorn AST walk),
 `failure-signature` (deterministic 16-char sha256 hash), and
 `validate-phase-transition` (TDD evidence-binding rules)),
-`errors/` (tagged errors), `formatters/` (markdown, gfm, json, silent),
-`migrations/` (`0001_initial` for 1.x; 2.0.0-α adds
-`0002_comprehensive` -- the **last** drop-and-recreate migration,
-40 tables total), `sql/` (row types + assemblers).
+`errors/` (tagged errors), `formatters/` (markdown, gfm, json, silent,
+ci-annotations), `migrations/` (5 migrations; `0002_comprehensive` is
+the last drop-and-recreate, 41 tables total), `sql/` (row types + assemblers).
 
-`packages/reporter/src/` -- `reporter.ts` (`AgentReporter`),
-`plugin.ts` (`AgentPlugin`), `services/CoverageAnalyzer.ts`,
-`layers/CoverageAnalyzerLive.ts`, `layers/ReporterLive.ts`,
-`utils/`.
+`packages/agent/src/` -- `plugin.ts` (`AgentPlugin`),
+`reporter.ts` (internal `AgentReporter` Vitest-API class),
+`services/CoverageAnalyzer.ts`, `layers/CoverageAnalyzerLive.ts`,
+`layers/ReporterLive.ts`, `utils/` (`build-reporter-kit`,
+`route-rendered-output`, `process-failure`, `capture-env`,
+`capture-settings`, `resolve-thresholds`, `strip-console-reporters`).
+
+`packages/reporter/src/` -- `default.ts` (`defaultReporter`),
+`markdown.ts`, `terminal.ts`, `json.ts`, `silent.ts`,
+`ci-annotations.ts`, `github-summary.ts` (named factory files),
+`_kit-context.ts` (private `FormatterContext` builder).
 
 `packages/cli/src/` -- `bin.ts` (entry), `commands/` (`status`,
-`overview`, `coverage`, `history`, `trends`, `cache`, `doctor`),
+`overview`, `coverage`, `history`, `trends`, `cache`, `doctor`,
+`record`, `triage`, `wrapup`),
 `lib/` (testable formatting logic), `layers/CliLive.ts`.
 
 `packages/mcp/src/` -- `bin.ts` (entry), `index.ts`, `server.ts`,
-`router.ts`, `context.ts`, `tools/` (24 tool implementations),
-`layers/McpLive.ts`.
+`router.ts`, `context.ts`, `tools/` (41 tool implementations),
+`middleware/idempotency.ts`, `layers/McpLive.ts`.
 
 `plugin/` -- `.claude-plugin/plugin.json` (manifest with inline
 `mcpServers`), `bin/mcp-server.mjs` (PM-detect + spawn loader),
@@ -187,30 +205,26 @@ payloads), `utils/` (pure functions, including `resolve-data-path`,
 `commands/` (setup, configure).
 
 **Spec:** [GitHub Issue #1](https://github.com/spencerbeggs/vitest-agent-reporter/issues/1)
-**2.0 plan (archived):** [`./.claude/plans/archive/2026-04-29-2.0.0-xdg-paths-and-package-split.md`](./.claude/plans/archive/2026-04-29-2.0.0-xdg-paths-and-package-split.md)
-(implements [issue #39](https://github.com/spencerbeggs/vitest-agent-reporter/issues/39))
 
 **For architecture details (progressive loading -- load only what you need):**
 
-- @./.claude/design/vitest-agent-reporter/architecture.md
+- `@./.claude/design/vitest-agent/architecture.md`
   Hub document with overview, diagram, and component summary.
-- @./.claude/design/vitest-agent-reporter/components.md
+- `@./.claude/design/vitest-agent/components.md`
   Load when working on specific components, need API details or interfaces.
-- @./.claude/design/vitest-agent-reporter/decisions.md
+- `@./.claude/design/vitest-agent/decisions.md`
   Load when you need to understand "why" a design choice was made.
-- @./.claude/design/vitest-agent-reporter/data-structures.md
+- `@./.claude/design/vitest-agent/data-structures.md`
   Load when working with schemas, cache format, output, or data flow.
-- @./.claude/design/vitest-agent-reporter/testing-strategy.md
+- `@./.claude/design/vitest-agent/testing-strategy.md`
   Load when writing tests or reviewing testing patterns and coverage.
-- @./.claude/design/vitest-agent-reporter/phase-history.md
-  Load when reviewing implementation history or checking when a feature shipped.
 
 ## Build Pipeline
 
 This project uses
 [@savvy-web/rslib-builder](https://github.com/savvy-web/rslib-builder) to
 produce dual build outputs via [Rslib](https://rslib.rs/) for each of the
-four packages:
+five packages:
 
 | Output | Directory | Purpose |
 | ------ | --------- | ------- |
@@ -239,16 +253,16 @@ source `package.json`.
 
 ### Publish Targets
 
-The `publishConfig.targets` array (identical across all four packages)
+The `publishConfig.targets` array (identical across all five packages)
 defines where packages are published:
 
 - **GitHub Packages** -- `https://npm.pkg.github.com/` (from
   `dist/github/`).
 - **npm registry** -- `https://registry.npmjs.org/` (from `dist/npm/`).
 
-Both targets publish with provenance attestation enabled. The four
-packages release in lockstep so the reporter's required peerDependencies
-on cli and mcp always resolve to a matching version.
+Both targets publish with provenance attestation enabled. The five
+packages release in lockstep so the agent's required peerDependencies
+on reporter, cli, and mcp always resolve to a matching version.
 
 ### Turbo Orchestration
 
@@ -351,7 +365,7 @@ Configuration in `lib/configs/lint-staged.config.ts` uses the
   `import fs from 'node:fs'`).
 - Separate type imports: `import type { Foo } from './bar.js'`.
 - Cross-package imports use the package name
-  (`import { DataStore } from "vitest-agent-reporter-shared"`),
+  (`import { DataStore } from "vitest-agent-sdk"`),
   never relative paths across package boundaries.
 
 ### Commits
@@ -363,14 +377,14 @@ All commits require:
 
 ### Publishing
 
-The four packages publish to both GitHub Packages and npm with
+The five packages publish to both GitHub Packages and npm with
 provenance via the [@savvy-web/changesets](https://github.com/savvy-web/changesets)
 release workflow. The GitHub Action is at
 [savvy-web/workflow-release-action](https://github.com/savvy-web/workflow-release-action).
-Releases happen in lockstep -- `vitest-agent-reporter` declares
-`vitest-agent-reporter-cli` and `vitest-agent-reporter-mcp` as required
-peerDependencies, and all three depend on
-`vitest-agent-reporter-shared` at the same version.
+Releases happen in lockstep -- `vitest-agent` declares
+`vitest-agent-reporter`, `vitest-agent-cli`, and `vitest-agent-mcp`
+as required peerDependencies, and all five depend on
+`vitest-agent-sdk` at the same version.
 
 ## Testing
 

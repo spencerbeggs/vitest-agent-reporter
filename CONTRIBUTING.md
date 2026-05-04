@@ -41,7 +41,7 @@ vitest-agent-reporter/
 │   │       ├── reporter.ts         # AgentReporter class
 │   │       ├── plugin.ts           # AgentPlugin function
 │   │       └── layers/             # Reporter-specific Effect layers
-│   ├── shared/                 # vitest-agent-reporter-shared (data layer + services)
+│   ├── shared/                 # vitest-agent-sdk (data layer + services)
 │   │   └── src/
 │   │       ├── schemas/            # Effect Schema definitions
 │   │       ├── services/           # Effect Context.Tag definitions
@@ -51,12 +51,12 @@ vitest-agent-reporter/
 │   │       ├── migrations/         # SQLite migrations
 │   │       ├── sql/                # Row types + assemblers
 │   │       └── utils/              # Pure utilities
-│   ├── cli/                    # vitest-agent-reporter-cli (CLI bin)
+│   ├── cli/                    # vitest-agent-cli (CLI bin)
 │   │   └── src/
 │   │       ├── index.ts            # @effect/cli entry point
 │   │       ├── commands/           # Thin command wrappers
 │   │       └── lib/                # Testable formatting logic
-│   └── mcp/                    # vitest-agent-reporter-mcp (MCP server bin)
+│   └── mcp/                    # vitest-agent-mcp (MCP server bin)
 │       └── src/
 │           ├── index.ts            # MCP stdio entry point
 │           ├── server.ts           # @modelcontextprotocol/sdk server
@@ -76,7 +76,7 @@ vitest-agent-reporter/
 └── .claude/design/             # Architecture design documents
 ```
 
-`vitest-agent-reporter-shared` is the dependency hub — `reporter`,
+`vitest-agent-sdk` is the dependency hub — `reporter`,
 `cli`, and `mcp` all import from it. The `reporter` package declares
 `cli` and `mcp` as required peer dependencies so they auto-install
 together for end users.

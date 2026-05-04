@@ -17,7 +17,7 @@
 	"modules": {
 		"vitest-agent-reporter": {
 			"path": ".",
-			"designDocsPath": ".claude/design/vitest-agent-reporter",
+			"designDocsPath": ".claude/design/vitest-agent",
 			"categories": ["architecture", "performance", "integration", "testing"],
 			"maintainer": "C. Spencer Beggs",
 			"userDocs": {

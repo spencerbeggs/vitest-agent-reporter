@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import { formatTriageEffect } from "vitest-agent-reporter-shared";
+import { formatTriageEffect } from "vitest-agent-sdk";
 import { publicProcedure } from "../context.js";
 
 export const triageBrief = publicProcedure

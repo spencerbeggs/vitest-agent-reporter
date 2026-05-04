@@ -10,16 +10,17 @@ plugin.
 
 | Workspace | Path | Description |
 | --- | --- | --- |
-| `vitest-agent-reporter` | `packages/reporter/` | Vitest reporter + plugin |
-| `vitest-agent-reporter-shared` | `packages/shared/` | Shared schemas, data layer, services, formatters, utilities |
-| `vitest-agent-reporter-cli` | `packages/cli/` | `vitest-agent-reporter` CLI bin |
-| `vitest-agent-reporter-mcp` | `packages/mcp/` | `vitest-agent-reporter-mcp` MCP server bin |
+| `vitest-agent` | `packages/agent/` | Vitest plugin + lifecycle (`AgentPlugin`, `AgentReporter`, `CoverageAnalyzer`) |
+| `vitest-agent-reporter` | `packages/reporter/` | Named renderer factory implementations |
+| `vitest-agent-sdk` | `packages/shared/` | Shared schemas, data layer, services, formatters, utilities |
+| `vitest-agent-cli` | `packages/cli/` | `vitest-agent-reporter` CLI bin |
+| `vitest-agent-mcp` | `packages/mcp/` | `vitest-agent-mcp` MCP server bin |
 | `example-basic` | `examples/basic/` | Minimal test project for CLI testing |
 
-`vitest-agent-reporter-shared` has no internal dependencies. The other
-three runtime packages each depend on it. The reporter package declares
-the CLI and MCP packages as required peer dependencies, so a single
-`npm install vitest-agent-reporter` pulls all three on modern pnpm and
+`vitest-agent-sdk` has no internal dependencies. The other
+four runtime packages each depend on it. The `vitest-agent` package declares
+`vitest-agent-reporter`, the CLI and MCP packages as required peer dependencies,
+so a single `npm install vitest-agent` pulls all four on modern pnpm and
 npm.
 
 ## Plugin
@@ -38,12 +39,12 @@ The package family has three entry points:
 
 | Entry | Bin | Package | Purpose |
 | --- | --- | --- | --- |
-| Reporter/Plugin | (library import) | `vitest-agent-reporter` | Vitest reporter producing SQLite-persisted test data |
-| CLI | `vitest-agent-reporter` | `vitest-agent-reporter-cli` | Query test status, coverage, history, trends from the terminal |
-| MCP Server | `vitest-agent-reporter-mcp` | `vitest-agent-reporter-mcp` | 24 tools over stdio for LLM agent integration |
+| Plugin | (library import) | `vitest-agent` | Vitest plugin producing SQLite-persisted test data |
+| CLI | `vitest-agent-reporter` | `vitest-agent-cli` | Query test status, coverage, history, trends from the terminal |
+| MCP Server | `vitest-agent-mcp` | `vitest-agent-mcp` | 41 tools over stdio for LLM agent integration |
 
 All three share the Effect service architecture and the same SQLite
-database in `vitest-agent-reporter-shared` (`DataReader`, `DataStore`,
+database in `vitest-agent-sdk` (`DataReader`, `DataStore`,
 `OutputRenderer`, output pipeline, formatters, etc.). The database
 location is derived from your root workspace's `package.json` `name`
 under `$XDG_DATA_HOME/vitest-agent-reporter/`.

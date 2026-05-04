@@ -359,6 +359,7 @@ export const FailureSignatureRow = Schema.Struct({
 	signature_hash: Schema.String,
 	first_seen_run_id: Schema.NullOr(Schema.Number),
 	first_seen_at: Schema.String,
+	last_seen_at: Schema.NullOr(Schema.String),
 	occurrence_count: Schema.Number,
 });
 

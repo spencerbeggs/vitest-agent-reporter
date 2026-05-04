@@ -4,7 +4,7 @@
  * @packageDocumentation
  */
 
-import type { CacheManifest, TestFileEntry } from "vitest-agent-reporter-shared";
+import type { CacheManifest, TestFileEntry } from "vitest-agent-sdk";
 
 export function formatOverview(
 	manifest: CacheManifest | null,

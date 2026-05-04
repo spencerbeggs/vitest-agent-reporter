@@ -14,7 +14,8 @@ import {
 	migration0002,
 	migration0003,
 	migration0004,
-} from "vitest-agent-reporter-shared";
+	migration0005,
+} from "vitest-agent-sdk";
 
 export const McpLive = (dbPath: string, logLevel?: LogLevel.LogLevel, logFile?: string) => {
 	const SqliteLayer = sqliteClientLayer({ filename: dbPath });
@@ -25,6 +26,7 @@ export const McpLive = (dbPath: string, logLevel?: LogLevel.LogLevel, logFile?: 
 			"0002_comprehensive": migration0002,
 			"0003_idempotent_responses": migration0003,
 			"0004_test_cases_created_turn_id": migration0004,
+			"0005_failure_signatures_last_seen_at": migration0005,
 		}),
 	}).pipe(Layer.provide(Layer.merge(SqliteLayer, PlatformLayer)));
 

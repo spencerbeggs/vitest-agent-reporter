@@ -36,7 +36,7 @@
 		"@effect/sql": "catalog:silk",
 		"@effect/sql-sqlite-node": "catalog:silk",
 		"effect": "catalog:silk",
-		"vitest-agent-reporter-shared": "workspace:*"
+		"vitest-agent-sdk": "workspace:*"
 	},
 	"devDependencies": {
 		"@savvy-web/rslib-builder": "^0.20.3",
@@ -52,8 +52,8 @@
 		"@vitest/coverage-istanbul": "^4.1.0",
 		"@vitest/coverage-v8": "^4.1.0",
 		"vitest": "^4.1.0",
-		"vitest-agent-reporter-cli": "workspace:*",
-		"vitest-agent-reporter-mcp": "workspace:*"
+		"vitest-agent-cli": "workspace:*",
+		"vitest-agent-mcp": "workspace:*"
 	},
 	"peerDependenciesMeta": {
 		"@vitest/coverage-istanbul": {
@@ -65,10 +65,10 @@
 		"vitest": {
 			"optional": false
 		},
-		"vitest-agent-reporter-cli": {
+		"vitest-agent-cli": {
 			"optional": false
 		},
-		"vitest-agent-reporter-mcp": {
+		"vitest-agent-mcp": {
 			"optional": false
 		}
 	},

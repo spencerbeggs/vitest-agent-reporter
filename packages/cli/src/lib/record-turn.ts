@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import { DataReader, DataStore, TurnPayload } from "vitest-agent-reporter-shared";
+import { DataReader, DataStore, TurnPayload } from "vitest-agent-sdk";
 
 export type ParseResult = { ok: true; payload: typeof TurnPayload.Type } | { ok: false; error: string };
 
