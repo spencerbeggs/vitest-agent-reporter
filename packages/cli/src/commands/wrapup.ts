@@ -12,7 +12,6 @@
 import { Command, Options } from "@effect/cli";
 import { Effect } from "effect";
 import { formatWrapupEffect } from "vitest-agent-reporter-shared";
-import { resolveCcSessionId } from "../lib/resolve-cc-session-id.js";
 
 const sessionIdOption = Options.optional(Options.integer("session-id"));
 const ccSessionIdOption = Options.optional(Options.text("cc-session-id"));
@@ -34,16 +33,9 @@ export const wrapupCommand = Command.make(
 	},
 	(opts) =>
 		Effect.gen(function* () {
-			// When neither --session-id nor --cc-session-id is given, fall back to
-			// the SessionStart-written pointer so agents invoking the CLI directly
-			// don't have to know their own session id.
-			const fallbackCcSessionId =
-				opts.sessionId._tag === "Some" || opts.ccSessionId._tag === "Some" ? null : yield* resolveCcSessionId({});
 			const md = yield* formatWrapupEffect({
 				...(opts.sessionId._tag === "Some" && { sessionId: opts.sessionId.value }),
-				...(opts.ccSessionId._tag === "Some"
-					? { ccSessionId: opts.ccSessionId.value }
-					: fallbackCcSessionId !== null && { ccSessionId: fallbackCcSessionId }),
+				...(opts.ccSessionId._tag === "Some" && { ccSessionId: opts.ccSessionId.value }),
 				kind: opts.kind as "stop" | "session_end" | "pre_compact" | "tdd_handoff" | "user_prompt_nudge",
 				...(opts.userPromptHint._tag === "Some" && { userPromptHint: opts.userPromptHint.value }),
 			});

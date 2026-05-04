@@ -52,15 +52,6 @@ cd "$PROJECT_DIR" >/dev/null && $pm_exec vitest-agent-reporter record session-st
 	>/dev/null 2>&1 \
 	|| true
 
-# 3a. Write the per-workspace session pointer so CLI subcommands invoked
-# directly by the agent (without an envelope to read) can resolve the
-# active cc_session_id when --cc-session-id is omitted. Cleared by the
-# SessionEnd hook. See packages/shared/src/utils/session-pointer.ts for
-# the multi-window caveat.
-cd "$PROJECT_DIR" >/dev/null && $pm_exec vitest-agent-reporter cache session-pointer set "$cc_session_id" \
-	>/dev/null 2>&1 \
-	|| true
-
 # 4. Build the additionalContext markdown.
 #
 # An imperative preamble is ALWAYS injected — both to push the main agent
