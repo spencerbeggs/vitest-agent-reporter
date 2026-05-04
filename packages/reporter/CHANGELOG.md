@@ -1,5 +1,19 @@
 # vitest-agent-reporter
 
+## 2.0.0
+
+### Features
+
+* [`0a196c0`](https://github.com/spencerbeggs/vitest-agent-reporter/commit/0a196c04f78a84eb31d69d09156d014f9433ed73) Introduces the 2.0 reporter: named `VitestAgentReporterFactory` contract, `defaultReporter` composition, and a renderer-only factory pattern.
+
+### Patch Changes
+
+| Dependency       | Type       | Action  | From  | To    |
+| ---------------- | ---------- | ------- | ----- | ----- |
+| vitest-agent-cli | dependency | updated | 1.3.1 | 2.0.0 |
+| vitest-agent-mcp | dependency | updated | 1.3.1 | 2.0.0 |
+| vitest-agent-sdk | dependency | updated | 1.3.1 | 2.0.0 |
+
 ## 1.3.1
 
 ### Bug Fixes
