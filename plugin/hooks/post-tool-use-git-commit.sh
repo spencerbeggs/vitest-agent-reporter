@@ -7,33 +7,40 @@
 
 set -e
 
-read -r hook_json
+# shellcheck source=lib/hook-output.sh
+. "$(dirname "$0")/lib/hook-output.sh"
+
+hook_json=$(cat)
 
 tool_name=$(echo "$hook_json" | jq -r '.tool_name // ""')
 if [ "$tool_name" != "Bash" ]; then
+	emit_noop
 	exit 0
 fi
 
 command=$(echo "$hook_json" | jq -r '.tool_input.command // ""')
 case "$command" in
 	*"git commit"*|*"git push"*) ;;
-	*) exit 0 ;;
+	*) emit_noop; exit 0 ;;
 esac
 
 cc_session_id=$(echo "$hook_json" | jq -r '.session_id // ""')
 cwd=$(echo "$hook_json" | jq -r '.cwd // ""')
 if [ -z "$cwd" ]; then
+	emit_noop
 	exit 0
 fi
 
 # Resolve git binary (prefer cwd's repo).
 if ! (cd "$cwd" && git rev-parse --git-dir >/dev/null 2>&1); then
+	emit_noop
 	exit 0
 fi
 
 # Get the most-recent commit metadata.
 sha=$(cd "$cwd" && git log -1 --pretty=format:"%H" 2>/dev/null || echo "")
 if [ -z "$sha" ]; then
+	emit_noop
 	exit 0
 fi
 parent_sha=$(cd "$cwd" && git log -1 --pretty=format:"%P" 2>/dev/null | awk '{print $1}')
@@ -73,7 +80,7 @@ files_json=${files_json:-"[]"}
 . "$(dirname "$0")/lib/detect-pm.sh"
 pm_exec=$(detect_pm_exec "$cwd")
 
-cd "$cwd" && $pm_exec vitest-agent-reporter record run-workspace-changes \
+cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record run-workspace-changes \
 	--sha "$sha" \
 	${parent_sha:+--parent-sha "$parent_sha"} \
 	${message:+--message "$message"} \
@@ -83,6 +90,7 @@ cd "$cwd" && $pm_exec vitest-agent-reporter record run-workspace-changes \
 	--project "$project" \
 	"$files_json" \
 	>/dev/null 2>&1 \
-	|| echo "record run-workspace-changes failed (non-fatal)" >&2
+	|| true
 
+emit_noop
 exit 0

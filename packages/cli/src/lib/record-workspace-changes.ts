@@ -15,8 +15,8 @@
 
 import { SqlClient } from "@effect/sql/SqlClient";
 import { Effect } from "effect";
-import type { ChangeKind, DataStoreError } from "vitest-agent-reporter-shared";
-import { DataStore } from "vitest-agent-reporter-shared";
+import type { ChangeKind, DataStoreError } from "vitest-agent-sdk";
+import { DataStore } from "vitest-agent-sdk";
 
 export interface RecordWorkspaceChangesInput {
 	readonly sha: string;

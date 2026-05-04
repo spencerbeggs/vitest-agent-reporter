@@ -1,6 +1,6 @@
 import { Effect, Option, Schema } from "effect";
-import type { SettingsRow } from "vitest-agent-reporter-shared";
-import { DataReader } from "vitest-agent-reporter-shared";
+import type { SettingsRow } from "vitest-agent-sdk";
+import { DataReader } from "vitest-agent-sdk";
 import { publicProcedure } from "../context.js";
 
 function formatSettings(s: SettingsRow): string {

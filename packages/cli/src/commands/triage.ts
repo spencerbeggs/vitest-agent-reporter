@@ -10,7 +10,7 @@
 
 import { Command, Options } from "@effect/cli";
 import { Effect } from "effect";
-import { formatTriageEffect } from "vitest-agent-reporter-shared";
+import { formatTriageEffect } from "vitest-agent-sdk";
 
 const formatOption = Options.withDefault(Options.choice("format", ["markdown", "json", "silent"]), "markdown");
 const projectOption = Options.optional(Options.text("project"));

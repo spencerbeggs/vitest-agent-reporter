@@ -7,12 +7,16 @@
 
 set -e
 
-read -r hook_json
+# shellcheck source=lib/hook-output.sh
+. "$(dirname "$0")/lib/hook-output.sh"
+
+hook_json=$(cat)
 
 cc_session_id=$(jq -r '.session_id // ""' <<< "$hook_json")
 cwd=$(jq -r '.cwd // ""' <<< "$hook_json")
 
 if [ -z "$cc_session_id" ] || [ -z "$cwd" ]; then
+	emit_noop
 	exit 0
 fi
 
@@ -23,11 +27,11 @@ pm_exec=$(detect_pm_exec "$cwd")
 # 1. Record the firing.
 fire_payload=$(jq -nc --arg cc "$cc_session_id" \
 	'{type: "hook_fire", hook_kind: "PreCompact", cc_session_id: $cc}')
-cd "$cwd" && $pm_exec vitest-agent-reporter record turn \
+cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record turn \
 	--cc-session-id "$cc_session_id" \
 	"$fire_payload" \
 	>/dev/null 2>&1 \
-	|| echo "record turn (hook_fire PreCompact) failed (non-fatal)" >&2
+	|| true
 
 # 2. Compute the wrap-up nudge.
 nudge=$(cd "$cwd" && $pm_exec vitest-agent-reporter wrapup \
@@ -35,14 +39,14 @@ nudge=$(cd "$cwd" && $pm_exec vitest-agent-reporter wrapup \
 	--kind pre_compact \
 	--format markdown 2>/dev/null || echo "")
 
-# 3. Inject if non-empty.
+# 3. Surface via systemMessage. Claude Code's PreCompact envelope
+# does not accept hookSpecificOutput.additionalContext — that field
+# is restricted to PreToolUse / UserPromptSubmit / PostToolUse /
+# PostToolBatch.
 if [ -n "$nudge" ]; then
-	jq -n --arg ctx "$nudge" '{
-		hookSpecificOutput: {
-			hookEventName: "PreCompact",
-			additionalContext: $ctx
-		}
-	}'
+	emit_system_message "$nudge"
+else
+	emit_noop
 fi
 
 exit 0

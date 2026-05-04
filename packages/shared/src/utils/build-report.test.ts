@@ -270,6 +270,74 @@ describe("buildAgentReport", () => {
 		expect(err?.stack).toBe("frame one\nframe two\nframe three");
 	});
 
+	it("formats Vitest ParsedStack frames into 'at <method> (<file>:<line>:<column>)' strings", () => {
+		// Vitest 4 returns TestError.stacks as ParsedStack[] (objects), not string[].
+		// Without correct serialization, .join("\n") produces "[object Object]" which
+		// is what end-users saw in run_tests format=json output.
+		const test = makeTestCase({
+			name: "parsed-stack-failure",
+			state: "failed",
+			errors: [
+				{
+					message: "expected 2 to be 3",
+					// biome-ignore lint/suspicious/noExplicitAny: simulates Vitest ParsedStack runtime shape
+					stacks: [
+						{ method: "anonymous", file: "src/math.test.ts", line: 10, column: 5 },
+						{ method: "Module._compile", file: "node:internal/modules/cjs/loader", line: 100, column: 12 },
+					] as any,
+				},
+			],
+		});
+
+		const modules = [makeTestModule({ relativeModuleId: "src/m.test.ts", state: "failed", tests: [test] })];
+		const report = buildAgentReport(modules, [], "failed", { omitPassingTests: true });
+
+		const err = report.failed[0].tests[0].errors?.[0];
+		expect(err?.stack).toBe(
+			"at anonymous (src/math.test.ts:10:5)\nat Module._compile (node:internal/modules/cjs/loader:100:12)",
+		);
+	});
+
+	it("falls back to '<anonymous>' when ParsedStack.method is empty", () => {
+		const test = makeTestCase({
+			name: "no-method",
+			state: "failed",
+			errors: [
+				{
+					message: "boom",
+					// biome-ignore lint/suspicious/noExplicitAny: simulates runtime ParsedStack
+					stacks: [{ method: "", file: "src/x.ts", line: 1, column: 2 }] as any,
+				},
+			],
+		});
+
+		const modules = [makeTestModule({ relativeModuleId: "src/x.test.ts", state: "failed", tests: [test] })];
+		const report = buildAgentReport(modules, [], "failed", { omitPassingTests: true });
+
+		const err = report.failed[0].tests[0].errors?.[0];
+		expect(err?.stack).toBe("at <anonymous> (src/x.ts:1:2)");
+	});
+
+	it("handles mixed string and ParsedStack entries in stacks array", () => {
+		const test = makeTestCase({
+			name: "mixed",
+			state: "failed",
+			errors: [
+				{
+					message: "msg",
+					// biome-ignore lint/suspicious/noExplicitAny: simulates union runtime shape
+					stacks: ["raw frame string", { method: "fn", file: "f.ts", line: 3, column: 4 }] as any,
+				},
+			],
+		});
+
+		const modules = [makeTestModule({ relativeModuleId: "src/m.test.ts", state: "failed", tests: [test] })];
+		const report = buildAgentReport(modules, [], "failed", { omitPassingTests: true });
+
+		const err = report.failed[0].tests[0].errors?.[0];
+		expect(err?.stack).toBe("raw frame string\nat fn (f.ts:3:4)");
+	});
+
 	it("captures unhandled errors", () => {
 		const report = buildAgentReport([], [{ message: "global crash", stacks: ["at top-level"] }], "interrupted", {
 			omitPassingTests: true,

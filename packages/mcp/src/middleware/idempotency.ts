@@ -1,5 +1,5 @@
 import { Effect, Option } from "effect";
-import { DataReader, DataStore } from "vitest-agent-reporter-shared";
+import { DataReader, DataStore } from "vitest-agent-sdk";
 import { middleware, publicProcedure } from "../context.js";
 
 // ---------------------------------------------------------------------------

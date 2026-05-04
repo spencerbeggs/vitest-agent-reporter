@@ -7,7 +7,7 @@
 import { Command, Options } from "@effect/cli";
 import { FileSystem } from "@effect/platform";
 import { Effect } from "effect";
-import { DataStore, resolveDataPath } from "vitest-agent-reporter-shared";
+import { DataStore, resolveDataPath } from "vitest-agent-sdk";
 
 const pathCommand = Command.make("path", {}, () =>
 	Effect.gen(function* () {

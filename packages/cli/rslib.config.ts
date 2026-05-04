@@ -8,14 +8,14 @@ export default NodeLibraryBuilder.create({
 		"@effect/platform-node",
 		"@effect/sql",
 		"@effect/sql-sqlite-node",
-		"vitest-agent-reporter-shared",
+		"vitest-agent-sdk",
 	],
 	apiModel: {
 		suppressWarnings: [{ messageId: "ae-forgotten-export", pattern: "_base" }],
 	},
 	transform({ pkg, target }) {
 		if (target?.registry === "https://npm.pkg.github.com/") {
-			pkg.name = "@spencerbeggs/vitest-agent-reporter-cli";
+			pkg.name = "@spencerbeggs/vitest-agent-cli";
 		}
 		delete pkg.devDependencies;
 		delete pkg.bundleDependencies;

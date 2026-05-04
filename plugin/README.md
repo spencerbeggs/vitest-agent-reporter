@@ -50,60 +50,45 @@ via the `mcpServers` field in `.claude-plugin/plugin.json`. A small
 zero-dependency loader (`bin/mcp-server.mjs`) shipped with the plugin
 detects your package manager (npm, pnpm, yarn, or bun) from
 `packageManager` in `package.json` or your lockfile, then spawns the
-`vitest-agent-reporter-mcp` bin through that package manager so it
+`vitest-agent-mcp` bin through that package manager so it
 resolves from your project's `node_modules`.
 
 This means `vitest-agent-reporter` must be installed as a dependency
 of your project for the plugin's MCP server to start. The package's
-required peer dependencies (`vitest-agent-reporter-mcp` and
-`vitest-agent-reporter-cli`) are auto-installed by modern pnpm and
+required peer dependencies (`vitest-agent-mcp` and
+`vitest-agent-cli`) are auto-installed by modern pnpm and
 npm. If the MCP bin is missing, the loader prints PM-specific
 install instructions and exits non-zero. See
 [Prerequisites](#prerequisites) below.
 
-The server exposes 24 tools for querying test data stored in the
-SQLite database written by the reporter after each test run. Use
-the `help` tool for the full list with parameters.
+The server exposes 41 tools. Use the `help` tool for the full list
+with parameters, or see
+[docs/mcp.md](https://github.com/spencerbeggs/vitest-agent-reporter/blob/main/docs/mcp.md)
+for the complete reference.
 
-| Tool | Description |
+| Category | Tools |
 | --- | --- |
-| `run_tests` | Run tests via Vitest programmatic API (results persist to DB) |
-| `test_status` | Per-project test pass/fail state from the last run |
-| `test_overview` | Full test landscape: files, suites, test counts |
-| `test_get` | Single test drill-down: state, errors, history, classification |
-| `test_coverage` | Coverage gaps with uncovered line ranges |
-| `file_coverage` | Per-file coverage with uncovered lines and related tests |
-| `test_history` | Flaky, persistent, and recovered test detection |
-| `test_trends` | Per-project coverage trajectory over time |
-| `test_errors` | Search errors by type or message across projects |
-| `test_for_file` | Find all tests that cover a given source file |
-| `cache_health` | Database health diagnostic |
-| `configure` | View captured Vitest settings |
-| `project_list` | All projects with latest run summary |
-| `test_list` | Test cases with state, duration, and classification |
-| `module_list` | Test modules (files) with test counts |
-| `suite_list` | Test suites (describe blocks) |
-| `settings_list` | Vitest config snapshots |
-| `note_create` | Create a note scoped to a file, test, or project |
-| `note_list` | List notes by scope |
-| `note_get` | Read a note by ID |
-| `note_update` | Update note content, pin state, or expiration |
-| `note_delete` | Delete a note |
-| `note_search` | Full-text search across all notes |
-| `help` | List all tools with parameters |
+| Queries | `test_status`, `test_overview`, `test_coverage`, `test_history`, `test_trends`, `test_errors`, `test_for_file`, `test_get`, `file_coverage`, `cache_health`, `configure` |
+| Discovery | `project_list`, `test_list`, `module_list`, `suite_list`, `settings_list` |
+| Execution | `run_tests` |
+| Notes | `note_create`, `note_list`, `note_get`, `note_update`, `note_delete`, `note_search` |
+| Sessions / Turns | `session_list`, `session_get`, `turn_search`, `failure_signature_get`, `acceptance_metrics` |
+| Triage / Wrap-up | `triage_brief`, `wrapup_prompt` |
+| Hypotheses | `hypothesis_record`, `hypothesis_validate`, `hypothesis_list` |
+| TDD lifecycle | `tdd_session_start`, `tdd_session_end`, `tdd_session_resume`, `tdd_session_get`, `decompose_goal_into_behaviors`, `tdd_phase_transition_request` |
+| Workspace history | `commit_changes` |
+| Meta | `help` |
 
 ### Hooks
 
 | Hook | Trigger | Behavior |
 | --- | --- | --- |
 | `SessionStart` | Claude session begins | Injects project test status and MCP tool reference into context |
-| `PreToolUse` (`mcp__vitest-agent-reporter__*`) | Before any vitest-agent-reporter MCP tool call | Auto-allows the call without a permission prompt when the tool is on the bundled allowlist (all 24 current tools are listed) |
+| `PreToolUse` (`mcp__vitest-agent-reporter__*` / `mcp__plugin_vitest-agent-reporter_vitest-reporter__*`) | Before any vitest-agent-reporter MCP tool call | Auto-allows the call without a permission prompt when the tool is on the bundled allowlist (all 41 current tools are listed) |
 | `PostToolUse` (Bash) | After any Bash tool call | Detects test runs; suggests MCP tools when tests fail |
 
 The `PreToolUse` allowlist lives at
-`hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt`. Every tool the MCP
-server exposes today (read-only queries, discovery, `run_tests`, and the
-notes CRUD operations) is on the list. Future tools added to the server
+`hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt`. Every tool the MCP server exposes today is on the list. Future tools added to the server
 fall back to the standard permission prompt until they are added to the
 file.
 
@@ -140,14 +125,14 @@ yarn add -D vitest-agent-reporter
 bun add -d vitest-agent-reporter
 ```
 
-The required peer dependencies (`vitest-agent-reporter-mcp` for the
-MCP bin and `vitest-agent-reporter-cli` for the CLI) are
+The required peer dependencies (`vitest-agent-mcp` for the
+MCP bin and `vitest-agent-cli` for the CLI) are
 auto-installed by modern pnpm and npm. If your package manager is
 configured to skip peer deps (e.g. pnpm with `auto-install-peers: false`),
 install them explicitly:
 
 ```bash
-pnpm add -D vitest-agent-reporter vitest-agent-reporter-cli vitest-agent-reporter-mcp
+pnpm add -D vitest-agent-reporter vitest-agent-cli vitest-agent-mcp
 ```
 
 Additional setup:

@@ -3,7 +3,7 @@
  * Plugin MCP server loader.
  *
  * Detects the user's package manager and spawns
- * `vitest-agent-reporter-mcp` through it. The package manager handles
+ * `vitest-agent-mcp` through it. The package manager handles
  * binary resolution (node_modules/.bin lookup, monorepo hoisting, etc.)
  * and we just forward stdio so Claude Code talks to the MCP subprocess
  * directly.
@@ -21,7 +21,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const BIN_NAME = "vitest-agent-reporter-mcp";
+const BIN_NAME = "vitest-agent-mcp";
 
 /** @type {Record<string, { cmd: string; args: string[]; install: string }>} */
 const PM = {
@@ -74,7 +74,13 @@ const pm = PM[pmName];
 // propagate CLAUDE_PROJECT_DIR to MCP server subprocesses.
 const env = { ...process.env, VITEST_AGENT_REPORTER_PROJECT_DIR: projectDir };
 
-const child = spawn(pm.cmd, [...pm.args, BIN_NAME], {
+// Forward additional positional args (e.g. an initial session id seeded
+// via ${CLAUDE_SESSION_ID} substitution in plugin.json's mcpServers.args).
+// process.argv[0] is node, [1] is this script, [2..] is everything after
+// the loader script in the manifest. Pass them through verbatim so the
+// MCP bin sees them as its own argv.
+const extraArgs = process.argv.slice(2);
+const child = spawn(pm.cmd, [...pm.args, BIN_NAME, ...extraArgs], {
 	cwd: projectDir,
 	stdio: "inherit",
 	env,

@@ -1,5 +1,5 @@
 import { Effect, Option, Schema } from "effect";
-import { DataReader } from "vitest-agent-reporter-shared";
+import { DataReader } from "vitest-agent-sdk";
 import { publicProcedure } from "../context.js";
 
 export const failureSignatureGet = publicProcedure
@@ -14,7 +14,10 @@ export const failureSignatureGet = publicProcedure
 				const lines: string[] = [
 					`# Failure Signature \`${sig.signatureHash}\``,
 					"",
+					`**Hash:** ${sig.signatureHash}`,
+					"",
 					`- first_seen_at: ${sig.firstSeenAt}`,
+					`- last_seen_at: ${sig.lastSeenAt ?? "unknown"}`,
 					`- first_seen_run_id: ${sig.firstSeenRunId ?? "unknown"}`,
 					`- occurrence_count: ${sig.occurrenceCount}`,
 				];

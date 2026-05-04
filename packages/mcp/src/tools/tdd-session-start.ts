@@ -1,5 +1,5 @@
 import { Effect, Option, Schema } from "effect";
-import { DataReader, DataStore } from "vitest-agent-reporter-shared";
+import { DataReader, DataStore } from "vitest-agent-sdk";
 import { idempotentProcedure } from "../middleware/idempotency.js";
 
 export const tddSessionStart = idempotentProcedure

@@ -46,7 +46,7 @@ list.
 Controls how `AgentPlugin` interacts with existing reporters in the chain.
 `"complement"` is additive -- it keeps Vitest's built-in reporters and adds
 database persistence. `"own"` removes console reporters and uses the agent
-formatter exclusively (Phase 1 behavior).
+formatter exclusively.
 
 This option was previously named `consoleStrategy`. The old name is still
 accepted for backward compatibility and mapped internally.

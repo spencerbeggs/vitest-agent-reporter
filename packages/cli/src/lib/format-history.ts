@@ -4,8 +4,8 @@
  * @packageDocumentation
  */
 
-import type { HistoryRecord, TestHistory } from "vitest-agent-reporter-shared";
-import { classifyTest } from "vitest-agent-reporter-shared";
+import type { HistoryRecord, TestHistory } from "vitest-agent-sdk";
+import { classifyTest } from "vitest-agent-sdk";
 
 interface ClassifiedTest {
 	test: TestHistory;

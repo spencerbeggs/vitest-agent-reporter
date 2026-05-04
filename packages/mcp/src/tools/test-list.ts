@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect";
-import type { TestListEntry } from "vitest-agent-reporter-shared";
-import { DataReader } from "vitest-agent-reporter-shared";
+import type { TestListEntry } from "vitest-agent-sdk";
+import { DataReader } from "vitest-agent-sdk";
 import { publicProcedure } from "../context.js";
 
 export const testList = publicProcedure

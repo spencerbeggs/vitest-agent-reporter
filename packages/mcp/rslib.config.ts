@@ -11,14 +11,14 @@ export default NodeLibraryBuilder.create({
 		"@trpc/server",
 		"vitest",
 		"vitest/node",
-		"vitest-agent-reporter-shared",
+		"vitest-agent-sdk",
 	],
 	apiModel: {
 		suppressWarnings: [{ messageId: "ae-forgotten-export", pattern: "_base" }],
 	},
 	transform({ pkg, target }) {
 		if (target?.registry === "https://npm.pkg.github.com/") {
-			pkg.name = "@spencerbeggs/vitest-agent-reporter-mcp";
+			pkg.name = "@spencerbeggs/vitest-agent-mcp";
 		}
 		delete pkg.devDependencies;
 		delete pkg.bundleDependencies;

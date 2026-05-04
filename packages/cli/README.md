@@ -1,4 +1,4 @@
-# vitest-agent-reporter-cli
+# vitest-agent-cli
 
 CLI bin for
 [vitest-agent-reporter](https://github.com/spencerbeggs/vitest-agent-reporter).
@@ -6,21 +6,21 @@ Reads the SQLite database written by `AgentReporter` and reports test
 status, overview, coverage, history, trends, and cache health on
 demand.
 
-This package is a required peer dependency of `vitest-agent-reporter`,
+This package is a required peer dependency of `vitest-agent`,
 so you usually don't install it directly — modern pnpm and npm pull it
-in automatically when you install the reporter.
+in automatically when you install the plugin.
 
 ## Install
 
 ```bash
-npm install --save-dev vitest-agent-reporter
-# vitest-agent-reporter-cli auto-installed via peerDependency
+npm install --save-dev vitest-agent
+# vitest-agent-cli auto-installed via peerDependency
 ```
 
 If your package manager skips peers, install it explicitly:
 
 ```bash
-pnpm add -D vitest-agent-reporter-cli
+pnpm add -D vitest-agent-cli
 ```
 
 ## Usage
@@ -36,6 +36,9 @@ npx vitest-agent-reporter trends      # Coverage trajectory over time
 npx vitest-agent-reporter doctor      # Database health diagnostic
 npx vitest-agent-reporter cache path  # Print the database file path
 npx vitest-agent-reporter cache clean # Delete the database
+npx vitest-agent-reporter record test-case-turns --cc-session-id <id>
+# Hook-driven command: links test cases to session turns and outputs
+# {"updated": N, "latestTestCaseId": <id|null>}
 ```
 
 ## Documentation

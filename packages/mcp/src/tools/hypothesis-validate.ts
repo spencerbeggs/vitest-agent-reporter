@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import { DataStore } from "vitest-agent-reporter-shared";
+import { DataStore } from "vitest-agent-sdk";
 import { idempotentProcedure } from "../middleware/idempotency.js";
 
 export const hypothesisValidate = idempotentProcedure

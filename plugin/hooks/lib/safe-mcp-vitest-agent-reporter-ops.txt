@@ -67,3 +67,7 @@ tdd_phase_transition_request
 
 # === final: Workspace history (read-only) ===
 commit_changes
+
+# === final: MCP-server session-id association (in-memory, per-window) ===
+get_current_session_id
+set_current_session_id

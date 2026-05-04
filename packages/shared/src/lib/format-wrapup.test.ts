@@ -4,13 +4,15 @@ import { layer as sqliteClientLayer } from "@effect/sql-sqlite-node/SqliteClient
 import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
 import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
+import { DataStoreError } from "../errors/DataStoreError.js";
 import { DataReaderLive } from "../layers/DataReaderLive.js";
 import { DataStoreLive } from "../layers/DataStoreLive.js";
 import migration0001 from "../migrations/0001_initial.js";
 import migration0002 from "../migrations/0002_comprehensive.js";
 import migration0003 from "../migrations/0003_idempotent_responses.js";
 import migration0004 from "../migrations/0004_test_cases_created_turn_id.js";
-import type { DataReader } from "../services/DataReader.js";
+import migration0005 from "../migrations/0005_failure_signatures_last_seen_at.js";
+import { DataReader } from "../services/DataReader.js";
 import { DataStore } from "../services/DataStore.js";
 import { formatWrapupEffect } from "./format-wrapup.js";
 
@@ -23,6 +25,7 @@ const MigratorLayer = SqliteMigrator.layer({
 		"0002_comprehensive": migration0002,
 		"0003_idempotent_responses": migration0003,
 		"0004_test_cases_created_turn_id": migration0004,
+		"0005_failure_signatures_last_seen_at": migration0005,
 	}),
 }).pipe(Layer.provide(Layer.merge(SqliteLayer, PlatformLayer)));
 
@@ -86,7 +89,7 @@ describe("formatWrapupEffect", () => {
 						cc_session_id: "cc-edits",
 						project: "p",
 						cwd: "/tmp/p",
-						agent_kind: "main",
+						agent_kind: "subagent",
 						started_at: "2026-04-30T00:00:00Z",
 					});
 					yield* ds.writeTurn({
@@ -136,7 +139,7 @@ describe("formatWrapupEffect", () => {
 						cc_session_id: "cc-stop",
 						project: "p",
 						cwd: "/tmp/p",
-						agent_kind: "main",
+						agent_kind: "subagent",
 						started_at: "2026-04-30T00:00:00Z",
 					});
 					yield* ds.writeTurn({
@@ -221,6 +224,151 @@ describe("formatWrapupEffect", () => {
 				}),
 			);
 			expect(result).toBe("");
+		});
+	});
+
+	describe("open-hypothesis branch", () => {
+		it("includes the open-hypothesis nudge when listHypotheses returns rows with validationOutcome=null", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-open-hyp",
+						project: "p",
+						cwd: "/tmp/p",
+						agent_kind: "subagent",
+						started_at: "2026-04-30T00:00:00Z",
+					});
+					yield* ds.writeHypothesis({
+						sessionId,
+						content: "the foo handler is dropping the bar argument",
+					});
+					yield* ds.writeHypothesis({
+						sessionId,
+						content: "the cache is not being invalidated on writes",
+					});
+					return yield* formatWrapupEffect({ sessionId, kind: "stop" });
+				}),
+			);
+			expect(result).toContain("Before you finish");
+			expect(result).toContain("open hypothesis");
+			expect(result).toContain("hypothesis_validate");
+			expect(result).toContain("2");
+		});
+	});
+
+	describe("main-agent suppression", () => {
+		it("returns empty for stop on a main session with file edits and no hypotheses", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-main-stop",
+						project: "p",
+						cwd: "/tmp/p",
+						agent_kind: "main",
+						started_at: "2026-04-30T00:00:00Z",
+					});
+					yield* ds.writeTurn({
+						session_id: sessionId,
+						type: "file_edit",
+						payload: JSON.stringify({ type: "file_edit", file_path: "/abs/src/foo.ts", edit_kind: "edit" }),
+						occurred_at: "2026-04-30T00:00:01Z",
+					});
+					return yield* formatWrapupEffect({ sessionId, kind: "stop" });
+				}),
+			);
+			expect(result).toBe("");
+		});
+
+		it("suppresses the open-hypothesis line on a main session", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-main-open-hyp",
+						project: "p",
+						cwd: "/tmp/p",
+						agent_kind: "main",
+						started_at: "2026-04-30T00:00:00Z",
+					});
+					yield* ds.writeHypothesis({
+						sessionId,
+						content: "main agent recorded a hypothesis somehow",
+					});
+					return yield* formatWrapupEffect({ sessionId, kind: "stop" });
+				}),
+			);
+			expect(result).toBe("");
+		});
+
+		it("still emits the note_create line for session_end on a main session with edits", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-main-end",
+						project: "p",
+						cwd: "/tmp/p",
+						agent_kind: "main",
+						started_at: "2026-04-30T00:00:00Z",
+					});
+					yield* ds.writeTurn({
+						session_id: sessionId,
+						type: "file_edit",
+						payload: JSON.stringify({ type: "file_edit", file_path: "/abs/src/bar.ts", edit_kind: "edit" }),
+						occurred_at: "2026-04-30T00:00:01Z",
+					});
+					return yield* formatWrapupEffect({ sessionId, kind: "session_end" });
+				}),
+			);
+			expect(result).toContain("Session wrap-up");
+			expect(result).toContain("note_create");
+			expect(result).not.toContain("hypothesis_record");
+		});
+	});
+
+	describe("DataReader error fallbacks", () => {
+		it("swallows DataReader errors and still returns a string for every kind that calls a reader", async () => {
+			// Construct a DataReader test layer where every method called by
+			// formatWrapupEffect fails, exercising the four `Effect.orElseSucceed`
+			// arrow-function fallbacks (lines 60, 69, 86, 88 of format-wrapup.ts).
+			const failingReader = DataReader.of({
+				getSessionById: () => Effect.fail(new DataStoreError({ operation: "read", table: "sessions", reason: "boom" })),
+				getSessionByCcId: () =>
+					Effect.fail(new DataStoreError({ operation: "read", table: "sessions", reason: "boom" })),
+				getTddSessionById: () =>
+					Effect.fail(new DataStoreError({ operation: "read", table: "tdd_sessions", reason: "boom" })),
+				searchTurns: () => Effect.fail(new DataStoreError({ operation: "read", table: "turns", reason: "boom" })),
+				listHypotheses: () =>
+					Effect.fail(new DataStoreError({ operation: "read", table: "hypotheses", reason: "boom" })),
+				// Unused methods can be left as `null as never` since formatWrapupEffect
+				// never reaches them.
+			} as unknown as DataReader["Type"]);
+			const FailingReaderLayer = Layer.succeed(DataReader, failingReader);
+
+			// Drive line 60 (getSessionByCcId fallback): pass ccSessionId, force the
+			// Option.none() fallback so sessionId stays null and we early-return "".
+			const ccResolveResult = await Effect.runPromise(
+				Effect.provide(formatWrapupEffect({ ccSessionId: "cc-fails", kind: "stop" }), FailingReaderLayer),
+			);
+			expect(ccResolveResult).toBe("");
+
+			// Drive line 69 (getTddSessionById fallback): tdd_handoff kind with a
+			// sessionId. The fallback yields Option.none() and the function returns "".
+			const tddHandoffResult = await Effect.runPromise(
+				Effect.provide(formatWrapupEffect({ sessionId: 42, kind: "tdd_handoff" }), FailingReaderLayer),
+			);
+			expect(tddHandoffResult).toBe("");
+
+			// Drive lines 86 + 88 (searchTurns + listHypotheses fallbacks): non-tdd_handoff
+			// kind with an explicit sessionId so we skip the cc-resolve branch and reach
+			// the bottom of the function. Both readers fail and fall back to []; with no
+			// file_edits and no open hypotheses, the function returns "".
+			const stopResult = await Effect.runPromise(
+				Effect.provide(formatWrapupEffect({ sessionId: 42, kind: "stop" }), FailingReaderLayer),
+			);
+			expect(stopResult).toBe("");
 		});
 	});
 });

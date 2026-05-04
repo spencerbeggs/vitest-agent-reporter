@@ -1,6 +1,6 @@
-# vitest-agent-reporter-mcp
+# vitest-agent-mcp
 
-The Model Context Protocol server (`vitest-agent-reporter-mcp` bin)
+The Model Context Protocol server (`vitest-agent-mcp` bin)
 exposing 24 tools to LLM agents over stdio via `@modelcontextprotocol/sdk`.
 Routes tool calls through a tRPC router; runs as a long-lived process with
 a `ManagedRuntime`. Required as a peerDependency by the reporter package.
@@ -92,6 +92,6 @@ src/
 
 ## Design references
 
-@../../.claude/design/vitest-agent-reporter/components.md
-@../../.claude/design/vitest-agent-reporter/decisions.md
-@../../.claude/design/vitest-agent-reporter/data-structures.md
+@../../.claude/design/vitest-agent/components.md
+@../../.claude/design/vitest-agent/decisions.md
+@../../.claude/design/vitest-agent/data-structures.md

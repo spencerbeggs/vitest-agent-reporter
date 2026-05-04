@@ -1,10 +1,76 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Writable } from "node:stream";
 import { Effect, Schema } from "effect";
-import type { AgentReport, VitestModuleError } from "vitest-agent-reporter-shared";
-import { DataReader, buildAgentReport } from "vitest-agent-reporter-shared";
+import type { AgentReport, VitestModuleError } from "vitest-agent-sdk";
+import { DataReader, DataStore, buildAgentReport } from "vitest-agent-sdk";
 import { publicProcedure } from "../context.js";
 
 const FORBIDDEN_CHARS = /[;|&`$(){}[\]<>!#]/;
+
+// AsyncLocalStorage-scoped redirection. The prior implementation mutated
+// `process.stdout.write` / `process.stderr.write` globally for the full
+// duration of the test run. That broke under concurrent MCP requests:
+// the JSON-RPC transport and unrelated tool handlers write to stdout/stderr
+// from their own async chains, so a parallel response could be swallowed
+// into the null sink and disappear from the wire. The mutex didn't help
+// because it only serialized run_tests against other run_tests calls.
+//
+// Now: the wrapper is patched onto `process.stdout` / `process.stderr` once,
+// then consults the per-context storage on every call. Inside a
+// `withStdioCaptured` async context the write is diverted to the sink;
+// outside of it (i.e. every other tRPC procedure handler running on its
+// own top-level async chain) the write passes through to the original.
+const stdoutSinkStorage = new AsyncLocalStorage<Writable>();
+const stderrSinkStorage = new AsyncLocalStorage<Writable>();
+
+let _stdioPatched = false;
+let _originalStdoutWrite: typeof process.stdout.write;
+let _originalStderrWrite: typeof process.stderr.write;
+
+function ensureStdioPatched(): void {
+	if (_stdioPatched) return;
+	_stdioPatched = true;
+	// Save unbound references — JavaScript's method-call binding restores
+	// `this` automatically when the wrapper is invoked via
+	// `process.stdout.write(...)`. Pre-binding here would leak a fresh
+	// bound wrapper on every patch, so back-to-back wraps would observe
+	// stacked `bind`-layers instead of the true original.
+	_originalStdoutWrite = process.stdout.write;
+	_originalStderrWrite = process.stderr.write;
+	process.stdout.write = function patchedStdoutWrite(this: typeof process.stdout, ...args: unknown[]) {
+		const sink = stdoutSinkStorage.getStore();
+		if (sink) {
+			return (sink.write as (...a: unknown[]) => boolean).apply(sink, args);
+		}
+		return (_originalStdoutWrite as (...a: unknown[]) => boolean).apply(this, args);
+	} as typeof process.stdout.write;
+	process.stderr.write = function patchedStderrWrite(this: typeof process.stderr, ...args: unknown[]) {
+		const sink = stderrSinkStorage.getStore();
+		if (sink) {
+			return (sink.write as (...a: unknown[]) => boolean).apply(sink, args);
+		}
+		return (_originalStderrWrite as (...a: unknown[]) => boolean).apply(this, args);
+	} as typeof process.stderr.write;
+}
+
+/**
+ * Run `fn` with `process.stdout.write` and `process.stderr.write`
+ * diverted to `stream.write` for code executing inside the call's
+ * async context. Code in other async contexts (concurrent tRPC
+ * procedure handlers, the MCP stdio transport) sees the original
+ * writes unchanged.
+ *
+ * Vitest's own stdout/stderr redirect options only cover Vitest-internal
+ * logging. User-registered reporters that call `console.log` directly
+ * bypass them; this helper captures those writes into the supplied
+ * sink so they don't corrupt the JSON-RPC protocol stream.
+ *
+ * @internal
+ */
+export async function withStdioCaptured<T>(stream: Writable, fn: () => Promise<T>): Promise<T> {
+	ensureStdioPatched();
+	return stdoutSinkStorage.run(stream, () => stderrSinkStorage.run(stream, fn));
+}
 
 export function sanitizeTestArgs(args: readonly string[]): string[] {
 	const result: string[] = [];
@@ -33,6 +99,22 @@ export function coerceErrors(errors: readonly unknown[]): VitestModuleError[] {
 		}
 		return { message: String(e) };
 	});
+}
+
+/**
+ * Serialize an AgentReport plus classifications as pretty-printed JSON.
+ *
+ * @internal
+ */
+export function formatReportJson(report: AgentReport, classifications?: ReadonlyMap<string, string>): string {
+	return JSON.stringify(
+		{
+			report,
+			classifications: classifications ? Object.fromEntries(classifications) : undefined,
+		},
+		null,
+		2,
+	);
 }
 
 /**
@@ -116,12 +198,14 @@ export const runTests = publicProcedure
 				files: Schema.optional(Schema.Array(Schema.String)),
 				project: Schema.optional(Schema.String),
 				timeout: Schema.optional(Schema.Number),
+				format: Schema.optional(Schema.Literal("markdown", "json")),
 			}),
 		),
 	)
 	.mutation(async ({ ctx, input }) => {
 		const files = input.files ? sanitizeTestArgs(input.files) : [];
 		const project = input.project ? sanitizeTestArgs([input.project])[0] : undefined;
+		const format = input.format ?? "markdown";
 
 		const timeoutMs = (input.timeout ?? 120) * 1000;
 
@@ -145,7 +229,11 @@ export const runTests = publicProcedure
 				{
 					root: ctx.cwd,
 					run: true,
-					coverage: { enabled: false },
+					// Inherit coverage from the user's vitest.config. Forcing
+					// `enabled: false` here was overriding intentional
+					// "coverage on by default" configurations and forced the
+					// orchestrator to make a parallel Bash --coverage call
+					// just to populate file_coverage rows.
 					...(project ? { project } : {}),
 				},
 				{}, // viteOverrides
@@ -156,14 +244,16 @@ export const runTests = publicProcedure
 			);
 
 			let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-			const result = await Promise.race([
-				vitest.start(files.length > 0 ? files : undefined),
-				new Promise<never>((_, reject) => {
-					timeoutHandle = setTimeout(() => reject(new Error("VITEST_TIMEOUT")), timeoutMs);
+			const result = await withStdioCaptured(nullStream, () =>
+				Promise.race([
+					vitest!.start(files.length > 0 ? files : undefined),
+					new Promise<never>((_, reject) => {
+						timeoutHandle = setTimeout(() => reject(new Error("VITEST_TIMEOUT")), timeoutMs);
+					}),
+				]).finally(() => {
+					if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
 				}),
-			]).finally(() => {
-				if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
-			});
+			);
 
 			const testModules = result.testModules as unknown as Parameters<typeof buildAgentReport>[0];
 			const unhandledErrors = coerceErrors(result.unhandledErrors);
@@ -192,13 +282,33 @@ export const runTests = publicProcedure
 				// Classification is best-effort; don't fail the tool if DB read fails
 			}
 
-			return formatReportMarkdown(report, classifications);
+			// Best-effort: associate the run with the current session so
+			// session-scoped queries reflect this run. Never blocks the result.
+			const ccSessionId = ctx.currentSessionId.get();
+			if (ccSessionId !== null) {
+				ctx.runtime
+					.runPromise(
+						Effect.gen(function* () {
+							const store = yield* DataStore;
+							yield* store.associateLatestRunWithSession({ ccSessionId, invocationMethod: "mcp" });
+						}),
+					)
+					.catch(() => undefined);
+			}
+
+			return format === "json"
+				? formatReportJson(report, classifications)
+				: formatReportMarkdown(report, classifications);
 		} catch (err) {
 			if (err instanceof Error && err.message === "VITEST_TIMEOUT") {
-				return `Test run timed out after ${input.timeout ?? 120} seconds.`;
+				return format === "json"
+					? JSON.stringify({ error: "VITEST_TIMEOUT", timeoutSeconds: input.timeout ?? 120 }, null, 2)
+					: `Test run timed out after ${input.timeout ?? 120} seconds.`;
 			}
 			const message = err instanceof Error ? err.message : String(err);
-			return `Test run failed: ${message}`;
+			return format === "json"
+				? JSON.stringify({ error: "RUN_FAILED", message }, null, 2)
+				: `Test run failed: ${message}`;
 		} finally {
 			await vitest?.close();
 			nullStream.destroy();

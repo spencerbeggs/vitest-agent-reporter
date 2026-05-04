@@ -9,9 +9,9 @@
  */
 
 import { Args, Command, Options } from "@effect/cli";
-import { Effect } from "effect";
-import type { ArtifactKind, ChangeKind } from "vitest-agent-reporter-shared";
-import { DataStore } from "vitest-agent-reporter-shared";
+import { Effect, Option } from "effect";
+import type { ArtifactKind, ChangeKind, RunInvocationMethod } from "vitest-agent-sdk";
+import { DataReader, DataStore } from "vitest-agent-sdk";
 import { recordSessionEnd, recordSessionStart } from "../lib/record-session.js";
 import { recordTddArtifactEffect } from "../lib/record-tdd-artifact.js";
 import { recordTurnEffect } from "../lib/record-turn.js";
@@ -168,6 +168,51 @@ const tddArtifactSubcommand = Command.make(
 		),
 ).pipe(Command.withDescription("Record a TDD artifact (D7: CLI-only)"));
 
+const testCaseTurnsSubcommand = Command.make("test-case-turns", { ccSessionId }, ({ ccSessionId }) =>
+	Effect.gen(function* () {
+		const store = yield* DataStore;
+		const reader = yield* DataReader;
+		const updated = yield* store.backfillTestCaseTurns(ccSessionId);
+		const latestId = yield* reader.getLatestTestCaseForSession(ccSessionId);
+		return { updated, latestTestCaseId: Option.getOrNull(latestId) };
+	}).pipe(
+		Effect.flatMap((result) => Effect.sync(() => process.stdout.write(`${JSON.stringify(result)}\n`))),
+		Effect.catchAll((err) =>
+			Effect.sync(() => {
+				process.stderr.write(`record test-case-turns: ${err instanceof Error ? err.message : String(err)}\n`);
+				process.exit(1);
+			}),
+		),
+	),
+).pipe(
+	Command.withDescription("Backfill test_cases.created_turn_id from file_edits in the current session (BUG-2 fix)"),
+);
+
+const invocationMethodOpt = Options.choice("invocation-method", ["bash", "mcp", "cli"]).pipe(
+	Options.withDescription('How tests were invoked: "bash", "mcp", or "cli"'),
+	Options.withDefault("bash"),
+);
+
+const runTriggerSubcommand = Command.make(
+	"run-trigger",
+	{ ccSessionId, invocationMethod: invocationMethodOpt },
+	({ ccSessionId, invocationMethod }) =>
+		Effect.gen(function* () {
+			const store = yield* DataStore;
+			yield* store.associateLatestRunWithSession({
+				ccSessionId,
+				invocationMethod: invocationMethod as RunInvocationMethod,
+			});
+		}).pipe(
+			Effect.catchAll((err) =>
+				Effect.sync(() => {
+					process.stderr.write(`record run-trigger: ${err instanceof Error ? err.message : String(err)}\n`);
+					process.exit(1);
+				}),
+			),
+		),
+).pipe(Command.withDescription("Associate the latest test run with the current Claude Code session"));
+
 const shaOpt = Options.text("sha");
 const parentShaOpt = Options.optional(Options.text("parent-sha"));
 const messageOpt = Options.optional(Options.text("message"));
@@ -229,6 +274,8 @@ export const recordCommand = Command.make("record").pipe(
 		sessionEndSubcommand,
 		tddArtifactSubcommand,
 		runWorkspaceChangesSubcommand,
+		runTriggerSubcommand,
+		testCaseTurnsSubcommand,
 	]),
 	Command.withDescription(
 		"Hook write surface (Decision D3): turn, session-start, session-end, tdd-artifact, run-workspace-changes",

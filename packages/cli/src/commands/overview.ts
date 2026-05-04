@@ -6,7 +6,7 @@
 
 import { Command, Options } from "@effect/cli";
 import { Effect, Option } from "effect";
-import { DataReader, ProjectDiscovery } from "vitest-agent-reporter-shared";
+import { DataReader, ProjectDiscovery } from "vitest-agent-sdk";
 import { formatOverview } from "../lib/format-overview.js";
 
 const formatOption = Options.withDefault(Options.choice("format", ["markdown", "json"]), "markdown");

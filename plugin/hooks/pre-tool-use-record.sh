@@ -3,7 +3,10 @@
 # Distinct from pre-tool-use-mcp.sh (which gates the MCP allowlist).
 set -e
 
-read -r hook_json
+# shellcheck source=lib/hook-output.sh
+. "$(dirname "$0")/lib/hook-output.sh"
+
+hook_json=$(cat)
 
 cc_session_id=$(jq -r '.session_id // ""' <<< "$hook_json")
 cwd=$(jq -r '.cwd // ""' <<< "$hook_json")
@@ -12,6 +15,7 @@ tool_input=$(jq -c '.tool_input // {}' <<< "$hook_json")
 tool_use_id=$(jq -r '.tool_use_id // ""' <<< "$hook_json")
 
 if [ -z "$cc_session_id" ] || [ -z "$cwd" ] || [ -z "$tool_name" ]; then
+	emit_noop
 	exit 0
 fi
 
@@ -25,10 +29,11 @@ payload=$(jq -nc \
 	--arg tuid "$tool_use_id" \
 	'{type: "tool_call", tool_name: $tn, tool_input: $ti} + (if $tuid != "" then {tool_use_id: $tuid} else {} end)')
 
-cd "$cwd" && $pm_exec vitest-agent-reporter record turn \
+cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record turn \
 	--cc-session-id "$cc_session_id" \
 	"$payload" \
 	>/dev/null 2>&1 \
-	|| echo "record turn (tool_call) failed (non-fatal)" >&2
+	|| true
 
+emit_noop
 exit 0

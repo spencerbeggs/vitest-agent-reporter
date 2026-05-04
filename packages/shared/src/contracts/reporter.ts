@@ -1,0 +1,140 @@
+/**
+ * Public reporter contract for the vitest-agent plugin.
+ *
+ * The plugin owns persistence, classification, baselines, trends, and the
+ * Vitest lifecycle wiring. The reporter is just the rendering stage: it
+ * receives an assembled run (reports + classifications + trend context),
+ * gets a kit of plugin-resolved primitives (env detection, OSC-8 helper,
+ * resolved config), and returns `RenderedOutput[]` to be routed.
+ *
+ * A reporter is richer than a single Formatter — it can dispatch to multiple
+ * formatters internally (e.g. a `GitHubReporter` emits SARIF for code
+ * scanning AND markdown for the step summary). The return shape is
+ * `RenderedOutput[]` so a single render call can produce multiple targets
+ * with different content types.
+ *
+ * @packageDocumentation
+ */
+
+import type { RenderedOutput } from "../formatters/types.js";
+import type { AgentReport } from "../schemas/AgentReport.js";
+import type { DetailLevel, Environment, Executor, OutputFormat, TestClassification } from "../schemas/Common.js";
+import type { ResolvedThresholds } from "../schemas/Thresholds.js";
+
+/**
+ * Config the plugin computes from its own options + Vitest's resolved config,
+ * then hands to the reporter factory inside {@link ReporterKit}.
+ *
+ * `dbPath` is optional at the type level so renderers that don't care about
+ * the persistence layer (e.g. a stdout-only renderer) can ignore it. The
+ * plugin always populates it in practice — the option exists for clarity
+ * and to leave room for future "no-persistence" experiments.
+ *
+ * `format` and `detail` are pre-resolved by the plugin (via
+ * `FormatSelector` / `DetailResolver`) but reporters that want to override
+ * can ignore them. `noColor` is the resolved value of the `NO_COLOR` env
+ * var; reporters use it to gate ANSI escapes and OSC-8 hyperlinks.
+ */
+export interface ResolvedReporterConfig {
+	readonly dbPath?: string;
+	readonly projectFilter?: string;
+	readonly mode: "auto" | "agent" | "silent";
+	readonly executor: Executor;
+	readonly mcp: boolean;
+	readonly consoleOutput: "failures" | "full" | "silent";
+	readonly omitPassingTests: boolean;
+	readonly coverageConsoleLimit: number;
+	readonly includeBareZero: boolean;
+	readonly githubActions: boolean;
+	readonly githubSummaryFile?: string;
+	readonly coverageThresholds?: ResolvedThresholds;
+	readonly coverageTargets?: ResolvedThresholds;
+	readonly format: OutputFormat;
+	readonly detail: DetailLevel;
+	readonly noColor: boolean;
+	readonly runCommand?: string;
+}
+
+/**
+ * Plugin-provided primitives passed to the reporter factory at construction
+ * time. The `std*` prefix marks these as "the plugin gives you these — do
+ * not import equivalents yourself"; they are pre-resolved with full context
+ * (environment, executor, NO_COLOR, target=stdout) so the reporter doesn't
+ * have to re-derive that state.
+ *
+ * The shape is open to additions: future fields (e.g. `stdLogger`,
+ * `stdRuntime`) won't break existing reporters because the parameter is a
+ * named-field object. Reporters destructure only what they consume.
+ */
+export interface ReporterKit {
+	readonly config: ResolvedReporterConfig;
+	readonly stdEnv: Environment;
+	/**
+	 * Pre-bound OSC-8 hyperlink helper. The plugin has already decided
+	 * whether OSC-8 should be enabled (target=stdout, !noColor) so the
+	 * reporter can call this directly without consulting environment.
+	 */
+	readonly stdOsc8: (url: string, label: string) => string;
+}
+
+/**
+ * Per-run data handed to {@link VitestAgentReporter.render} after the plugin
+ * has finished persisting and classifying the run.
+ *
+ * `reports` is one entry per project (multi-project Vitest configs produce
+ * multiple). `classifications` is keyed by `TestReport.fullName` and is the
+ * stable / new-failure / persistent / flaky / recovered label assigned by
+ * `HistoryTracker`. `trendSummary` is present only on full (non-scoped) runs
+ * where coverage trends were computed.
+ */
+export interface ReporterRenderInput {
+	readonly reports: ReadonlyArray<AgentReport>;
+	readonly classifications: ReadonlyMap<string, TestClassification>;
+	readonly trendSummary?: {
+		readonly direction: "improving" | "regressing" | "stable";
+		readonly runCount: number;
+		readonly firstMetric?: {
+			readonly name: string;
+			readonly from: number;
+			readonly to: number;
+			readonly target?: number;
+		};
+	};
+}
+
+/**
+ * The reporter contract. Implement this to plug a custom output strategy
+ * into `vitest-agent`.
+ *
+ * `render` is called once per test run after the plugin has persisted all
+ * data. The reporter returns `RenderedOutput[]` — the plugin routes each
+ * entry to its declared `target` (`stdout`, `file`, `github-summary`), so
+ * the reporter does not need to know about file paths or write streams.
+ *
+ * A "no-op" reporter is one line: `() => ({ render: () => [] })`. Useful
+ * for users who only want persistence (the MCP/CLI tools see the data) and
+ * no console output at all.
+ */
+export interface VitestAgentReporter {
+	readonly render: (input: ReporterRenderInput) => ReadonlyArray<RenderedOutput>;
+}
+
+/**
+ * Factory that the plugin's `reporter` option accepts. The plugin calls
+ * this once with the resolved kit; the factory returns either a single
+ * reporter or an array of reporters bound to that kit.
+ *
+ * Returning an array models Vitest's own multi-reporter pattern
+ * (`reporters: ['default', 'github-actions']`): each reporter handles
+ * its own concern (e.g. one for stdout markdown, one for SARIF, one
+ * for the GitHub Actions step summary) and the plugin concatenates
+ * their `RenderedOutput[]` before routing. Persistence still runs
+ * exactly once — the plugin owns the Vitest lifecycle and the
+ * reporters never see Vitest events directly.
+ *
+ * Defaulting to a factory (rather than passing a class or pre-made
+ * instance) gives implementations a place to do construction-time work
+ * (e.g. opening a file handle, capturing config) while still letting
+ * the plugin own the kit assembly.
+ */
+export type VitestAgentReporterFactory = (kit: ReporterKit) => VitestAgentReporter | ReadonlyArray<VitestAgentReporter>;

@@ -14,14 +14,33 @@ import type { AgentReporterOptions } from "../schemas/Options.js";
 // --- Duck-typed Vitest interfaces ---
 
 /**
+ * Duck-typed Vitest parsed stack frame.
+ *
+ * Vitest's TestError.stacks is `ParsedStack[]` from `@vitest/utils`, not a
+ * plain string array. Frames must be formatted before joining; otherwise
+ * `[obj].join("\n")` produces "[object Object]".
+ *
+ * @internal
+ */
+export interface VitestParsedStack {
+	method: string;
+	file: string;
+	line: number;
+	column: number;
+}
+
+/**
  * Duck-typed Vitest test error with message, optional diff, and stack traces.
+ *
+ * `stacks` accepts both already-formatted strings (legacy / coercion path)
+ * and `ParsedStack[]` (real Vitest output).
  *
  * @internal
  */
 export interface VitestTestError {
 	message: string;
 	diff?: string;
-	stacks?: string[];
+	stacks?: Array<string | VitestParsedStack>;
 }
 
 /**
@@ -85,7 +104,7 @@ export interface VitestModuleDiagnostic {
  */
 export interface VitestModuleError {
 	message: string;
-	stacks?: string[];
+	stacks?: Array<string | VitestParsedStack>;
 }
 
 /**
@@ -137,6 +156,19 @@ export interface VitestTestModule {
 // --- Helpers ---
 
 /**
+ * Format a single Vitest stack frame: strings pass through; ParsedStack
+ * objects render as `at <method> (<file>:<line>:<column>)`. An empty
+ * `method` falls back to `<anonymous>`.
+ *
+ * @internal
+ */
+function formatStackFrame(frame: string | VitestParsedStack): string {
+	if (typeof frame === "string") return frame;
+	const method = frame.method.length > 0 ? frame.method : "<anonymous>";
+	return `at ${method} (${frame.file}:${frame.line}:${frame.column})`;
+}
+
+/**
  * Map Vitest error objects to the {@link ReportError} shape.
  *
  * @internal
@@ -149,7 +181,7 @@ function mapErrors(
 		return {
 			message: e.message,
 			...("diff" in e && e.diff != null ? { diff: e.diff } : {}),
-			...(e.stacks && e.stacks.length > 0 ? { stack: e.stacks.join("\n") } : {}),
+			...(e.stacks && e.stacks.length > 0 ? { stack: e.stacks.map(formatStackFrame).join("\n") } : {}),
 		};
 	});
 }

@@ -7,8 +7,9 @@ import {
 	resolveDataPath,
 	resolveLogFile,
 	resolveLogLevel,
-} from "vitest-agent-reporter-shared";
+} from "vitest-agent-sdk";
 import type { McpContext } from "./context.js";
+import { createCurrentSessionIdRef } from "./context.js";
 import { McpLive } from "./layers/McpLive.js";
 import { startMcpServer } from "./server.js";
 
@@ -31,8 +32,34 @@ function resolveProjectDir(): string {
 	return process.env.VITEST_AGENT_REPORTER_PROJECT_DIR ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
 }
 
+/**
+ * Optional first positional argument: an initial Claude Code
+ * `cc_session_id` to seed the MCP server's session association.
+ *
+ * The plugin manifest (`plugin/.claude-plugin/plugin.json`) can pass this
+ * via Claude Code variable substitution if such a variable exists for
+ * sessions (the documented substitutions are `${CLAUDE_PLUGIN_ROOT}` and
+ * `${CLAUDE_PLUGIN_DATA}`; testing whether `${CLAUDE_SESSION_ID}` or a
+ * similar name is honored in `mcpServers.args` is part of the reason
+ * this seed path exists). When the seed is empty the agent is expected
+ * to call `set_current_session_id` once at the start of the
+ * conversation.
+ */
+function resolveInitialSessionId(): string | null {
+	const argv = process.argv[2];
+	if (argv === undefined) return null;
+	const trimmed = argv.trim();
+	if (trimmed.length === 0) return null;
+	// Claude Code substitutes unknown ${...} variables to literal text in
+	// some surfaces (e.g. ${UNKNOWN_VAR} -> "${UNKNOWN_VAR}"); guard against
+	// a literal substitution arriving here so we don't seed garbage.
+	if (trimmed.startsWith("${") && trimmed.endsWith("}")) return null;
+	return trimmed;
+}
+
 async function main() {
 	const projectDir = resolveProjectDir();
+	const initialSessionId = resolveInitialSessionId();
 
 	const dbPath = await Effect.runPromise(
 		resolveDataPath(projectDir).pipe(Effect.provide(PathResolutionLive(projectDir)), Effect.provide(NodeContext.layer)),
@@ -46,16 +73,20 @@ async function main() {
 	const ctx: McpContext = {
 		runtime: runtime as unknown as McpContext["runtime"],
 		cwd: projectDir,
+		currentSessionId: createCurrentSessionIdRef(initialSessionId),
 	};
 
-	console.error("[vitest-agent-reporter-mcp] Starting...");
-	console.error(`[vitest-agent-reporter-mcp] Project: ${projectDir}`);
-	console.error(`[vitest-agent-reporter-mcp] Database: ${dbPath}`);
+	console.error("[vitest-agent-mcp] Starting...");
+	console.error(`[vitest-agent-mcp] Project: ${projectDir}`);
+	console.error(`[vitest-agent-mcp] Database: ${dbPath}`);
+	console.error(
+		`[vitest-agent-mcp] Initial session id: ${initialSessionId ?? "(none — agent will call set_current_session_id)"}`,
+	);
 
 	await startMcpServer(ctx);
 }
 
 main().catch((err) => {
-	process.stderr.write(`vitest-agent-reporter-mcp: ${formatFatalError(err)}\n`);
+	process.stderr.write(`vitest-agent-mcp: ${formatFatalError(err)}\n`);
 	process.exit(1);
 });

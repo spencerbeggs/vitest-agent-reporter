@@ -14,7 +14,7 @@ import {
 	resolveDataPath,
 	resolveLogFile,
 	resolveLogLevel,
-} from "vitest-agent-reporter-shared";
+} from "vitest-agent-sdk";
 import { cacheCommand } from "./commands/cache.js";
 import { coverageCommand } from "./commands/coverage.js";
 import { doctorCommand } from "./commands/doctor.js";

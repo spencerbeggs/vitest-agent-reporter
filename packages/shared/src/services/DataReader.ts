@@ -157,6 +157,7 @@ export interface FailureSignatureDetail {
 	readonly signatureHash: string;
 	readonly firstSeenRunId: number | null;
 	readonly firstSeenAt: string;
+	readonly lastSeenAt: string | null;
 	readonly occurrenceCount: number;
 	readonly recentErrors: ReadonlyArray<{
 		readonly runId: number;
@@ -336,5 +337,6 @@ export class DataReader extends Context.Tag("vitest-agent-reporter/DataReader")<
 			procedurePath: string,
 			key: string,
 		) => Effect.Effect<Option.Option<string>, DataStoreError>;
+		readonly getLatestTestCaseForSession: (ccSessionId: string) => Effect.Effect<Option.Option<number>, DataStoreError>;
 	}
 >() {}

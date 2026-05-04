@@ -14,10 +14,21 @@ function jsonResult(value: unknown) {
 }
 
 export async function startMcpServer(ctx: McpContext): Promise<void> {
-	const server = new McpServer({
-		name: "vitest-agent-reporter",
-		version: "0.1.0",
-	});
+	const server = new McpServer(
+		{
+			name: "vitest-agent-reporter",
+			version: "0.1.0",
+		},
+		{
+			capabilities: {
+				experimental: {
+					// Declare Claude Code's channel capability so it routes
+					// elicitation hook responses back to this server process.
+					"claude/channel": {},
+				},
+			},
+		},
+	);
 
 	const factory = createCallerFactory(appRouter);
 	const caller = factory(ctx);
@@ -304,6 +315,9 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 				files: z.optional(z.array(z.string())).describe("Test file paths to run"),
 				project: z.optional(z.string()).describe("Project name to filter"),
 				timeout: z.optional(z.number()).describe("Timeout in seconds (default: 120)"),
+				format: z
+					.optional(z.enum(["markdown", "json"]))
+					.describe("Output format (default: markdown). 'json' returns the raw AgentReport for machine consumption."),
 			},
 		},
 		async (args) =>
@@ -312,6 +326,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 					files: args.files,
 					project: args.project,
 					timeout: args.timeout,
+					format: args.format,
 				}),
 			),
 	);
@@ -732,6 +747,69 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 		},
 		async (args) => textResult(await caller.commit_changes({ sha: args.sha })),
 	);
+
+	// ── Session-id association (ergonomic default for session-aware tools) ───
+
+	// Shared elicitation helper. Fires once per process — if the id is
+	// already set it returns immediately. The Elicitation hook
+	// (plugin/hooks/elicitation-session-id.sh) auto-accepts with the
+	// Claude Code session id so no dialog is shown to the user.
+	const elicitSessionId = async (): Promise<void> => {
+		if (ctx.currentSessionId.get() !== null) return;
+		try {
+			const result = await server.server.elicitInput({
+				message: "Establishing Claude Code session association for vitest-agent-reporter",
+				requestedSchema: {
+					type: "object" as const,
+					properties: {
+						sessionId: {
+							type: "string" as const,
+							title: "Claude Code Session ID",
+							description: "The cc_session_id for this Claude Code window",
+						},
+					},
+					required: ["sessionId"],
+				},
+			});
+			if (result.action === "accept" && typeof result.content?.sessionId === "string") {
+				ctx.currentSessionId.set(result.content.sessionId);
+			}
+		} catch {
+			// Client does not support elicitation; id can be set via set_current_session_id
+		}
+	};
+
+	server.registerTool(
+		"get_current_session_id",
+		{
+			description:
+				"Get the Claude Code cc_session_id this MCP server is currently associated with. Automatically seeds the id via elicitation on first call when not yet set. Returns { currentSessionId: string | null }.",
+			inputSchema: {},
+		},
+		async () => {
+			await elicitSessionId();
+			return jsonResult(await caller.get_current_session_id({}));
+		},
+	);
+
+	server.registerTool(
+		"set_current_session_id",
+		{
+			description:
+				"Associate this MCP server process with a Claude Code cc_session_id. Once set, session-aware tools default to this id when ccSessionId is omitted. Pass null to clear. Each Claude Code window has its own MCP server, so this association is per-window.",
+			inputSchema: {
+				id: z.union([z.string(), z.null()]).describe("Claude Code session id, or null to clear"),
+			},
+		},
+		async (args) => jsonResult(await caller.set_current_session_id({ id: args.id })),
+	);
+
+	// Best-effort early seeding: fires after the MCP handshake completes.
+	// The hook system may not be ready this early; get_current_session_id
+	// serves as the reliable fallback if this no-ops.
+	server.server.oninitialized = () => {
+		void elicitSessionId();
+	};
 
 	const transport = new StdioServerTransport();
 	await server.connect(transport);

@@ -26,7 +26,7 @@
 		],
 		"PreToolUse": [
 			{
-				"matcher": "mcp__vitest-agent-reporter__.*",
+				"matcher": "mcp__(plugin_vitest-agent-reporter_vitest-reporter|vitest-agent-reporter)__.*",
 				"hooks": [
 					{
 						"type": "command",
@@ -45,6 +45,7 @@
 				]
 			},
 			{
+				"matcher": "Bash|Edit|Write|MultiEdit",
 				"hooks": [
 					{
 						"type": "command",
@@ -141,6 +142,30 @@
 						"type": "command",
 						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/subagent-stop-tdd.sh\"",
 						"timeout": 10
+					}
+				]
+			}
+		],
+		"Elicitation": [
+			{
+				"hooks": [
+					{
+						"matcher": "*",
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/elicitation-session-id.sh\"",
+						"timeout": 5
+					}
+				]
+			}
+		],
+		"ElicitationResult": [
+			{
+				"hooks": [
+					{
+						"matcher": "*",
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/elicitation-result-record.sh\"",
+						"timeout": 5
 					}
 				]
 			}

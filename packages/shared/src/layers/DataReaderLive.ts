@@ -1510,16 +1510,24 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 
 				// Metric 3: orientation usefulness — sessions with non-empty
 				// triage that referenced an orientation tool in their first
-				// three tool calls.
+				// three completed tool invocations (tool_result turns, numbered
+				// sequentially per session via ROW_NUMBER so interleaved
+				// user_prompt/tool_call turns don't compress the window).
 				const m3 = yield* sql<{ total: number; referenced_count: number }>`
 					WITH triaged_sessions AS (
 						SELECT id AS session_id FROM sessions WHERE triage_was_non_empty = 1
 					),
+					ranked_tool_results AS (
+						SELECT session_id, id AS turn_id,
+							ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY turn_no) AS result_no
+						FROM turns
+						WHERE type = 'tool_result'
+					),
 					first_three_tool_calls AS (
-						SELECT t.session_id, ti.tool_name
-						FROM turns t
-						JOIN tool_invocations ti ON ti.turn_id = t.id
-						WHERE t.turn_no <= 3 AND t.type = 'tool_call'
+						SELECT r.session_id, ti.tool_name
+						FROM ranked_tool_results r
+						JOIN tool_invocations ti ON ti.turn_id = r.turn_id
+						WHERE r.result_no <= 3
 					),
 					referenced AS (
 						SELECT DISTINCT ts.session_id
@@ -1621,9 +1629,10 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 					signature_hash: string;
 					first_seen_run_id: number | null;
 					first_seen_at: string;
+					last_seen_at: string | null;
 					occurrence_count: number;
 				}>`
-					SELECT signature_hash, first_seen_run_id, first_seen_at, occurrence_count
+					SELECT signature_hash, first_seen_run_id, first_seen_at, last_seen_at, occurrence_count
 					FROM failure_signatures WHERE signature_hash = ${hash} LIMIT 1
 				`;
 				if (sigRows.length === 0) return Option.none<FailureSignatureDetail>();
@@ -1638,6 +1647,7 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 					signatureHash: sig.signature_hash,
 					firstSeenRunId: sig.first_seen_run_id,
 					firstSeenAt: sig.first_seen_at,
+					lastSeenAt: sig.last_seen_at,
 					occurrenceCount: sig.occurrence_count,
 					recentErrors: errRows.map((e) => ({ runId: e.run_id, message: e.message, errorName: e.name })),
 				});
@@ -1964,6 +1974,47 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				),
 			);
 
+		const getLatestTestCaseForSession = (ccSessionId: string): Effect.Effect<Option.Option<number>, DataStoreError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("getLatestTestCaseForSession").pipe(Effect.annotateLogs({ ccSessionId }));
+				// Find the most-recently-added test case (from the latest run) whose
+				// module file was edited in the given session. Uses LIKE suffix-matching
+				// because the reporter stores relative paths while hooks store absolute.
+				const rows = yield* sql<{ id: number }>`
+					SELECT tc.id
+					FROM test_cases tc
+					JOIN test_modules tm ON tc.module_id = tm.id
+					JOIN files f_mod ON f_mod.id = tm.file_id
+					WHERE tm.run_id = (SELECT id FROM test_runs ORDER BY id DESC LIMIT 1)
+					  AND EXISTS (
+						SELECT 1
+						FROM file_edits fe
+						JOIN turns t ON fe.turn_id = t.id
+						JOIN sessions s ON t.session_id = s.id
+						JOIN files f_edit ON fe.file_id = f_edit.id
+						WHERE s.cc_session_id = ${ccSessionId}
+						  AND (
+							f_edit.path = f_mod.path
+							OR f_edit.path LIKE '%/' || f_mod.path
+							OR f_mod.path LIKE '%/' || f_edit.path
+						  )
+					  )
+					ORDER BY tc.id DESC
+					LIMIT 1
+				`;
+				return rows.length === 0 ? Option.none() : Option.some(rows[0].id);
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) =>
+						new DataStoreError({
+							operation: "read",
+							table: "test_cases",
+							reason: extractSqlReason(e),
+						}),
+				),
+			);
+
 		return {
 			getLatestRun,
 			getRunsByProject,
@@ -2000,6 +2051,7 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 			listTddSessionsForSession,
 			listHypotheses,
 			findIdempotentResponse,
+			getLatestTestCaseForSession,
 		};
 	}),
 );

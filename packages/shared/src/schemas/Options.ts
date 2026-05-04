@@ -44,7 +44,7 @@ export const AgentPluginOptions = Schema.Struct({
 	logLevel: Schema.optional(Schema.String),
 	logFile: Schema.optional(Schema.String),
 	mcp: Schema.optional(Schema.Boolean),
-	reporter: Schema.optional(
+	reporterOptions: Schema.optional(
 		Schema.Struct({
 			cacheDir: Schema.optional(Schema.String),
 			omitPassingTests: Schema.optional(Schema.Boolean),

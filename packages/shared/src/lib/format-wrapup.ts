@@ -52,13 +52,23 @@ export const formatWrapupEffect = (options: FormatWrapupOptions): Effect.Effect<
 			].join("\n");
 		}
 
-		// Resolve sessionId from either the integer id or the cc_session_id.
+		// Resolve sessionId AND agentKind from either the integer id or the
+		// cc_session_id. Hypothesis-related nudges are gated on subagent
+		// sessions (typically the TDD orchestrator); on main sessions the
+		// `hypothesis_record` discipline is not in play, so suggesting it
+		// is noise.
 		let sessionId: number | null = null;
+		let agentKind: "main" | "subagent" = "main";
 		if (options.sessionId !== undefined) {
 			sessionId = options.sessionId;
+			const opt = yield* reader.getSessionById(options.sessionId).pipe(Effect.orElseSucceed(() => Option.none()));
+			if (Option.isSome(opt)) agentKind = opt.value.agentKind;
 		} else if (options.ccSessionId !== undefined) {
 			const opt = yield* reader.getSessionByCcId(options.ccSessionId).pipe(Effect.orElseSucceed(() => Option.none()));
-			if (Option.isSome(opt)) sessionId = opt.value.id;
+			if (Option.isSome(opt)) {
+				sessionId = opt.value.id;
+				agentKind = opt.value.agentKind;
+			}
 		}
 
 		// TDD handoff: pull the subagent's tdd_session and summarize.
@@ -92,20 +102,21 @@ export const formatWrapupEffect = (options: FormatWrapupOptions): Effect.Effect<
 			return "";
 		}
 
+		const isSubagent = agentKind === "subagent";
 		const lines: string[] = [];
-		const heading = options.kind === "stop" ? "## Before you finish" : "## Session wrap-up";
-		lines.push(heading);
 
-		if (fileEditCount > 0 && openHypotheses.length === 0) {
-			lines.push(
-				`- ${fileEditCount} recent file edit${fileEditCount === 1 ? "" : "s"} but no hypotheses recorded. Did your changes have a hypothesis? Use \`hypothesis_record\` to externalize the why before continuing.`,
-			);
-		}
+		if (isSubagent) {
+			if (fileEditCount > 0 && openHypotheses.length === 0) {
+				lines.push(
+					`- ${fileEditCount} recent file edit${fileEditCount === 1 ? "" : "s"} but no hypotheses recorded. Did your changes have a hypothesis? Use \`hypothesis_record\` to externalize the why before continuing.`,
+				);
+			}
 
-		if (openHypotheses.length > 0) {
-			lines.push(
-				`- ${openHypotheses.length} open hypothesis(es). Use \`hypothesis_validate(id, "confirmed"|"refuted"|"abandoned")\` to mark them.`,
-			);
+			if (openHypotheses.length > 0) {
+				lines.push(
+					`- ${openHypotheses.length} open hypothesis(es). Use \`hypothesis_validate(id, "confirmed"|"refuted"|"abandoned")\` to mark them.`,
+				);
+			}
 		}
 
 		if (options.kind === "session_end") {
@@ -116,5 +127,10 @@ export const formatWrapupEffect = (options: FormatWrapupOptions): Effect.Effect<
 			lines.push("- What from this session matters next? Record it now via `note_create` before context compaction.");
 		}
 
-		return lines.join("\n");
+		if (lines.length === 0) {
+			return "";
+		}
+
+		const heading = options.kind === "stop" ? "## Before you finish" : "## Session wrap-up";
+		return [heading, ...lines].join("\n");
 	});

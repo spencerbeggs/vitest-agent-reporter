@@ -11,7 +11,7 @@
 
 import { Command, Options } from "@effect/cli";
 import { Effect } from "effect";
-import { formatWrapupEffect } from "vitest-agent-reporter-shared";
+import { formatWrapupEffect } from "vitest-agent-sdk";
 
 const sessionIdOption = Options.optional(Options.integer("session-id"));
 const ccSessionIdOption = Options.optional(Options.text("cc-session-id"));

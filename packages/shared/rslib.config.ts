@@ -7,7 +7,7 @@ export default NodeLibraryBuilder.create({
 	},
 	transform({ pkg, target }) {
 		if (target?.registry === "https://npm.pkg.github.com/") {
-			pkg.name = "@spencerbeggs/vitest-agent-reporter-shared";
+			pkg.name = "@spencerbeggs/vitest-agent-sdk";
 		}
 		delete pkg.devDependencies;
 		delete pkg.bundleDependencies;
