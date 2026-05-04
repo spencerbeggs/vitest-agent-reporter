@@ -2,14 +2,14 @@ import { readFileSync } from "node:fs";
 import type { StackFrameInput } from "vitest-agent-sdk";
 import { computeFailureSignature, findFunctionBoundary } from "vitest-agent-sdk";
 
-interface VitestStackFrameLike {
+export interface VitestStackFrameLike {
 	readonly file?: string;
 	readonly line?: number;
 	readonly column?: number;
 	readonly method?: string;
 }
 
-interface VitestErrorLike {
+export interface VitestErrorLike {
 	readonly name?: string;
 	readonly message: string;
 	readonly stack?: string;

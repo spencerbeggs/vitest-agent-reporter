@@ -39,6 +39,8 @@ export { CoverageAnalyzer } from "./services/CoverageAnalyzer.js";
 
 export { captureEnvVars } from "./utils/capture-env.js";
 export { captureSettings, hashSettings } from "./utils/capture-settings.js";
+export type { VitestErrorLike, VitestStackFrameLike } from "./utils/process-failure.js";
 export { processFailure } from "./utils/process-failure.js";
+export type { VitestThresholdsInput } from "./utils/resolve-thresholds.js";
 export { resolveThresholds } from "./utils/resolve-thresholds.js";
 export { CONSOLE_REPORTERS, stripConsoleReporters } from "./utils/strip-console-reporters.js";
