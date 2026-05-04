@@ -12,7 +12,7 @@
  * the plugin invokes each reporter once per run and concatenates their
  * `RenderedOutput[]` before routing.
  *
- * This is what `agentPlugin()` uses when no `reporterFactory` is
+ * This is what `agentPlugin()` uses when no `reporter` factory is
  * supplied. Replicates the pre-split AgentReporter output behavior: the
  * same Formatter is chosen and a GFM step-summary is written under
  * GitHub Actions.

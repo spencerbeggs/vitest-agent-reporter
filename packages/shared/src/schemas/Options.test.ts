@@ -82,7 +82,7 @@ describe("AgentPluginOptions", () => {
 		const input = {
 			mode: "agent",
 			strategy: "own",
-			reporter: {
+			reporterOptions: {
 				cacheDir: "/tmp/cache",
 				omitPassingTests: true,
 				coverageThresholds: { lines: 90 },
@@ -96,7 +96,7 @@ describe("AgentPluginOptions", () => {
 		const result = Schema.decodeUnknownSync(AgentPluginOptions)(input);
 		expect(result.mode).toBe("agent");
 		expect(result.strategy).toBe("own");
-		expect(result.reporter?.cacheDir).toBe("/tmp/cache");
+		expect(result.reporterOptions?.cacheDir).toBe("/tmp/cache");
 	});
 
 	it("rejects invalid mode value", () => {

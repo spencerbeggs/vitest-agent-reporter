@@ -160,7 +160,7 @@ describe("AgentPlugin", () => {
 	describe("cache directory resolution", () => {
 		it("uses explicit cacheDir from reporter options", async () => {
 			const plugin = AgentPlugin(
-				{ reporter: { cacheDir: "/custom/cache" } },
+				{ reporterOptions: { cacheDir: "/custom/cache" } },
 				EnvironmentDetectorTest.layer("agent-shell"),
 			);
 			const vitest = mockVitest(["agent"]);
@@ -190,7 +190,7 @@ describe("AgentPlugin", () => {
 		it("passes thresholds from plugin options to reporter", async () => {
 			const plugin = AgentPlugin(
 				{
-					reporter: {
+					reporterOptions: {
 						coverageThresholds: { lines: 80, branches: 70 },
 					},
 				},
@@ -215,7 +215,7 @@ describe("AgentPlugin", () => {
 		it("plugin options take priority over vitest config thresholds", async () => {
 			const plugin = AgentPlugin(
 				{
-					reporter: {
+					reporterOptions: {
 						coverageThresholds: { lines: 50 },
 					},
 				},
@@ -234,7 +234,7 @@ describe("AgentPlugin", () => {
 		it("passes targets to reporter when set", async () => {
 			const plugin = AgentPlugin(
 				{
-					reporter: {
+					reporterOptions: {
 						coverageTargets: { lines: 95 },
 					},
 				},
@@ -250,7 +250,7 @@ describe("AgentPlugin", () => {
 			const thresholds: Record<string, unknown> = { lines: 80 };
 			const plugin = AgentPlugin(
 				{
-					reporter: {
+					reporterOptions: {
 						coverageTargets: { lines: 95 },
 					},
 				},
@@ -273,7 +273,7 @@ describe("AgentPlugin", () => {
 			const thresholds: Record<string, unknown> = { lines: 80 };
 			const plugin = AgentPlugin(
 				{
-					reporter: {
+					reporterOptions: {
 						coverageTargets: { lines: 95 },
 						autoUpdate: false,
 					},

@@ -6,10 +6,10 @@ SERVER=$(echo "$INPUT" | jq -r '.mcp_server_name // empty')
 # or the bare "vitest-reporter" for resilience.
 case "$SERVER" in
   *":vitest-reporter" | "vitest-reporter") ;;
-  *) exit 0 ;;
+  *) echo '{}'; exit 0 ;;
 esac
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
-if [ -z "$SESSION_ID" ]; then exit 0; fi
+if [ -z "$SESSION_ID" ]; then echo '{}'; exit 0; fi
 jq -n --arg sid "$SESSION_ID" '{
   "hookSpecificOutput": {
     "hookEventName": "Elicitation",

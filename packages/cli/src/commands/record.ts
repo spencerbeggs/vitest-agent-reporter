@@ -188,9 +188,9 @@ const testCaseTurnsSubcommand = Command.make("test-case-turns", { ccSessionId },
 	Command.withDescription("Backfill test_cases.created_turn_id from file_edits in the current session (BUG-2 fix)"),
 );
 
-const invocationMethodOpt = Options.text("invocation-method").pipe(
+const invocationMethodOpt = Options.choice("invocation-method", ["bash", "mcp", "cli"]).pipe(
 	Options.withDescription('How tests were invoked: "bash", "mcp", or "cli"'),
-	Options.withDefault("bash" as const),
+	Options.withDefault("bash"),
 );
 
 const runTriggerSubcommand = Command.make(

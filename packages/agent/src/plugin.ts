@@ -30,12 +30,12 @@ export interface AgentPluginConstructorOptions extends AgentPluginOptions {
 	 * Returning an array of reporters is supported: each is called once per
 	 * run and their `RenderedOutput[]` results are concatenated and routed.
 	 *
-	 * Named `reporterFactory` (not `reporter`) to avoid colliding with the
-	 * existing `options.reporter` config bag (cacheDir, coverageThresholds,
-	 * etc.). A future API cleanup may flatten the config bag onto
-	 * `AgentPluginOptions` and free up the `reporter` name for the factory.
+	 * Pass a factory function to swap out the default rendering pipeline:
+	 * ```ts
+	 * agentPlugin({ reporter: () => myReporter })
+	 * ```
 	 */
-	reporterFactory?: VitestAgentReporterFactory;
+	reporter?: VitestAgentReporterFactory;
 }
 
 /**
@@ -182,18 +182,18 @@ export function AgentPlugin(options: AgentPluginConstructorOptions = {}, _layer?
 				// When unset, the reporter falls back to XDG-based resolution via
 				// resolveDataPath (workspace name under $XDG_DATA_HOME).
 				const outputFile = (vitest.config as { outputFile?: string | Record<string, string> }).outputFile;
-				const cacheDir = options.reporter?.cacheDir ?? resolveOutputDir(outputFile) ?? undefined;
+				const cacheDir = options.reporterOptions?.cacheDir ?? resolveOutputDir(outputFile) ?? undefined;
 
 				// Resolve coverage thresholds from plugin options or vitest config
 				const coverageConfig = vitest.config.coverage as { thresholds?: Record<string, unknown> } | undefined;
 				const coverageThresholds = resolveThresholds(
-					(options.reporter?.coverageThresholds as Record<string, unknown> | undefined) ??
+					(options.reporterOptions?.coverageThresholds as Record<string, unknown> | undefined) ??
 						(coverageConfig?.thresholds as Record<string, unknown> | undefined),
 				);
-				const coverageTargets = options.reporter?.coverageTargets
-					? resolveThresholds(options.reporter.coverageTargets as Record<string, unknown>)
+				const coverageTargets = options.reporterOptions?.coverageTargets
+					? resolveThresholds(options.reporterOptions.coverageTargets as Record<string, unknown>)
 					: undefined;
-				const autoUpdate = options.reporter?.autoUpdate ?? true;
+				const autoUpdate = options.reporterOptions?.autoUpdate ?? true;
 
 				// Disable Vitest's native autoUpdate when our targets are set
 				if (coverageTargets && autoUpdate) {
@@ -221,7 +221,7 @@ export function AgentPlugin(options: AgentPluginConstructorOptions = {}, _layer?
 				}
 
 				const reporter = new AgentReporter({
-					...options.reporter,
+					...options.reporterOptions,
 					...(cacheDir !== undefined ? { cacheDir } : {}),
 					coverageThresholds,
 					coverageTargets,
@@ -232,7 +232,7 @@ export function AgentPlugin(options: AgentPluginConstructorOptions = {}, _layer?
 					logFile: options.logFile,
 					mcp,
 					githubActions,
-					...(options.reporterFactory !== undefined && { reporter: options.reporterFactory }),
+					...(options.reporter !== undefined && { reporter: options.reporter }),
 				});
 
 				// Push reporter into the config (mutating the reporters array)
