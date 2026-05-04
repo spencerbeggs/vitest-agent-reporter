@@ -262,8 +262,8 @@ importers:
         specifier: ^4.1.0
         version: 4.1.0
       workspaces-effect:
-        specifier: ^0.5.1
-        version: 0.5.1(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2)
+        specifier: ^0.6.0
+        version: 0.6.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2)
       xdg-effect:
         specifier: ^1.0.1
         version: 1.0.1(df1c6b21a4da8e677dd9bca2b216bee7)
@@ -1434,6 +1434,7 @@ packages:
 
   '@types/acorn@6.0.4':
     resolution: {integrity: sha512-DafqcBAjbOOmgqIx3EF9EAdBKAKgspv00aQVIW3fVQ0TXo5ZPBeSRey1SboVAUzjw8Ucm7cd1gtTSlosYoEQLA==}
+    deprecated: This is a stub types definition. acorn provides its own type definitions, so you do not need this installed.
 
   '@types/argparse@1.0.38':
     resolution: {integrity: sha512-ebDJ9b0e702Yr7pWgB0jzm+CX4Srzz8RcXtLJDJB+BSccqMa36uyH/zUsSYao5+BD1ytv3k3rPYCq4mAE1hsXA==}
@@ -1476,6 +1477,7 @@ packages:
 
   '@types/parse-path@7.1.0':
     resolution: {integrity: sha512-EULJ8LApcVEPbrfND0cRQqutIOdiIgJ1Mgrhpy755r14xMohPTEpkV/k28SJvuOs9bHRFW8x+KeDAEPiGQPB9Q==}
+    deprecated: This is a stub types definition. parse-path provides its own type definitions, so you do not need this installed.
 
   '@types/ssri@7.1.5':
     resolution: {integrity: sha512-odD/56S3B51liILSk5aXJlnYt99S6Rt9EFDDqGtJM26rKHApHcwyU/UoYHrzKkdkHMAIquGWCuHtQTbes+FRQw==}
@@ -4231,6 +4233,12 @@ packages:
 
   workspaces-effect@0.5.1:
     resolution: {integrity: sha512-f0T2S1rExhNrNNDul+yOs6mWhSWHZYqpSZE/5+TrFUICTH+tXj90j0FpEWBCFnvyHwa1KVV3lPl9U49AyMH54w==}
+    peerDependencies:
+      '@effect/platform': '>=0.96.0'
+      effect: '>=3.21.0'
+
+  workspaces-effect@0.6.0:
+    resolution: {integrity: sha512-SsJW0TYayB/5sT6CM5n/4UKZMyx/OGdLd6+lh0LBOGCebHEhBjFi1PZLCUCwyl0XLTi4U+qZ7G1v39r/W+pSYA==}
     peerDependencies:
       '@effect/platform': '>=0.96.0'
       effect: '>=3.21.0'
@@ -8735,6 +8743,15 @@ snapshots:
       yaml-effect: 0.2.3(effect@3.21.2)
 
   workspaces-effect@0.5.1(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2):
+    dependencies:
+      '@effect/platform': 0.96.1(effect@3.21.2)
+      effect: 3.21.2
+      jsonc-effect: 0.2.1(effect@3.21.2)
+      minimatch: 10.2.5
+      semver-effect: 0.2.1(effect@3.21.2)
+      yaml-effect: 0.5.0(effect@3.21.2)
+
+  workspaces-effect@0.6.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2):
     dependencies:
       '@effect/platform': 0.96.1(effect@3.21.2)
       effect: 3.21.2
