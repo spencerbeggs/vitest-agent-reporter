@@ -96,7 +96,7 @@ interfaces, not schemas.
 TypeScript and serializable to/from JSON files on disk.
 
 **Chosen approach:** Effect Schema definitions split across
-`packages/shared/src/schemas/` directory. TypeScript types derived via
+`packages/sdk/src/schemas/` directory. TypeScript types derived via
 `typeof Schema.Type`. JSON encode/decode via `Schema.decodeUnknown` /
 `Schema.encodeUnknown`. Schemas are exported from the public API so
 consumers can validate report files.
@@ -207,14 +207,14 @@ server, and consumer-specified paths.
 
 1. Explicit `reporter.cacheDir` option (user override)
 2. `outputFile['vitest-agent-reporter']` from Vitest config (native pattern)
-3. `vite.cacheDir + "/vitest-agent-reporter"` (default, typically
-   `node_modules/.vite/.../vitest-agent-reporter/`)
+3. `vite.cacheDir + "/vitest-agent"` (default, typically
+   `node_modules/.vite/.../vitest-agent/`)
 
 CLI and MCP cache dir resolution check common locations. The database
 file is `data.db` within the resolved cache directory.
 
 When using `AgentReporter` standalone (without the plugin), the default is
-`.vitest-agent-reporter` in the project root.
+`.vitest-agent` in the project root.
 
 ### Decision 12: Compact Console Output
 
@@ -299,7 +299,7 @@ noise on green runs, progressively more detail as problems accumulate.
   CLI hints
 
 Tiered output is implemented in the markdown formatter
-(`packages/shared/src/formatters/markdown.ts`) and controlled by the
+(`packages/sdk/src/formatters/markdown.ts`) and controlled by the
 DetailResolver service, which maps `(executor, runHealth)` to a
 `DetailLevel` enum.
 
@@ -546,9 +546,9 @@ help.
      should live at the call site
 
 **Implementation:** New utility
-`packages/shared/src/utils/ensure-migrated.ts` exports `ensureMigrated(dbPath,
+`packages/sdk/src/utils/ensure-migrated.ts` exports `ensureMigrated(dbPath,
 logLevel?, logFile?)`. The promise cache lives at
-`Symbol.for("vitest-agent-reporter/migration-promises")` on
+`Symbol.for("vitest-agent/migration-promises")` on
 `globalThis`. `AgentReporter.onTestRunEnd` awaits `ensureMigrated`
 before the main `Effect.runPromise`; on rejection, it prints
 `formatFatalError(err)` to stderr and returns. The function is also
@@ -587,7 +587,7 @@ zero-deps PM-detect + spawn script:
    - Default to `npm`
 3. Spawn `<pm-exec> vitest-agent-mcp` with `stdio:
    "inherit"`, `cwd: projectDir`, and `env: { ...process.env,
-   VITEST_AGENT_REPORTER_PROJECT_DIR: projectDir }`. The PM commands
+   VITEST_AGENT_PROJECT_DIR: projectDir }`. The PM commands
    are: `pnpm exec`, `npx --no-install`, `yarn run`, `bun x`
 4. On `child.error` (e.g. PM not on PATH): print PM-specific install
    instructions and the underlying error, exit `1`
@@ -600,7 +600,7 @@ zero-deps PM-detect + spawn script:
 The script imports only `node:child_process`, `node:fs`, and
 `node:path` -- it must run before the user has installed anything.
 
-**`VITEST_AGENT_REPORTER_PROJECT_DIR` env passthrough:** the spawned
+**`VITEST_AGENT_PROJECT_DIR` env passthrough:** the spawned
 MCP subprocess uses this env var as the highest-precedence source
 for `projectDir` (see Component 22 / `packages/mcp/src/bin.ts`'s
 `resolveProjectDir`). Claude Code sets `CLAUDE_PROJECT_DIR` for hook
@@ -648,14 +648,14 @@ this?).
 of the workspace's identity, derived from XDG env vars and the
 workspace's `package.json` `name`:
 
-`$XDG_DATA_HOME/vitest-agent-reporter/<workspaceKey>/data.db`
+`$XDG_DATA_HOME/vitest-agent/<workspaceKey>/data.db`
 
 where `<workspaceKey>` is the root `package.json` `name` normalized
 via `normalizeWorkspaceKey` (`@org/pkg` -> `@org__pkg`). On systems
 without `XDG_DATA_HOME` it falls back to
-`~/.local/share/vitest-agent-reporter/<workspaceKey>/data.db` per
+`~/.local/share/vitest-agent/<workspaceKey>/data.db` per
 `xdg-effect`'s `AppDirs` semantics. An optional
-`vitest-agent-reporter.config.toml` lets users override the
+`vitest-agent.config.toml` lets users override the
 `<workspaceKey>` segment (`projectKey` field) or the entire data
 directory (`cacheDir` field). The plugin's programmatic
 `reporter.cacheDir` option is highest precedence. See Component 30
@@ -680,7 +680,7 @@ for the full precedence table.
 - **Disk-move resilience:** moving a project preserves the workspace
   identity, so the DB follows the project rather than its filesystem
   coordinates
-- **Human-readable:** `ls ~/.local/share/vitest-agent-reporter/`
+- **Human-readable:** `ls ~/.local/share/vitest-agent/`
   shows package names instead of opaque hashes -- useful for manual
   inspection, the `cache clean` command, and debugging path
   resolution
@@ -788,19 +788,20 @@ graph (`@modelcontextprotocol/sdk`, `@trpc/server`, `zod`,
 actually ran was 1.3.0" version-skew where the package boundary made
 it hard to reason about which code was running.
 
-**Decision:** split the monolith into four pnpm workspaces under
+**Decision:** split the monolith into five pnpm workspaces under
 `packages/`:
 
 | Package | Role |
 | --- | --- |
 | `vitest-agent-sdk` | data layer, schemas, services, formatters, utilities, XDG path stack -- no internal deps |
-| `vitest-agent-reporter` | reporter + plugin + ReporterLive + CoverageAnalyzer; declares cli + mcp as required peer deps |
-| `vitest-agent-cli` | `vitest-agent-reporter` bin |
+| `vitest-agent-plugin` | `AgentPlugin`, `AgentReporter`, `ReporterLive`, `CoverageAnalyzer`; declares reporter, cli + mcp as required peer deps |
+| `vitest-agent-reporter` | named `VitestAgentReporterFactory` implementations only (no Vitest-API code) |
+| `vitest-agent-cli` | `vitest-agent` bin |
 | `vitest-agent-mcp` | `vitest-agent-mcp` bin |
 
-All four release in lockstep via changesets `linked` config. The
-reporter declares the CLI and MCP packages as **required**
-`peerDependencies` so installing the reporter still pulls the agent
+All five release in lockstep via changesets `linked` config. The
+plugin declares the reporter, CLI, and MCP packages as **required**
+`peerDependencies` so installing the plugin still pulls the agent
 tooling along with it -- this preserves the 1.x install ergonomics
 while giving us independent versioning at the npm layer.
 
@@ -843,10 +844,10 @@ errors, migrations, and the entire XDG path stack.
 
 **Trade-offs:**
 
-- Lockstep releases require all four `package.json` files to bump in
+- Lockstep releases require all five `package.json` files to bump in
   sync. Changesets `linked` config handles this, but it's a process
   rule the team has to follow
-- Three new `private: true` package.jsons to maintain (rslib-builder
+- Four new `private: true` package.jsons to maintain (rslib-builder
   transforms each on publish)
 - Users importing the schemas directly need a different import:
   `from "vitest-agent-sdk"` instead of
@@ -923,9 +924,9 @@ value changes.
 prefix of `(error_name | normalized assertion shape | top
 non-framework function name | function-boundary line)`, computed
 by `computeFailureSignature` in
-`packages/shared/src/utils/failure-signature.ts`. The
+`packages/sdk/src/utils/failure-signature.ts`. The
 function-boundary line comes from `findFunctionBoundary` in
-`packages/shared/src/utils/function-boundary.ts`, which parses the
+`packages/sdk/src/utils/function-boundary.ts`, which parses the
 source via `acorn` and walks the AST for the smallest enclosing
 function (FunctionDeclaration / FunctionExpression /
 ArrowFunctionExpression) whose `loc` range contains the failing
@@ -1008,7 +1009,7 @@ failing test for the goal at hand.
 
 **Decision:** evidence binding is encoded in three rules,
 enforced by the pure `validatePhaseTransition` function in
-`packages/shared/src/utils/validate-phase-transition.ts`. The
+`packages/sdk/src/utils/validate-phase-transition.ts`. The
 function takes a `PhaseTransitionContext` (current phase,
 requested phase, cited artifact, requested behavior) and returns
 a discriminated `PhaseTransitionResult` -- either acceptance or a
@@ -1083,7 +1084,7 @@ currently raise it.
 
 **Context:** `DataStore.writeFailureSignature` persists computed failure
 signatures. The natural input name is `FailureSignatureInput`, but that
-name is already taken by `packages/shared/src/utils/failure-signature.ts`
+name is already taken by `packages/sdk/src/utils/failure-signature.ts`
 -- the **compute-time** input to `computeFailureSignature` (the un-hashed
 `error_name` / `assertion_message` / `top_frame_*` fields that get hashed
 *into* the signature).
@@ -1268,7 +1269,7 @@ The 2.0 dogfood surfaced three concrete problems:
 **Decision:** split `vitest-agent-reporter` into two packages and
 introduce a public reporter contract:
 
-- **`vitest-agent`** (`packages/agent/`) -- owns the Vitest plugin,
+- **`vitest-agent-plugin`** (`packages/plugin/`) -- owns the Vitest plugin,
   the internal `AgentReporter` Vitest-API class (now a private
   implementation detail), `CoverageAnalyzer`, `ReporterLive`, and
   the reporter-side utilities. Constructs a `ReporterKit`, calls the
@@ -1281,13 +1282,13 @@ introduce a public reporter contract:
   `ciAnnotationsReporter`, `githubSummaryReporter`. Plus a private
   `_kit-context.ts` helper.
 - **Contract types in `vitest-agent-sdk`**
-  (`packages/shared/src/contracts/reporter.ts`):
+  (`packages/sdk/src/contracts/reporter.ts`):
   `ResolvedReporterConfig`, `ReporterKit`, `ReporterRenderInput`,
   `VitestAgentReporter` (a single sync `render(input)` method
   returning `RenderedOutput[]`), and `VitestAgentReporterFactory`
   (returns one reporter or an array).
 
-`vitest-agent` declares `vitest-agent-reporter`, the CLI, and the
+`vitest-agent-plugin` declares `vitest-agent-reporter`, the CLI, and the
 MCP packages as required `peerDependencies`. The five packages
 release in lockstep.
 
@@ -1296,7 +1297,7 @@ soon as we tried to support a second output strategy. Doing the
 split as part of 2.0 is the cheapest moment -- the package surface
 is already breaking (Decision 31, the XDG path move; Decision 33,
 the four-package split), and the install ergonomics stay the same
-because `vitest-agent` requires `vitest-agent-reporter` as a peer.
+because `vitest-agent-plugin` requires `vitest-agent-reporter` as a peer.
 
 **(b) Why "reporter as renderer-only" beats "reporter as
 Vitest-lifecycle handler":** the Vitest Reporter API is a low-level
@@ -1367,7 +1368,7 @@ The Claude Code plugin manifest at
 `plugin/.claude-plugin/plugin.json` is unchanged -- the Claude Code
 plugin identity stays `vitest-agent-reporter` because that's a
 separate identity from the npm packages. Hook scripts continue to
-call the CLI bin `vitest-agent-reporter` (the bin name is stable;
+call the CLI bin `vitest-agent` (the bin name changed in 2.0;
 only the npm package owning the bin changed in Decision 33's rename
 pass).
 
@@ -1457,10 +1458,10 @@ than the ALTER+index D9 anticipated, and the runtime recovers naturally.
 - **Where used:** All Effect services
 - **Why used:** Clean separation between service interface (Context.Tag)
   and implementation (Layer). Enables swapping live I/O for test mocks
-- **Implementation:** Service tags in `packages/shared/src/services/`
-  (plus `packages/agent/src/services/CoverageAnalyzer.ts`), live and
-  test layers in `packages/shared/src/layers/` (plus the
-  agent-package-local `CoverageAnalyzerLive` /
+- **Implementation:** Service tags in `packages/sdk/src/services/`
+  (plus `packages/plugin/src/services/CoverageAnalyzer.ts`), live and
+  test layers in `packages/sdk/src/layers/` (plus the
+  plugin-package-local `CoverageAnalyzerLive` /
   `CoverageAnalyzerTest`), merged composition layers (`ReporterLive`,
   `CliLive`, `McpLive`, `OutputPipelineLive`)
 

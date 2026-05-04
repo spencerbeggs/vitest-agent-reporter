@@ -16,7 +16,7 @@ function jsonResult(value: unknown) {
 export async function startMcpServer(ctx: McpContext): Promise<void> {
 	const server = new McpServer(
 		{
-			name: "vitest-agent-reporter",
+			name: "vitest-agent",
 			version: "0.1.0",
 		},
 		{
@@ -758,7 +758,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 		if (ctx.currentSessionId.get() !== null) return;
 		try {
 			const result = await server.server.elicitInput({
-				message: "Establishing Claude Code session association for vitest-agent-reporter",
+				message: "Establishing Claude Code session association for vitest-agent",
 				requestedSchema: {
 					type: "object" as const,
 					properties: {

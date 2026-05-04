@@ -30,8 +30,8 @@ explicit `include` globs per project.
 
 | Project (vitest name) | Package | Tests |
 | --- | --- | --- |
-| `vitest-agent-sdk` | `packages/shared/` | 621 |
-| `vitest-agent` | `packages/agent/` | 107 |
+| `vitest-agent-sdk` | `packages/sdk/` | 621 |
+| `vitest-agent-plugin` | `packages/plugin/` | 107 |
 | `vitest-agent-cli` | `packages/cli/` | 65 |
 | `vitest-agent-mcp` | `packages/mcp/` | 84 |
 | `example-basic` | `examples/basic/` | 9 |
@@ -109,7 +109,7 @@ boundaries -- procedures are tested as plain async functions.
 
 `buildAgentReport()` and reporter integration tests use duck-typed
 `VitestTestModule` / `VitestTestCase` interfaces (defined in
-`packages/shared/src/utils/build-report.ts`). Tests construct
+`packages/sdk/src/utils/build-report.ts`). Tests construct
 plain object literals matching those interfaces rather than
 mocking the Vitest runtime.
 
@@ -128,7 +128,7 @@ const fakeModule: VitestTestModule = {
 
 `ensureMigrated` is tested with `_resetMigrationCacheForTesting`
 between cases (the cache lives on `globalThis` via
-`Symbol.for("vitest-agent-reporter/migration-promises")`). The
+`Symbol.for("vitest-agent/migration-promises")`). The
 suite covers four scenarios:
 
 1. Fresh DB migrates without error

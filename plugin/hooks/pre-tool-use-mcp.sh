@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # PreToolUse hook: auto-allow read-only and project-scoped MCP tools provided
-# by the vitest-agent-reporter MCP server.
+# by the vitest-agent MCP server.
 #
-# All 41 tools are listed in lib/safe-mcp-vitest-agent-reporter-ops.txt.
+# All 41 tools are listed in lib/safe-mcp-vitest-agent-ops.txt.
 # Anything else (or a future tool not yet added to the list) falls through
 # without a decision so the standard permission prompt fires.
 #
@@ -23,14 +23,14 @@ if [ -z "$TOOL" ]; then
 fi
 
 case "$TOOL" in
-  mcp__plugin_vitest-agent-reporter_vitest-reporter__*)
-    OP="${TOOL#mcp__plugin_vitest-agent-reporter_vitest-reporter__}" ;;
-  mcp__vitest-agent-reporter__*)
-    OP="${TOOL#mcp__vitest-agent-reporter__}" ;;
+  mcp__plugin_vitest-agent_mcp__*)
+    OP="${TOOL#mcp__plugin_vitest-agent_mcp__}" ;;
+  mcp__vitest-agent_mcp__*)
+    OP="${TOOL#mcp__vitest-agent_mcp__}" ;;
   *) emit_noop; exit 0 ;;
 esac
 
-ALLOW="${CLAUDE_PLUGIN_ROOT}/hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt"
+ALLOW="${CLAUDE_PLUGIN_ROOT}/hooks/lib/safe-mcp-vitest-agent-ops.txt"
 if [ ! -f "$ALLOW" ]; then
   emit_noop
   exit 0

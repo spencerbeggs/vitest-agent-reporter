@@ -1,6 +1,6 @@
 import { publicProcedure } from "../context.js";
 
-const HELP_TEXT = `# vitest-agent-reporter MCP Tools
+const HELP_TEXT = `# vitest-agent MCP Tools
 
 > 41 tools total.
 

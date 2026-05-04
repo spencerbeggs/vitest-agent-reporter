@@ -33,14 +33,14 @@ pm_exec=$(detect_pm_exec "$cwd")
 # "find the message that started this thread" queries against the
 # UserPromptPayload schema's contract.
 payload=$(jq -nc --arg p "$prompt" '{type: "user_prompt", prompt: $p}')
-cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record turn \
+cd "$cwd" >/dev/null && $pm_exec vitest-agent record turn \
 	--cc-session-id "$cc_session_id" \
 	"$payload" \
 	>/dev/null 2>&1 \
 	|| true
 
 # 2. Compute the nudge (empty when the prompt isn't failure-related).
-nudge=$(cd "$cwd" && $pm_exec vitest-agent-reporter wrapup \
+nudge=$(cd "$cwd" && $pm_exec vitest-agent wrapup \
 	--cc-session-id "$cc_session_id" \
 	--kind user_prompt_nudge \
 	--user-prompt-hint "$prompt" \

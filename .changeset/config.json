@@ -3,12 +3,12 @@
 	"changelog": [
 		"@savvy-web/changesets/changelog",
 		{
-			"repo": "spencerbeggs/vitest-agent-reporter",
+			"repo": "spencerbeggs/vitest-agent",
 			"versionFiles": [
 				{
 					"glob": "plugin/.claude-plugin/plugin.json",
 					"paths": ["$.version"],
-					"package": "vitest-agent-reporter"
+					"package": "vitest-agent-plugin"
 				}
 			]
 		}
@@ -17,7 +17,9 @@
 	"access": "restricted",
 	"baseBranch": "main",
 	"updateInternalDependencies": "patch",
-	"fixed": [["vitest-agent", "vitest-agent-reporter", "vitest-agent-sdk", "vitest-agent-cli", "vitest-agent-mcp"]],
+	"fixed": [
+		["vitest-agent-plugin", "vitest-agent-reporter", "vitest-agent-sdk", "vitest-agent-cli", "vitest-agent-mcp"]
+	],
 	"ignore": ["example-basic"],
 	"privatePackages": {
 		"tag": true,

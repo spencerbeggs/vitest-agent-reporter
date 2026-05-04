@@ -31,7 +31,7 @@ This is a navigation overview only -- per-component descriptions
 
 ```text
 packages/
-  shared/    -- vitest-agent-sdk (no internal deps)
+  sdk/       -- vitest-agent-sdk (no internal deps)
     src/
       index.ts
       contracts/   -- reporter.ts (ResolvedReporterConfig,
@@ -39,7 +39,7 @@ packages/
                       VitestAgentReporter,
                       VitestAgentReporterFactory --
                       the public reporter contract surface
-                      consumed by `vitest-agent` and
+                      consumed by `vitest-agent-plugin` and
                       implemented by `vitest-agent-reporter`)
       formatters/  -- types.ts, markdown.ts, gfm.ts, json.ts, silent.ts
       services/    -- DataStore, DataReader, EnvironmentDetector,
@@ -84,7 +84,7 @@ packages/
                       ci-annotations (auto-selected when
                       env=ci-github + executor=ci)
 
-  agent/     -- vitest-agent (the plugin; depends on shared,
+  plugin/    -- vitest-agent-plugin (the plugin; depends on sdk,
                 requires reporter + cli + mcp as peer deps)
     src/
       index.ts, plugin.ts, reporter.ts
@@ -102,7 +102,7 @@ packages/
                       route-rendered-output (dispatches RenderedOutput
                       by target: stdout / github-summary / file)
 
-  reporter/  -- vitest-agent-reporter (depends on shared;
+  reporter/  -- vitest-agent-reporter (depends on sdk;
                 named VitestAgentReporterFactory implementations only,
                 no Vitest-API code, no bin)
     src/
@@ -134,7 +134,7 @@ packages/
                                      that the plugin's router
                                      appends to the summary file)
 
-  cli/       -- vitest-agent-cli (bin: vitest-agent-reporter)
+  cli/       -- vitest-agent-cli (bin: vitest-agent)
     src/
       bin.ts, index.ts
       commands/    -- status, overview, coverage, history, trends,
@@ -182,7 +182,7 @@ plugin/      -- file-based Claude Code plugin (NOT a pnpm workspace)
   .claude-plugin/plugin.json   -- manifest with inline mcpServers config
   bin/mcp-server.mjs           -- zero-deps PM-detect + spawn loader.
                                   Forwards projectDir via
-                                  VITEST_AGENT_REPORTER_PROJECT_DIR
+                                  VITEST_AGENT_PROJECT_DIR
   hooks/       -- hooks.json + lib/match-tdd-agent.sh (shared
                   helper sourced by all five orchestrator-scoped
                   hooks; matches `agent_type` against either
@@ -194,7 +194,7 @@ plugin/      -- file-based Claude Code plugin (NOT a pnpm workspace)
                   CLI + writes sessions row) +
                   pre-tool-use-mcp.sh (auto-allows the 41 MCP
                   tools enumerated in lib/safe-mcp-vitest-agent-
-                  reporter-ops.txt) + post-test-run.sh +
+                  ops.txt) + post-test-run.sh +
                   user-prompt-submit-record.sh,
                   pre-tool-use-record.sh, post-tool-use-record.sh,
                   session-end-record.sh, pre-compact-record.sh
@@ -248,13 +248,13 @@ The SQLite database lives at a deterministic XDG-derived location
 keyed by the workspace's identity, not its filesystem path:
 
 ```text
-$XDG_DATA_HOME/vitest-agent-reporter/<workspaceKey>/data.db
+$XDG_DATA_HOME/vitest-agent/<workspaceKey>/data.db
 ```
 
 On systems without `XDG_DATA_HOME` set, this falls back to:
 
 ```text
-~/.local/share/vitest-agent-reporter/<workspaceKey>/data.db
+~/.local/share/vitest-agent/<workspaceKey>/data.db
 ```
 
 `<workspaceKey>` is derived from the root `package.json` `name` via
@@ -273,14 +273,14 @@ the parent.
 ### Resolution precedence
 
 `resolveDataPath(projectDir, options?)` in
-`packages/shared/src/utils/resolve-data-path.ts` consults these
+`packages/sdk/src/utils/resolve-data-path.ts` consults these
 sources in order (highest-precedence first):
 
 1. **`options.cacheDir`** (programmatic override). The plugin's
    `reporter.cacheDir` option flows through here. Returns
    `<cacheDir>/data.db` after `mkdirSync(<cacheDir>, { recursive:
    true })`. Skips the heavy XDG/workspace layer stack
-2. **`cacheDir` from `vitest-agent-reporter.config.toml`**. Same
+2. **`cacheDir` from `vitest-agent.config.toml`**. Same
    shape: `<cacheDir>/data.db` after `mkdirSync`
 3. **`projectKey` from the same config TOML**. Used as the
    `<workspaceKey>` segment under the XDG data root. Normalized via
@@ -291,7 +291,7 @@ sources in order (highest-precedence first):
    discoverable. **No silent fallback to a path hash** -- silent
    fallbacks are the bug class 2.0 leaves behind
 
-### Optional config file: `vitest-agent-reporter.config.toml`
+### Optional config file: `vitest-agent.config.toml`
 
 If present, the file is loaded by `ConfigLive(projectDir)` via
 `config-file-effect`'s `FirstMatch` strategy with this resolver chain:
@@ -303,7 +303,7 @@ If present, the file is loaded by `ConfigLive(projectDir)` via
 The first file found wins. Both fields are optional:
 
 ```toml
-# vitest-agent-reporter.config.toml
+# vitest-agent.config.toml
 
 # Override the entire data directory. Highest precedence after the
 # programmatic `reporter.cacheDir` plugin option.
@@ -331,7 +331,7 @@ that DB via the `(project, subProject)` columns and the
 
 The CLI overview and history commands need to output correct run
 commands. Canonical detection logic lives in
-`packages/shared/src/utils/detect-pm.ts` (`FileSystemAdapter`
+`packages/sdk/src/utils/detect-pm.ts` (`FileSystemAdapter`
 interface for testability). The plugin's `bin/mcp-server.mjs` ships a
 zero-deps inline copy with the same detection order:
 
@@ -346,7 +346,7 @@ zero-deps inline copy with the same detection order:
 
 The canonical schema with column types, foreign keys, indexes, and the
 `notes_fts` triggers lives in
-`packages/shared/src/migrations/0002_comprehensive.ts`. The additive
+`packages/sdk/src/migrations/0002_comprehensive.ts`. The additive
 `0003_idempotent_responses.ts` migration adds one new table on top,
 `0004_test_cases_created_turn_id.ts` adds a column to `test_cases`,
 and `0005_failure_signatures_last_seen_at.ts` adds a `last_seen_at`
@@ -444,16 +444,16 @@ Using AFTER UPDATE for both delete and insert steps would read the
 already-updated row and accumulate stale tokens in the FTS5 index.
 
 For the full DDL, see
-`packages/shared/src/migrations/0002_comprehensive.ts`,
-`packages/shared/src/migrations/0003_idempotent_responses.ts`,
-`packages/shared/src/migrations/0004_test_cases_created_turn_id.ts`,
-and `packages/shared/src/migrations/0005_failure_signatures_last_seen_at.ts`.
+`packages/sdk/src/migrations/0002_comprehensive.ts`,
+`packages/sdk/src/migrations/0003_idempotent_responses.ts`,
+`packages/sdk/src/migrations/0004_test_cases_created_turn_id.ts`,
+and `packages/sdk/src/migrations/0005_failure_signatures_last_seen_at.ts`.
 
 ---
 
 ## Data Structures
 
-All types are defined as Effect Schema definitions in `packages/shared/src/schemas/`
+All types are defined as Effect Schema definitions in `packages/sdk/src/schemas/`
 with TypeScript types derived via `typeof Schema.Type`.
 
 ### JSON Report (`AgentReport`)
@@ -634,8 +634,8 @@ Input and output types (`TestRunInput`, `ModuleInput`, `TestCaseInput`,
 `ProjectIdentity`, `ProjectRunSummary`, `FlakyTest`, `PersistentFailure`,
 `TestListEntry`, `ModuleListEntry`, `SuiteListEntry`, `SettingsListEntry`,
 `NoteRow`, `SettingsRow`, `TestError`) live in
-`packages/shared/src/services/DataStore.ts` and
-`packages/shared/src/services/DataReader.ts`. Also in DataStore:
+`packages/sdk/src/services/DataStore.ts` and
+`packages/sdk/src/services/DataReader.ts`. Also in DataStore:
 `SessionInput`, `TurnInput`, `StackFrameInput`, `FailureSignatureWriteInput`,
 optional `signatureHash` and `frames` fields on `TestErrorInput`
 (with `TurnInput.turnNo` auto-assigned when omitted),
@@ -655,7 +655,7 @@ Also in DataReader: `SessionDetail`, `TurnSummary`, `TurnSearchOptions`,
 `CommitChangesEntry`, `TddSessionSummary`.
 
 The Common schema literals (`Environment`, `Executor`, `OutputFormat`,
-`DetailLevel`) live in `packages/shared/src/schemas/Common.ts`.
+`DetailLevel`) live in `packages/sdk/src/schemas/Common.ts`.
 `OutputFormat` has 5 values including `"ci-annotations"` for the
 GitHub Actions formatter. Effect Schema is the source of truth --
 TypeScript types derive via `typeof Schema.Type`.
@@ -665,14 +665,14 @@ that look similar but live in different layers and serve different
 purposes:
 
 - `FailureSignatureInput` (in
-  `packages/shared/src/utils/failure-signature.ts`) is the
+  `packages/sdk/src/utils/failure-signature.ts`) is the
   **compute-time** input to `computeFailureSignature` -- the
   un-hashed `error_name`, `assertion_message`,
   `top_frame_function_name`, `top_frame_function_boundary_line`,
   and optional `top_frame_raw_line` that get hashed *into* the
   signature
 - `FailureSignatureWriteInput` (in
-  `packages/shared/src/services/DataStore.ts`) is the
+  `packages/sdk/src/services/DataStore.ts`) is the
   **persistence-time** input to `DataStore.writeFailureSignature`
   -- the already-computed `signatureHash` plus the metadata to
   store alongside it (`firstSeenRunId`, `firstSeenAt`)
@@ -686,12 +686,12 @@ The MCP server's tRPC `McpContext` (carrying a `ManagedRuntime` over
 `DataReader | DataStore | ProjectDiscovery | OutputRenderer`) is
 defined in `packages/mcp/src/context.ts`. Formatter types
 (`Formatter`, `FormatterContext`, `RenderedOutput`) live in
-`packages/shared/src/formatters/types.ts`.
+`packages/sdk/src/formatters/types.ts`.
 
 ### Reporter Contract Types
 
-`packages/shared/src/contracts/reporter.ts` defines the public
-boundary between `vitest-agent` (plugin + lifecycle) and any
+`packages/sdk/src/contracts/reporter.ts` defines the public
+boundary between `vitest-agent-plugin` (plugin + lifecycle) and any
 implementer of a `VitestAgentReporterFactory` (the named factories in
 `vitest-agent-reporter`, or any user/third-party reporter).
 
@@ -791,13 +791,13 @@ type VitestAgentReporterFactory =
     VitestAgentReporter | ReadonlyArray<VitestAgentReporter>;
 ```
 
-The plugin (`packages/agent/src/reporter.ts`) drives this contract:
+The plugin (`packages/plugin/src/reporter.ts`) drives this contract:
 
 1. After persistence/classification/baseline/trend computation, it
    resolves env, executor, format, detail via the SDK pipeline
    services and aggregates `classifications` into a flat
    `Map<fullName, TestClassification>`.
-2. `buildReporterKit(...)` (in `packages/agent/src/utils/`)
+2. `buildReporterKit(...)` (in `packages/plugin/src/utils/`)
    constructs the `ReporterKit` from the resolved configuration plus
    the detected environment and `noColor` flag.
 3. `opts.reporter(kit)` returns one reporter or an array; a
@@ -805,14 +805,14 @@ The plugin (`packages/agent/src/reporter.ts`) drives this contract:
 4. Each reporter's `render(input)` is called once; the plugin
    concatenates the resulting `RenderedOutput[]`.
 5. `routeRenderedOutput(out, { githubSummaryFile? })` (also in
-   `packages/agent/src/utils/`) dispatches each entry by `target`:
+   `packages/plugin/src/utils/`) dispatches each entry by `target`:
    `stdout` -> `process.stdout`; `github-summary` -> append to the
    summary file; `file` -> reserved (no-op) pending future
    convention.
 
 ### Turn Payload Schemas
 
-`packages/shared/src/schemas/turns/` defines a discriminated
+`packages/sdk/src/schemas/turns/` defines a discriminated
 `TurnPayload` union over seven `Schema.Struct` payload types, each
 keyed by a `type` literal that mirrors the `turns.type` CHECK
 constraint. The union is the source of truth the `record` CLI uses
@@ -860,7 +860,7 @@ type TurnPayload =
 
 ### Phase Transition Validation Types
 
-`packages/shared/src/utils/validate-phase-transition.ts` exports the
+`packages/sdk/src/utils/validate-phase-transition.ts` exports the
 TDD evidence-binding contract. D2 binding rule 1 (authoring-window
 check) is scoped to `test_failed_run` artifact kind only -- it does
 not apply to `test_passed_run` or other kinds, so green→refactor
@@ -904,7 +904,7 @@ type PhaseTransitionResult =
 
 ### Failure Signature Input
 
-`packages/shared/src/utils/failure-signature.ts`:
+`packages/sdk/src/utils/failure-signature.ts`:
 
 ```typescript
 interface FailureSignatureInput {
@@ -924,7 +924,7 @@ interface FailureSignatureInput {
 
 ### DataStore Input Types
 
-`packages/shared/src/services/DataStore.ts`:
+`packages/sdk/src/services/DataStore.ts`:
 
 ```typescript
 interface StackFrameInput {
@@ -964,7 +964,7 @@ interface TurnInput {
 
 ### DataReader Output Types
 
-`packages/shared/src/services/DataReader.ts`:
+`packages/sdk/src/services/DataReader.ts`:
 
 ```typescript
 interface SessionSummary {
@@ -1037,7 +1037,7 @@ interface ListHypothesesOptions {
 
 ### Reporter Failure-Processing Output
 
-`packages/agent/src/utils/process-failure.ts`:
+`packages/plugin/src/utils/process-failure.ts`:
 
 ```typescript
 interface ProcessFailureResult {
@@ -1053,7 +1053,7 @@ interface ProcessFailureResult {
 
 ### Idempotency and Hypothesis Input Types
 
-`packages/shared/src/services/DataStore.ts`:
+`packages/sdk/src/services/DataStore.ts`:
 
 ```typescript
 // Backs DataStore.recordIdempotentResponse and the tRPC
@@ -1089,7 +1089,7 @@ interface ValidateHypothesisInput {
 
 ### Idempotency DataReader Output Types
 
-`packages/shared/src/services/DataReader.ts`:
+`packages/sdk/src/services/DataReader.ts`:
 
 ```typescript
 // Backs the tRPC idempotency middleware's cache check. Returns
@@ -1102,7 +1102,7 @@ type FindIdempotentResponse =
 
 ### TDD Lifecycle and Workspace Input Types
 
-`packages/shared/src/services/DataStore.ts`:
+`packages/sdk/src/services/DataStore.ts`:
 
 ```typescript
 // Re-exported literal types -- callers reference these instead of
@@ -1236,7 +1236,7 @@ interface WriteRunChangedFilesInput {
 
 ### TDD Lifecycle DataReader Output Types
 
-`packages/shared/src/services/DataReader.ts`:
+`packages/sdk/src/services/DataReader.ts`:
 
 ```typescript
 // Backs DataReader.getCurrentTddPhase. Returns the most-recent
@@ -1315,7 +1315,7 @@ Console output uses three tiers based on run health:
   CLI hints
 
 Examples may drift; the formatter source is canonical at
-`packages/shared/src/formatters/markdown.ts`.
+`packages/sdk/src/formatters/markdown.ts`.
 
 **Green tier (all passing, targets met):**
 
@@ -1565,7 +1565,7 @@ appends it to the configured summary file.
 
 ### Flow 4: MCP Server (`packages/mcp/src/bin.ts`)
 
-- Resolve `projectDir` from `VITEST_AGENT_REPORTER_PROJECT_DIR` (set by
+- Resolve `projectDir` from `VITEST_AGENT_PROJECT_DIR` (set by
   the plugin loader) ?? `CLAUDE_PROJECT_DIR` ?? `process.cwd()`.
 - Resolve `dbPath` via `resolveDataPath(projectDir)` under
   `PathResolutionLive(projectDir) + NodeContext.layer`.
@@ -1587,7 +1587,7 @@ appends it to the configured summary file.
 - Spawn `<pm-exec> vitest-agent-mcp` (`pnpm exec`,
   `npx --no-install`, `yarn run`, or `bun x`) with `stdio: "inherit"`,
   `cwd: projectDir`, and
-  `env.VITEST_AGENT_REPORTER_PROJECT_DIR = projectDir` so the spawned
+  `env.VITEST_AGENT_PROJECT_DIR = projectDir` so the spawned
   bin sees the right project root (Flow 4).
 - Forward exit code; re-raise termination signals; print PM-specific
   install instructions on non-zero exit.
@@ -1814,7 +1814,7 @@ details.
 - `PreToolUse` matching `mcp__vitest-agent-reporter__.*` ->
   `hooks/pre-tool-use-mcp.sh` -- auto-allows 41 MCP tools whose
   operation suffix is enumerated in
-  `hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt`; unknown ops
+  `hooks/lib/safe-mcp-vitest-agent-ops.txt`; unknown ops
   fall through to the standard permission prompt. Parallel
   `hooks/pre-tool-use-record.sh` invokes `record turn` with a
   `ToolCallPayload` (record-only; fires too often for prompt

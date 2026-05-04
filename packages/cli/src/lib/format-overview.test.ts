@@ -5,7 +5,7 @@ import { formatOverview } from "./format-overview.js";
 function makeManifest(projects: CacheManifest["projects"] = []): CacheManifest {
 	return {
 		updatedAt: "2026-03-20T00:00:00.000Z",
-		cacheDir: ".vitest-agent-reporter",
+		cacheDir: ".vitest-agent",
 		projects,
 	};
 }

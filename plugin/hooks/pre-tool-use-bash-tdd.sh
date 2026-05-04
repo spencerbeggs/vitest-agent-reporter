@@ -72,7 +72,7 @@ if [ "$tool_name" = "Bash" ]; then
 		nudge=$(cat <<'EOF'
 <run_tests_nudge>
 You are about to run a Vitest invocation via the Bash tool. The
-vitest-agent-reporter plugin exposes a run_tests MCP tool that should
+vitest-agent plugin exposes a run_tests MCP tool that should
 be your default surface for test execution.
 
 Why run_tests is preferred:

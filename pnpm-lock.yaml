@@ -72,95 +72,18 @@ importers:
       vitest:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@25.6.0)(@vitest/coverage-istanbul@4.1.5)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@25.6.0)(jiti@2.6.1)(yaml@2.8.4))
-      vitest-agent:
-        specifier: workspace:*
-        version: link:packages/agent/dist/dev
       vitest-agent-cli:
         specifier: workspace:*
         version: link:packages/cli/dist/dev
       vitest-agent-mcp:
         specifier: workspace:*
         version: link:packages/mcp/dist/dev
+      vitest-agent-plugin:
+        specifier: workspace:*
+        version: link:packages/plugin/dist/dev
       vitest-agent-reporter:
         specifier: workspace:*
         version: link:packages/reporter/dist/dev
-
-  examples/basic:
-    devDependencies:
-      '@savvy-web/rslib-builder':
-        specifier: ^0.20.3
-        version: 0.20.3(@pnpm/logger@1001.0.1)(@rslib/core@0.21.3(@microsoft/api-extractor@7.58.7(@types/node@25.6.0))(@typescript/native-preview@7.0.0-dev.20260429.1)(typescript@6.0.3))(@types/node@25.6.0)(@typescript/native-preview@7.0.0-dev.20260429.1)(jiti@2.6.1)(typescript@6.0.3)
-      '@types/node':
-        specifier: catalog:silk
-        version: 25.6.0
-      '@vitest/coverage-v8':
-        specifier: ^4.1.5
-        version: 4.1.5(vitest@4.1.5)
-      vitest:
-        specifier: ^4.1.5
-        version: 4.1.5(@types/node@25.6.0)(@vitest/coverage-istanbul@4.1.5)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@25.6.0)(jiti@2.6.1)(yaml@2.8.4))
-      vitest-agent:
-        specifier: workspace:*
-        version: link:../../packages/agent/dist/dev
-      vitest-agent-reporter:
-        specifier: workspace:*
-        version: link:../../packages/reporter/dist/dev
-
-  packages/agent:
-    dependencies:
-      '@effect/platform':
-        specifier: catalog:silk
-        version: 0.96.1(effect@3.21.2)
-      '@effect/platform-node':
-        specifier: catalog:silk
-        version: 0.106.0(@effect/cluster@0.58.2(@effect/platform@0.96.1(effect@3.21.2))(@effect/rpc@0.75.1(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/workflow@0.18.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(@effect/rpc@0.75.1(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(@effect/rpc@0.75.1(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(effect@3.21.2)
-      '@effect/sql':
-        specifier: catalog:silk
-        version: 0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2)
-      '@effect/sql-sqlite-node':
-        specifier: catalog:silk
-        version: 0.52.0(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(effect@3.21.2)
-      effect:
-        specifier: catalog:silk
-        version: 3.21.2
-      vitest-agent-cli:
-        specifier: workspace:*
-        version: link:../cli/dist/dev
-      vitest-agent-mcp:
-        specifier: workspace:*
-        version: link:../mcp/dist/dev
-      vitest-agent-reporter:
-        specifier: workspace:*
-        version: link:../reporter/dist/dev
-      vitest-agent-sdk:
-        specifier: workspace:*
-        version: link:../shared/dist/dev
-    devDependencies:
-      '@savvy-web/rslib-builder':
-        specifier: ^0.20.3
-        version: 0.20.3(@pnpm/logger@1001.0.1)(@rslib/core@0.21.3(@microsoft/api-extractor@7.58.7(@types/node@25.6.0))(@typescript/native-preview@7.0.0-dev.20260429.1)(typescript@6.0.3))(@types/node@25.6.0)(@typescript/native-preview@7.0.0-dev.20260429.1)(jiti@2.6.1)(typescript@6.0.3)
-      '@types/better-sqlite3':
-        specifier: ^7.6.13
-        version: 7.6.13
-      '@types/node':
-        specifier: catalog:silk
-        version: 25.6.0
-      '@vitest/coverage-istanbul':
-        specifier: ^4.1.5
-        version: 4.1.5(vitest@4.1.5)
-      '@vitest/coverage-v8':
-        specifier: ^4.1.5
-        version: 4.1.5(vitest@4.1.5)
-      better-sqlite3:
-        specifier: ^12.9.0
-        version: 12.9.0
-      vite:
-        specifier: ^8.0.10
-        version: 8.0.10(@types/node@25.6.0)(jiti@2.6.1)(yaml@2.8.4)
-      vitest:
-        specifier: ^4.1.5
-        version: 4.1.5(@types/node@25.6.0)(@vitest/coverage-istanbul@4.1.5)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@25.6.0)(jiti@2.6.1)(yaml@2.8.4))
-    publishDirectory: dist/dev
 
   packages/cli:
     dependencies:
@@ -184,7 +107,7 @@ importers:
         version: 3.21.2
       vitest-agent-sdk:
         specifier: workspace:*
-        version: link:../shared/dist/dev
+        version: link:../sdk/dist/dev
     devDependencies:
       '@savvy-web/rslib-builder':
         specifier: ^0.20.3
@@ -225,7 +148,7 @@ importers:
         version: 3.21.2
       vitest-agent-sdk:
         specifier: workspace:*
-        version: link:../shared/dist/dev
+        version: link:../sdk/dist/dev
       zod:
         specifier: ^4.4.2
         version: 4.4.2
@@ -239,6 +162,62 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^4.1.5
         version: 4.1.5(vitest@4.1.5)
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@types/node@25.6.0)(@vitest/coverage-istanbul@4.1.5)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@25.6.0)(jiti@2.6.1)(yaml@2.8.4))
+    publishDirectory: dist/dev
+
+  packages/plugin:
+    dependencies:
+      '@effect/platform':
+        specifier: catalog:silk
+        version: 0.96.1(effect@3.21.2)
+      '@effect/platform-node':
+        specifier: catalog:silk
+        version: 0.106.0(@effect/cluster@0.58.2(@effect/platform@0.96.1(effect@3.21.2))(@effect/rpc@0.75.1(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/workflow@0.18.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(@effect/rpc@0.75.1(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(@effect/rpc@0.75.1(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(effect@3.21.2)
+      '@effect/sql':
+        specifier: catalog:silk
+        version: 0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2)
+      '@effect/sql-sqlite-node':
+        specifier: catalog:silk
+        version: 0.52.0(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(@effect/sql@0.51.1(@effect/experimental@0.60.0(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(@effect/platform@0.96.1(effect@3.21.2))(effect@3.21.2))(effect@3.21.2)
+      effect:
+        specifier: catalog:silk
+        version: 3.21.2
+      vitest-agent-cli:
+        specifier: workspace:*
+        version: link:../cli/dist/dev
+      vitest-agent-mcp:
+        specifier: workspace:*
+        version: link:../mcp/dist/dev
+      vitest-agent-reporter:
+        specifier: workspace:*
+        version: link:../reporter/dist/dev
+      vitest-agent-sdk:
+        specifier: workspace:*
+        version: link:../sdk/dist/dev
+    devDependencies:
+      '@savvy-web/rslib-builder':
+        specifier: ^0.20.3
+        version: 0.20.3(@pnpm/logger@1001.0.1)(@rslib/core@0.21.3(@microsoft/api-extractor@7.58.7(@types/node@25.6.0))(@typescript/native-preview@7.0.0-dev.20260429.1)(typescript@6.0.3))(@types/node@25.6.0)(@typescript/native-preview@7.0.0-dev.20260429.1)(jiti@2.6.1)(typescript@6.0.3)
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
+      '@types/node':
+        specifier: catalog:silk
+        version: 25.6.0
+      '@vitest/coverage-istanbul':
+        specifier: ^4.1.5
+        version: 4.1.5(vitest@4.1.5)
+      '@vitest/coverage-v8':
+        specifier: ^4.1.5
+        version: 4.1.5(vitest@4.1.5)
+      better-sqlite3:
+        specifier: ^12.9.0
+        version: 12.9.0
+      vite:
+        specifier: ^8.0.10
+        version: 8.0.10(@types/node@25.6.0)(jiti@2.6.1)(yaml@2.8.4)
       vitest:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@25.6.0)(@vitest/coverage-istanbul@4.1.5)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@25.6.0)(jiti@2.6.1)(yaml@2.8.4))
@@ -269,7 +248,7 @@ importers:
         version: link:../mcp/dist/dev
       vitest-agent-sdk:
         specifier: workspace:*
-        version: link:../shared/dist/dev
+        version: link:../sdk/dist/dev
     devDependencies:
       '@savvy-web/rslib-builder':
         specifier: ^0.20.3
@@ -297,7 +276,7 @@ importers:
         version: 4.1.5(@types/node@25.6.0)(@vitest/coverage-istanbul@4.1.5)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@25.6.0)(jiti@2.6.1)(yaml@2.8.4))
     publishDirectory: dist/dev
 
-  packages/shared:
+  packages/sdk:
     dependencies:
       '@effect/platform':
         specifier: catalog:silk
@@ -349,6 +328,24 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(@types/node@25.6.0)(@vitest/coverage-istanbul@4.1.5)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@25.6.0)(jiti@2.6.1)(yaml@2.8.4))
     publishDirectory: dist/dev
+
+  playground:
+    devDependencies:
+      '@types/node':
+        specifier: catalog:silk
+        version: 25.6.0
+      '@vitest/coverage-v8':
+        specifier: ^4.1.5
+        version: 4.1.5(vitest@4.1.5)
+      vitest:
+        specifier: ^4.1.5
+        version: 4.1.5(@types/node@25.6.0)(@vitest/coverage-istanbul@4.1.5)(@vitest/coverage-v8@4.1.5)(vite@8.0.10(@types/node@25.6.0)(jiti@2.6.1)(yaml@2.8.4))
+      vitest-agent-plugin:
+        specifier: workspace:*
+        version: link:../packages/plugin/dist/dev
+      vitest-agent-reporter:
+        specifier: workspace:*
+        version: link:../packages/reporter/dist/dev
 
 packages:
 
@@ -1502,6 +1499,7 @@ packages:
 
   '@types/acorn@6.0.4':
     resolution: {integrity: sha512-DafqcBAjbOOmgqIx3EF9EAdBKAKgspv00aQVIW3fVQ0TXo5ZPBeSRey1SboVAUzjw8Ucm7cd1gtTSlosYoEQLA==}
+    deprecated: This is a stub types definition. acorn provides its own type definitions, so you do not need this installed.
 
   '@types/argparse@1.0.38':
     resolution: {integrity: sha512-ebDJ9b0e702Yr7pWgB0jzm+CX4Srzz8RcXtLJDJB+BSccqMa36uyH/zUsSYao5+BD1ytv3k3rPYCq4mAE1hsXA==}

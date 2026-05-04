@@ -25,10 +25,10 @@ const BIN_NAME = "vitest-agent-mcp";
 
 /** @type {Record<string, { cmd: string; args: string[]; install: string }>} */
 const PM = {
-	npm: { cmd: "npx", args: ["--no-install"], install: "npm install --save-dev vitest-agent-reporter" },
-	pnpm: { cmd: "pnpm", args: ["exec"], install: "pnpm add -D vitest-agent-reporter" },
-	yarn: { cmd: "yarn", args: ["run"], install: "yarn add -D vitest-agent-reporter" },
-	bun: { cmd: "bun", args: ["x"], install: "bun add -d vitest-agent-reporter" },
+	npm: { cmd: "npx", args: ["--no-install"], install: "npm install --save-dev vitest-agent-plugin" },
+	pnpm: { cmd: "pnpm", args: ["exec"], install: "pnpm add -D vitest-agent-plugin" },
+	yarn: { cmd: "yarn", args: ["run"], install: "yarn add -D vitest-agent-plugin" },
+	bun: { cmd: "bun", args: ["x"], install: "bun add -d vitest-agent-plugin" },
 };
 
 const LOCKFILES = [
@@ -89,7 +89,7 @@ const child = spawn(pm.cmd, [...pm.args, BIN_NAME, ...extraArgs], {
 child.on("error", (err) => {
 	process.stderr.write(
 		[
-			`vitest-agent-reporter plugin: failed to invoke '${pm.cmd}'.`,
+			`vitest-agent plugin: failed to invoke '${pm.cmd}'.`,
 			"",
 			`Detected package manager: ${pmName}`,
 			`Project directory: ${projectDir}`,
@@ -116,7 +116,7 @@ child.on("exit", (code, signal) => {
 	}
 	process.stderr.write(
 		[
-			`vitest-agent-reporter plugin: ${pm.cmd} ${pm.args.join(" ")} ${BIN_NAME} exited with code ${code}.`,
+			`vitest-agent plugin: ${pm.cmd} ${pm.args.join(" ")} ${BIN_NAME} exited with code ${code}.`,
 			"",
 			`Detected package manager: ${pmName}`,
 			`Project directory: ${projectDir}`,

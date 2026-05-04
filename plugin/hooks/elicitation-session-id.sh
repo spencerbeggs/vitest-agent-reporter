@@ -2,7 +2,7 @@
 set -euo pipefail
 INPUT=$(cat)
 SERVER=$(echo "$INPUT" | jq -r '.mcp_server_name // empty')
-# Accept "plugin:vitest-agent-reporter:vitest-reporter" (fully-qualified by CC)
+# Accept "plugin:vitest-agent:vitest-reporter" (fully-qualified by CC)
 # or the bare "vitest-reporter" for resilience.
 case "$SERVER" in
   *":vitest-reporter" | "vitest-reporter") ;;

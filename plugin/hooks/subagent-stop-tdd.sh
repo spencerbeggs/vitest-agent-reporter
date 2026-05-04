@@ -39,7 +39,7 @@ pm_exec=$(detect_pm_exec "$cwd")
 # parent session.
 
 # Generate the handoff message using the wrapup CLI in tdd_handoff mode.
-handoff=$(cd "$cwd" && $pm_exec vitest-agent-reporter wrapup \
+handoff=$(cd "$cwd" && $pm_exec vitest-agent wrapup \
 	--cc-session-id "$cc_session_id" \
 	--kind tdd_handoff \
 	--format markdown 2>/dev/null || echo "")
@@ -52,7 +52,7 @@ if [ -n "$handoff" ]; then
 	parent_cc=$(echo "$hook_json" | jq -r '.parent_session_id // ""')
 	if [ -n "$parent_cc" ]; then
 		payload=$(jq -nc --arg c "$handoff" '{type: "note", scope: "tdd_handoff", content: $c}')
-		cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record turn \
+		cd "$cwd" >/dev/null && $pm_exec vitest-agent record turn \
 			--cc-session-id "$parent_cc" \
 			"$payload" \
 			>/dev/null 2>&1 \

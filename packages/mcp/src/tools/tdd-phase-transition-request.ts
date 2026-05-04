@@ -43,7 +43,7 @@ export const tddPhaseTransitionRequest = publicProcedure
 				if (Option.isNone(artifactOpt)) {
 					// Per Decision D7, artifact writes are CLI-only — there
 					// is no `tdd_artifact_record` MCP tool. The plugin's
-					// PostToolUse hooks shell out to `vitest-agent-reporter
+					// PostToolUse hooks shell out to `vitest-agent
 					// record tdd-artifact` on the orchestrator's behalf
 					// after observing the side effect (test run, edit).
 					// Steer the agent to make the side effect happen,

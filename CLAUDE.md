@@ -9,12 +9,12 @@ This is a pnpm monorepo. Workspaces are defined in `pnpm-workspace.yaml`:
 
 | Workspace | Path | Purpose |
 | --------- | ---- | ------- |
-| `vitest-agent-sdk` | `packages/shared/` | Shared schemas, data layer, services, formatters, utilities (no internal deps) |
-| `vitest-agent` | `packages/agent/` | Vitest plugin (`AgentPlugin`), internal reporter class, `CoverageAnalyzer`, `ReporterLive` |
+| `vitest-agent-sdk` | `packages/sdk/` | Shared schemas, data layer, services, formatters, utilities (no internal deps) |
+| `vitest-agent-plugin` | `packages/plugin/` | Vitest plugin (`AgentPlugin`), internal reporter class, `CoverageAnalyzer`, `ReporterLive` |
 | `vitest-agent-reporter` | `packages/reporter/` | Named `VitestAgentReporterFactory` implementations (no Vitest-API code) |
-| `vitest-agent-cli` | `packages/cli/` | CLI bin (`vitest-agent-reporter`) |
+| `vitest-agent-cli` | `packages/cli/` | CLI bin (`vitest-agent`) |
 | `vitest-agent-mcp` | `packages/mcp/` | MCP server bin (`vitest-agent-mcp`) |
-| `examples/*` | `examples/` | Usage examples |
+| `playground` | `playground/` | Dogfooding sandbox — intentionally imperfect code for agent demos |
 
 The five publishable packages live under `packages/`. The `plugin/`
 directory at the repo root is a file-based Claude Code plugin (NOT a pnpm
@@ -32,30 +32,30 @@ to all workspaces. To scope commands to a specific package, use
   reporter contract types (`ReporterKit`, `VitestAgentReporterFactory`,
   etc.), and supporting utilities. Has no dependency on the other four
   packages.
-- `vitest-agent` -- imports from `-shared`. Owns `AgentPlugin`,
+- `vitest-agent-plugin` -- imports from `-sdk`. Owns `AgentPlugin`,
   the internal `AgentReporter` Vitest-API class, `CoverageAnalyzer`
   (the only service that needs Vitest's istanbul `CoverageMap`),
   `ReporterLive`, and reporter-side utilities (`build-reporter-kit`,
   `route-rendered-output`, `process-failure`, etc.). Declares
   `vitest-agent-reporter`, `vitest-agent-cli`, and `vitest-agent-mcp`
   as **required** peerDependencies (`peerDependenciesMeta.optional: false`).
-- `vitest-agent-reporter` -- imports from `-shared`. Owns named
+- `vitest-agent-reporter` -- imports from `-sdk`. Owns named
   `VitestAgentReporterFactory` implementations only (`defaultReporter`,
   `markdownReporter`, `terminalReporter`, `jsonReporter`,
   `silentReporter`, `ciAnnotationsReporter`, `githubSummaryReporter`).
   No Vitest-API code.
-- `vitest-agent-cli` -- imports from `-shared`. Owns the
+- `vitest-agent-cli` -- imports from `-sdk`. Owns the
   `@effect/cli` commands and `CliLive`.
-- `vitest-agent-mcp` -- imports from `-shared`. Owns the MCP
+- `vitest-agent-mcp` -- imports from `-sdk`. Owns the MCP
   server, tRPC router, 41 tools, and `McpLive`.
 
-The five packages release in lockstep; agent, reporter, cli, and mcp
-pin `-shared` at `workspace:*` and agent pins reporter/cli/mcp at
+The five packages release in lockstep; plugin, reporter, cli, and mcp
+pin `-sdk` at `workspace:*` and plugin pins reporter/cli/mcp at
 `workspace:*`.
 
 ## Project Status
 
-`vitest-agent-reporter` 2.0 is a Vitest reporter, plugin, CLI, and MCP
+`vitest-agent` 2.0 is a Vitest reporter, plugin, CLI, and MCP
 server family for LLM coding agents. Six primary capabilities:
 
 1. **`AgentReporter`** -- Vitest Reporter (>= 4.1.0) producing formatted
@@ -67,7 +67,7 @@ server family for LLM coding agents. Six primary capabilities:
    four-environment detection (`agent-shell`/`terminal`/`ci-github`/
    `ci-generic`), reporter chain management, cache directory resolution,
    and coverage threshold/target extraction.
-3. **`vitest-agent-reporter` CLI** -- `@effect/cli`-based bin (shipped by
+3. **`vitest-agent` CLI** -- `@effect/cli`-based bin (shipped by
    the `vitest-agent-cli` package) with `status`, `overview`,
    `coverage`, `history`, `trends`, `cache`, and `doctor` subcommands.
    All commands support `--format`.
@@ -86,33 +86,33 @@ server family for LLM coding agents. Six primary capabilities:
 Effect service architecture: I/O encapsulated in Effect services
 (DataStore, DataReader, EnvironmentDetector, ExecutorResolver,
 FormatSelector, DetailResolver, OutputRenderer, ProjectDiscovery,
-HistoryTracker in `-shared`; CoverageAnalyzer in the reporter package)
+HistoryTracker in `-sdk`; CoverageAnalyzer in the plugin package)
 with live and test layer implementations. All data structures use Effect
 Schema definitions with `typeof Schema.Type` for TypeScript types.
 Schemas are part of the public API and are re-exported from
-`vitest-agent-reporter` for backward-compatible consumer use.
+`vitest-agent-sdk` for consumer use.
 
 ### Database location
 
 The SQLite `data.db` lives at a deterministic XDG-derived path:
 
 ```text
-$XDG_DATA_HOME/vitest-agent-reporter/<workspaceKey>/data.db
+$XDG_DATA_HOME/vitest-agent/<workspaceKey>/data.db
 ```
 
 `<workspaceKey>` is the root `package.json` `name`, normalized for
 filesystem safety (`@org/pkg` -> `@org__pkg`). On systems without
 `XDG_DATA_HOME`, the path falls back to
-`~/.local/share/vitest-agent-reporter/<workspaceKey>/data.db` per
+`~/.local/share/vitest-agent/<workspaceKey>/data.db` per
 `xdg-effect` `AppDirs` semantics. The directory is created on demand
 via `appDirs.ensureData`.
 
 Resolution precedence (highest first):
 
-1. Programmatic `reporter.cacheDir` option.
-2. `cacheDir` field in `vitest-agent-reporter.config.toml` at the
+1. Programmatic `reporterOptions.cacheDir` option.
+2. `cacheDir` field in `vitest-agent.config.toml` at the
    workspace root.
-3. `projectKey` field in `vitest-agent-reporter.config.toml` (used as
+3. `projectKey` field in `vitest-agent.config.toml` (used as
    the `<workspaceKey>` segment under XDG).
 4. Normalized workspace `name` (default).
 
@@ -124,7 +124,7 @@ breaking change documented in the changeset and changelog.
 
 ### Optional config file
 
-`vitest-agent-reporter.config.toml` at the workspace root supports two
+`vitest-agent.config.toml` at the workspace root supports two
 optional fields:
 
 ```toml
@@ -162,7 +162,7 @@ plus `node_modules` walk approach.
 
 ### Source layout (per package)
 
-`packages/shared/src/` -- `services/` (Effect tags), `layers/` (live +
+`packages/sdk/src/` -- `services/` (Effect tags), `layers/` (live +
 test, including `LoggerLive`, `ConfigLive`, `PathResolutionLive`,
 `OutputPipelineLive`), `schemas/` (Effect Schema definitions; `schemas/turns/`
 holds the seven `TurnPayload` discriminated-union payloads),
@@ -176,7 +176,7 @@ contract types), `utils/` (pure functions, including `resolve-data-path`,
 ci-annotations), `migrations/` (5 migrations; `0002_comprehensive` is
 the last drop-and-recreate, 41 tables total), `sql/` (row types + assemblers).
 
-`packages/agent/src/` -- `plugin.ts` (`AgentPlugin`),
+`packages/plugin/src/` -- `plugin.ts` (`AgentPlugin`),
 `reporter.ts` (internal `AgentReporter` Vitest-API class),
 `services/CoverageAnalyzer.ts`, `layers/CoverageAnalyzerLive.ts`,
 `layers/ReporterLive.ts`, `utils/` (`build-reporter-kit`,
@@ -200,11 +200,11 @@ the last drop-and-recreate, 41 tables total), `sql/` (row types + assemblers).
 `plugin/` -- `.claude-plugin/plugin.json` (manifest with inline
 `mcpServers`), `bin/mcp-server.mjs` (PM-detect + spawn loader),
 `hooks/` (`session-start.sh`, `post-test-run.sh`,
-`pre-tool-use-mcp.sh`, `lib/safe-mcp-vitest-agent-reporter-ops.txt`),
+`pre-tool-use-mcp.sh`, `lib/safe-mcp-vitest-agent-ops.txt`),
 `skills/` (TDD, debugging, configuration, coverage-improvement),
 `commands/` (setup, configure).
 
-**Spec:** [GitHub Issue #1](https://github.com/spencerbeggs/vitest-agent-reporter/issues/1)
+**Spec:** [GitHub Issue #1](https://github.com/spencerbeggs/vitest-agent/issues/1)
 
 **For architecture details (progressive loading -- load only what you need):**
 
@@ -317,7 +317,7 @@ pnpm run ci:build          # Same with CI=true and grouped output
 To build a specific package, use the Turbo filter:
 
 ```bash
-turbo run build:dev build:prod --filter='./packages/shared'
+turbo run build:dev build:prod --filter='./packages/sdk'
 turbo run build:dev build:prod --filter='./packages/cli'
 turbo run build:dev build:prod --filter='./packages/mcp'
 ```
@@ -325,7 +325,7 @@ turbo run build:dev build:prod --filter='./packages/mcp'
 ### Running a Specific Test
 
 ```bash
-pnpm vitest run packages/shared/src/utils/resolve-data-path.test.ts
+pnpm vitest run packages/sdk/src/utils/resolve-data-path.test.ts
 ```
 
 ## Code Quality and Hooks
@@ -381,7 +381,7 @@ The five packages publish to both GitHub Packages and npm with
 provenance via the [@savvy-web/changesets](https://github.com/savvy-web/changesets)
 release workflow. The GitHub Action is at
 [savvy-web/workflow-release-action](https://github.com/savvy-web/workflow-release-action).
-Releases happen in lockstep -- `vitest-agent` declares
+Releases happen in lockstep -- `vitest-agent-plugin` declares
 `vitest-agent-reporter`, `vitest-agent-cli`, and `vitest-agent-mcp`
 as required peerDependencies, and all five depend on
 `vitest-agent-sdk` at the same version.

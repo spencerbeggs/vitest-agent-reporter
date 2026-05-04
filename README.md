@@ -1,27 +1,19 @@
-# vitest-agent-reporter
+# vitest-agent
 
-Monorepo for developing the `vitest-agent-reporter` package family — a
-Vitest reporter and agent platform for LLM coding agents. Produces
-structured test output, persists data in SQLite at an XDG-derived path,
-and exposes test intelligence via CLI, MCP server, and Claude Code
-plugin.
+Monorepo for developing the `vitest-agent` package family — a Vitest reporter and agent platform for LLM coding agents. Produces structured test output, persists data in SQLite at an XDG-derived path, and exposes test intelligence via CLI, MCP server, and Claude Code plugin.
 
 ## Workspaces
 
 | Workspace | Path | Description |
 | --- | --- | --- |
-| `vitest-agent` | `packages/agent/` | Vitest plugin + lifecycle (`AgentPlugin`, `AgentReporter`, `CoverageAnalyzer`) |
-| `vitest-agent-reporter` | `packages/reporter/` | Named renderer factory implementations |
-| `vitest-agent-sdk` | `packages/shared/` | Shared schemas, data layer, services, formatters, utilities |
-| `vitest-agent-cli` | `packages/cli/` | `vitest-agent-reporter` CLI bin |
-| `vitest-agent-mcp` | `packages/mcp/` | `vitest-agent-mcp` MCP server bin |
-| `example-basic` | `examples/basic/` | Minimal test project for CLI testing |
+| `vitest-agent-plugin` | [packages/plugin](./packages/plugin/) | Vitest plugin + lifecycle (`AgentPlugin`, `AgentReporter`, `CoverageAnalyzer`) |
+| `vitest-agent-reporter` | [packages/reporter](./packages/reporter/) | Named renderer factory implementations |
+| `vitest-agent-sdk` | [packages/sdk](./packages/sdk/) | Shared schemas, data layer, services, formatters, utilities |
+| `vitest-agent-cli` | [packages/cli](./packages/cli/) | `vitest-agent` CLI bin |
+| `vitest-agent-mcp` | [packages/mcp](./packages/mcp) | `vitest-agent-mcp` MCP server bin |
+| `playground` | [playground](./playground/) | Dogfooding sandbox — intentionally imperfect code for agent demos |
 
-`vitest-agent-sdk` has no internal dependencies. The other
-four runtime packages each depend on it. The `vitest-agent` package declares
-`vitest-agent-reporter`, the CLI and MCP packages as required peer dependencies,
-so a single `npm install vitest-agent` pulls all four on modern pnpm and
-npm.
+`vitest-agent-sdk` has no internal dependencies. The other four runtime packages each depend on it. `vitest-agent-plugin` declares `vitest-agent-reporter`, the CLI and MCP packages as required peer dependencies, so a single `npm install vitest-agent-plugin` pulls all four on modern pnpm and npm.
 
 ## Plugin
 
@@ -29,9 +21,7 @@ npm.
 | --- | --- | --- |
 | Claude Code plugin | `plugin/` | Hooks, skills, commands, MCP auto-registration |
 
-The plugin is not a pnpm workspace — it's a directory of markdown, JSON,
-shell, and a zero-deps Node loader (`bin/mcp-server.mjs`) consumed by
-the Claude Code plugin system. See [plugin/README.md](plugin/README.md).
+The plugin is not a pnpm workspace — it's a directory of markdown, JSON, shell, and a zero-deps Node loader (`bin/mcp-server.mjs`) consumed by the Claude Code plugin system. See [plugin/README.md](plugin/README.md).
 
 ## Architecture
 
@@ -39,15 +29,11 @@ The package family has three entry points:
 
 | Entry | Bin | Package | Purpose |
 | --- | --- | --- | --- |
-| Plugin | (library import) | `vitest-agent` | Vitest plugin producing SQLite-persisted test data |
-| CLI | `vitest-agent-reporter` | `vitest-agent-cli` | Query test status, coverage, history, trends from the terminal |
+| Plugin | (library import) | `vitest-agent-plugin` | Vitest plugin producing SQLite-persisted test data |
+| CLI | `vitest-agent` | `vitest-agent-cli` | Query test status, coverage, history, trends from the terminal |
 | MCP Server | `vitest-agent-mcp` | `vitest-agent-mcp` | 41 tools over stdio for LLM agent integration |
 
-All three share the Effect service architecture and the same SQLite
-database in `vitest-agent-sdk` (`DataReader`, `DataStore`,
-`OutputRenderer`, output pipeline, formatters, etc.). The database
-location is derived from your root workspace's `package.json` `name`
-under `$XDG_DATA_HOME/vitest-agent-reporter/`.
+All three share the Effect service architecture and the same SQLite database in `vitest-agent-sdk` (`DataReader`, `DataStore`, `OutputRenderer`, output pipeline, formatters, etc.). The database location is derived from your root workspace's `package.json` `name` under `$XDG_DATA_HOME/vitest-agent/`.
 
 ## Development
 
@@ -67,28 +53,95 @@ Run tests to populate the database:
 pnpm run test
 ```
 
-Query cached data via the CLI bin (resolved from
-`packages/cli/node_modules/.bin`):
+Query cached data via the CLI bin:
 
 ```bash
-pnpm exec vitest-agent-reporter status
-pnpm exec vitest-agent-reporter history
-pnpm exec vitest-agent-reporter trends
-pnpm exec vitest-agent-reporter doctor
+pnpm exec vitest-agent status
+pnpm exec vitest-agent history
+pnpm exec vitest-agent trends
+pnpm exec vitest-agent doctor
 ```
 
-## Testing the plugin locally
+## Testing the Claude Code plugin locally
+
+Install dependencies (this also builds the packages so the plugin's MCP loader can resolve them):
 
 ```bash
-claude --plugin-dir ./plugin
+pnpm install
+```
+
+Start Claude Code with the local plugin directory:
+
+```bash
+claude --debug --plugin-dir ./plugin
+```
+
+While in an active session, you can rebuild all packages without restarting:
+
+```bash
+pnpm run build
+```
+
+Changes to the compiled packages take effect immediately on the next tool call — no restart needed. The same applies to inline edits to hook shell scripts; they are re-sourced on every invocation.
+
+A restart is only required when changing hook **registration** (adding, removing, or renaming hooks in `plugin/hooks/hooks.json` or `plugin/.claude-plugin/plugin.json`), since Claude Code reads those at startup. When in doubt, reboot.
+
+## Sample agent prompts
+
+Once the plugin is active, these prompts exercise the MCP tools, the CLI integration, and the TDD orchestrator. Run `pnpm run test` first so the database has data to query.
+
+### Query test status and coverage
+
+```text
+What's the current test status for this project? Summarize pass rates, any
+failing tests, and which files are below the coverage targets.
+```
+
+```text
+Show me the coverage trend for the playground package over the last few runs.
+Are things improving or regressing?
+```
+
+```text
+Have any tests been flaky or persistently failing recently? Pull the failure
+history and highlight anything that's shown up more than once.
+```
+
+### Run specific tests
+
+```text
+Run the playground test suite and give me a breakdown of what's covered
+and what the gaps are.
+```
+
+```text
+Run only playground/src/notebook.test.ts and tell me if all tests pass.
+```
+
+```text
+Run the full test suite, then show me the coverage table for the playground
+package specifically.
+```
+
+### TDD orchestrator — fix a real problem
+
+```text
+The playground/src/notebook.ts module has at least one method that throws a
+hard runtime error when called with bad input. Use TDD to find it: write a
+failing test that reproduces the crash, then fix the code so the test passes
+without breaking any existing tests.
+```
+
+```text
+Use the TDD orchestrator to improve coverage in the playground package.
+Start with the functions that have zero coverage, write failing tests first,
+then implement fixes one at a time until the aspirational targets are met.
 ```
 
 ## Package documentation
 
-See [packages/reporter/README.md](packages/reporter/README.md) for the
-main user-facing documentation, including installation, configuration,
-MCP tools, and Claude Code plugin setup.
+See [packages/reporter/README.md](packages/reporter/README.md) for the main user-facing documentation, including installation, configuration, MCP tools, and Claude Code plugin setup.
 
 ## License
 
-MIT
+[MIT](LICENSE)

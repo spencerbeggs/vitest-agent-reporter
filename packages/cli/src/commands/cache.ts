@@ -1,5 +1,5 @@
 /**
- * CLI cache command -- manage the vitest-agent-reporter database.
+ * CLI cache command -- manage the vitest-agent database.
  *
  * @packageDocumentation
  */

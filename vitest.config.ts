@@ -1,5 +1,5 @@
 import { defineConfig } from "vitest/config";
-import { AgentPlugin } from "vitest-agent";
+import { AgentPlugin } from "vitest-agent-plugin";
 
 export default defineConfig({
 	plugins: [
@@ -7,7 +7,7 @@ export default defineConfig({
 			mode: "agent",
 			strategy: "own",
 			mcp: true,
-			reporter: {
+			reporterOptions: {
 				coverageThresholds: { lines: 0, functions: 0, branches: 0, statements: 0 },
 				coverageTargets: { lines: 80, functions: 80, branches: 80, statements: 80 },
 			},
@@ -27,8 +27,8 @@ export default defineConfig({
 			{
 				extends: true,
 				test: {
-					name: "vitest-agent",
-					include: ["packages/agent/src/**/*.{test,spec}.ts"],
+					name: "vitest-agent-plugin",
+					include: ["packages/plugin/src/**/*.{test,spec}.ts"],
 					exclude: ["**/*.e2e.{test,spec}.ts"],
 				},
 			},
@@ -36,7 +36,7 @@ export default defineConfig({
 				extends: true,
 				test: {
 					name: "vitest-agent-sdk",
-					include: ["packages/shared/src/**/*.{test,spec}.ts"],
+					include: ["packages/sdk/src/**/*.{test,spec}.ts"],
 					exclude: ["**/*.e2e.{test,spec}.ts"],
 				},
 			},
@@ -59,8 +59,8 @@ export default defineConfig({
 			{
 				extends: true,
 				test: {
-					name: "example-basic",
-					include: ["examples/basic/src/**/*.{test,spec}.ts"],
+					name: "playground",
+					include: ["playground/src/**/*.{test,spec}.ts"],
 					exclude: ["**/*.e2e.{test,spec}.ts"],
 				},
 			},
@@ -77,11 +77,11 @@ export default defineConfig({
 			provider: "v8",
 			include: [
 				"packages/reporter/src/**/*.ts",
-				"packages/agent/src/**/*.ts",
-				"packages/shared/src/**/*.ts",
+				"packages/plugin/src/**/*.ts",
+				"packages/sdk/src/**/*.ts",
 				"packages/mcp/src/**/*.ts",
 				"packages/cli/src/**/*.ts",
-				"examples/basic/src/**/*.ts",
+				"playground/src/**/*.ts",
 			],
 			exclude: [
 				"**/*.{test,spec}.ts",
@@ -91,30 +91,30 @@ export default defineConfig({
 				"packages/cli/src/index.ts",
 				"packages/cli/src/layers/**",
 				"packages/mcp/**",
-				// Reporter and agent glue
+				// Reporter and plugin glue
 				"packages/reporter/src/index.ts",
-				"packages/agent/src/index.ts",
-				"packages/agent/src/reporter.ts",
-				"packages/agent/src/layers/**",
-				// Shared composition layers and bundles with no testable logic
-				"packages/shared/src/services/*.ts",
-				"packages/shared/src/errors/*.ts",
-				"packages/shared/src/sql/rows.ts",
-				"packages/shared/src/sql/assemblers.ts",
-				"packages/shared/src/migrations/**",
-				"packages/shared/src/layers/OutputPipelineLive.ts",
-				"packages/shared/src/layers/PathResolutionLive.ts",
-				"packages/shared/src/layers/OutputRendererLive.ts",
-				"packages/shared/src/layers/EnvironmentDetectorLive.ts",
-				"packages/shared/src/layers/LoggerLive.ts",
-				"packages/shared/src/layers/DataStoreLive.ts",
-				"packages/shared/src/layers/DataStoreTest.ts",
-				"packages/shared/src/layers/DataReaderLive.ts",
-				"packages/shared/src/formatters/gfm.ts",
-				"packages/shared/src/formatters/silent.ts",
-				"packages/shared/src/formatters/markdown.ts",
-				"packages/shared/src/schemas/Thresholds.ts",
-				"packages/shared/src/schemas/Coverage.ts",
+				"packages/plugin/src/index.ts",
+				"packages/plugin/src/reporter.ts",
+				"packages/plugin/src/layers/**",
+				// SDK composition layers and bundles with no testable logic
+				"packages/sdk/src/services/*.ts",
+				"packages/sdk/src/errors/*.ts",
+				"packages/sdk/src/sql/rows.ts",
+				"packages/sdk/src/sql/assemblers.ts",
+				"packages/sdk/src/migrations/**",
+				"packages/sdk/src/layers/OutputPipelineLive.ts",
+				"packages/sdk/src/layers/PathResolutionLive.ts",
+				"packages/sdk/src/layers/OutputRendererLive.ts",
+				"packages/sdk/src/layers/EnvironmentDetectorLive.ts",
+				"packages/sdk/src/layers/LoggerLive.ts",
+				"packages/sdk/src/layers/DataStoreLive.ts",
+				"packages/sdk/src/layers/DataStoreTest.ts",
+				"packages/sdk/src/layers/DataReaderLive.ts",
+				"packages/sdk/src/formatters/gfm.ts",
+				"packages/sdk/src/formatters/silent.ts",
+				"packages/sdk/src/formatters/markdown.ts",
+				"packages/sdk/src/schemas/Thresholds.ts",
+				"packages/sdk/src/schemas/Coverage.ts",
 			],
 		},
 	},

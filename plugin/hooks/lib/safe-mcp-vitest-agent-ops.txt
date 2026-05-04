@@ -1,0 +1,73 @@
+# Auto-allow MCP operation suffixes for the vitest-agent MCP server
+# (mcp__vitest-agent_mcp__<op>).
+# All tools are read-only or self-contained and safe to auto-allow:
+# - Discovery / status: read SQLite database, no side effects
+# - Notes CRUD: writes to the user's own notes table, scoped to the project
+# - Hypothesis writes: writes to the user's own hypotheses table, scoped to the session
+# - run_tests: executes the user's own test suite via Vitest; requires test
+#   files and tools to be available, but does not touch external systems
+
+# === Meta ===
+help
+
+# === Read-only test data queries ===
+test_status
+test_overview
+test_coverage
+test_history
+test_trends
+test_errors
+test_for_file
+test_get
+file_coverage
+cache_health
+configure
+
+# === Discovery ===
+project_list
+test_list
+module_list
+suite_list
+settings_list
+
+# === Mutation: runs tests via Vitest's programmatic API ===
+run_tests
+
+# === Notes CRUD (scoped to the user's local database) ===
+note_create
+note_list
+note_get
+note_update
+note_delete
+note_search
+
+# === β: Session / turn / TDD reads (read-only) ===
+session_list
+session_get
+turn_search
+failure_signature_get
+tdd_session_get
+hypothesis_list
+acceptance_metrics
+
+# === RC: Orientation triage / wrap-up reads ===
+triage_brief
+wrapup_prompt
+
+# === RC: Hypothesis writes ===
+hypothesis_record
+hypothesis_validate
+
+# === final: TDD lifecycle (idempotent on key) ===
+tdd_session_start
+tdd_session_end
+tdd_session_resume
+decompose_goal_into_behaviors
+tdd_phase_transition_request
+
+# === final: Workspace history (read-only) ===
+commit_changes
+
+# === final: MCP-server session-id association (in-memory, per-window) ===
+get_current_session_id
+set_current_session_id

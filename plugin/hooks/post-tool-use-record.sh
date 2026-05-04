@@ -33,7 +33,7 @@ result_payload=$(jq -nc \
 	--argjson ok "$success" \
 	'{type: "tool_result", tool_name: $tn, success: $ok} + (if $tuid != "" then {tool_use_id: $tuid} else {} end)')
 
-cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record turn \
+cd "$cwd" >/dev/null && $pm_exec vitest-agent record turn \
 	--cc-session-id "$cc_session_id" \
 	"$result_payload" \
 	>/dev/null 2>&1 \
@@ -56,7 +56,7 @@ case "$tool_name" in
 			--arg fp "$file_path" \
 			--arg ek "$edit_kind" \
 			'{type: "file_edit", file_path: $fp, edit_kind: $ek}')
-		cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record turn \
+		cd "$cwd" >/dev/null && $pm_exec vitest-agent record turn \
 			--cc-session-id "$cc_session_id" \
 			"$edit_payload" \
 			>/dev/null 2>&1 \

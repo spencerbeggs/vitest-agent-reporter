@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CLI entry point for vitest-agent-reporter.
+ * CLI entry point for vitest-agent.
  *
  * @packageDocumentation
  */
@@ -27,7 +27,7 @@ import { triageCommand } from "./commands/triage.js";
 import { wrapupCommand } from "./commands/wrapup.js";
 import { CliLive } from "./layers/CliLive.js";
 
-const rootCommand = Command.make("vitest-agent-reporter").pipe(
+const rootCommand = Command.make("vitest-agent").pipe(
 	Command.withSubcommands([
 		statusCommand,
 		overviewCommand,
@@ -43,7 +43,7 @@ const rootCommand = Command.make("vitest-agent-reporter").pipe(
 );
 
 const cli = Command.run(rootCommand, {
-	name: "vitest-agent-reporter",
+	name: "vitest-agent",
 	version: "0.0.0",
 });
 
@@ -61,9 +61,7 @@ const main = resolveDataPath(projectDir).pipe(
 	Effect.catchAllCause((cause) => {
 		const defects = Cause.defects(cause);
 		if (defects.length > 0) {
-			return Console.error(`vitest-agent-reporter: ${formatFatalError(cause)}`).pipe(
-				Effect.andThen(Effect.failCause(cause)),
-			);
+			return Console.error(`vitest-agent: ${formatFatalError(cause)}`).pipe(Effect.andThen(Effect.failCause(cause)));
 		}
 		return Effect.failCause(cause);
 	}),

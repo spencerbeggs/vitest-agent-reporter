@@ -1,16 +1,16 @@
 {
-	"name": "vitest-agent-reporter",
+	"name": "vitest-agent",
 	"description": "Vitest test data, coverage analysis, and notes for LLM coding agents via MCP tools",
 	"version": "1.3.1",
 	"author": {
 		"name": "C. Spencer Beggs",
 		"url": "https://spencerbeg.gs"
 	},
-	"homepage": "https://github.com/spencerbeggs/vitest-agent-reporter",
-	"repository": "https://github.com/spencerbeggs/vitest-agent-reporter.git",
+	"homepage": "https://github.com/spencerbeggs/vitest-agent",
+	"repository": "https://github.com/spencerbeggs/vitest-agent.git",
 	"license": "MIT",
 	"mcpServers": {
-		"vitest-reporter": {
+		"mcp": {
 			"command": "node",
 			"args": ["${CLAUDE_PLUGIN_ROOT}/bin/mcp-server.mjs"]
 		}

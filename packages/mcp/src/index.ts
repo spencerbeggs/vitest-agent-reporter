@@ -1,7 +1,7 @@
 /**
  * vitest-agent-mcp
  *
- * Model Context Protocol server for vitest-agent-reporter. Exposes 24 tools
+ * Model Context Protocol server for vitest-agent. Exposes 24 tools
  * via tRPC over stdio that give agents structured access to test data,
  * coverage, history, trends, errors, and notes — backed by the SQLite
  * database that the reporter writes during test runs.

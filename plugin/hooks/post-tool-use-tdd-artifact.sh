@@ -51,7 +51,7 @@ case "$tool_name" in
 			# Backfill test_cases.created_turn_id (BUG-2) and get latest test
 			# case id for this session (BUG-1) in one call. Ignore errors.
 			test_case_id_arg=""
-			turns_out=$(cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record test-case-turns \
+			turns_out=$(cd "$cwd" >/dev/null && $pm_exec vitest-agent record test-case-turns \
 				--cc-session-id "$cc_session_id" 2>/dev/null || echo "")
 			if [ -n "$turns_out" ]; then
 				latest_id=$(echo "$turns_out" | jq -r '.latestTestCaseId // empty' 2>/dev/null || echo "")
@@ -60,7 +60,7 @@ case "$tool_name" in
 				fi
 			fi
 			# shellcheck disable=SC2086
-			cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record tdd-artifact \
+			cd "$cwd" >/dev/null && $pm_exec vitest-agent record tdd-artifact \
 				--cc-session-id "$cc_session_id" \
 				--artifact-kind "$kind" \
 				--recorded-at "$recorded_at" \
@@ -69,7 +69,7 @@ case "$tool_name" in
 				|| true
 		fi
 		;;
-	mcp__plugin_vitest-agent-reporter_vitest-reporter__run_tests | mcp__vitest-agent-reporter__run_tests)
+	mcp__plugin_vitest-agent_mcp__run_tests | mcp__vitest-agent_mcp__run_tests)
 		# The orchestrator runs tests primarily through the run_tests
 		# MCP tool, so a Bash-only matcher would silently miss every
 		# real test execution and break evidence-based phase
@@ -117,7 +117,7 @@ case "$tool_name" in
 			# case id for this session (BUG-1). For MCP run_tests, post-test-run.sh
 			# does NOT fire, so this is the only opportunity to backfill.
 			test_case_id_arg=""
-			turns_out=$(cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record test-case-turns \
+			turns_out=$(cd "$cwd" >/dev/null && $pm_exec vitest-agent record test-case-turns \
 				--cc-session-id "$cc_session_id" 2>/dev/null || echo "")
 			if [ -n "$turns_out" ]; then
 				latest_id=$(echo "$turns_out" | jq -r '.latestTestCaseId // empty' 2>/dev/null || echo "")
@@ -126,7 +126,7 @@ case "$tool_name" in
 				fi
 			fi
 			# shellcheck disable=SC2086
-			cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record tdd-artifact \
+			cd "$cwd" >/dev/null && $pm_exec vitest-agent record tdd-artifact \
 				--cc-session-id "$cc_session_id" \
 				--artifact-kind "$kind" \
 				--recorded-at "$recorded_at" \
@@ -149,7 +149,7 @@ case "$tool_name" in
 				kind="code_written"
 				;;
 		esac
-		cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record tdd-artifact \
+		cd "$cwd" >/dev/null && $pm_exec vitest-agent record tdd-artifact \
 			--cc-session-id "$cc_session_id" \
 			--artifact-kind "$kind" \
 			--file-path "$file_path" \

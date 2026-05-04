@@ -8,7 +8,7 @@
 						"type": "command",
 						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh\"",
 						"timeout": 30,
-						"statusMessage": "Loading vitest-agent-reporter context..."
+						"statusMessage": "Loading vitest-agent context..."
 					}
 				]
 			}
@@ -26,7 +26,7 @@
 		],
 		"PreToolUse": [
 			{
-				"matcher": "mcp__(plugin_vitest-agent-reporter_vitest-reporter|vitest-agent-reporter)__.*",
+				"matcher": "mcp__(plugin_vitest-agent_mcp|vitest-agent_mcp)__.*",
 				"hooks": [
 					{
 						"type": "command",

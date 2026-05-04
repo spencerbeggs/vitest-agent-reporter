@@ -51,10 +51,10 @@ schema/data-layer/contract surface:
 
 | Package | Path | Role |
 | --- | --- | --- |
-| `vitest-agent-sdk` | `packages/shared/` | Effect Schema, SQLite migrations, errors, `DataStore`/`DataReader` services + live layers, all pipeline services (Environment/Executor/Format/Detail/OutputRenderer) and live layers, History/ProjectDiscovery, Logger, formatters, utilities, the XDG path-resolution stack (`AppDirs`, ConfigFile, WorkspaceDiscovery, `resolveDataPath`), the `lib/` markdown generators (`format-triage`, `format-wrapup`), and the public **reporter contract types** (`contracts/reporter.ts`: `ResolvedReporterConfig`, `ReporterKit`, `ReporterRenderInput`, `VitestAgentReporter`, `VitestAgentReporterFactory`). No internal dependencies. |
-| `vitest-agent` | `packages/agent/` | The Vitest plugin + the internal `AgentReporter` Vitest-API class + `ReporterLive` + `CoverageAnalyzer` + reporter-side utilities (`build-reporter-kit`, `route-rendered-output`, `process-failure`, `capture-env`, `capture-settings`, `resolve-thresholds`, `strip-console-reporters`). Owns the Vitest lifecycle, persistence, classification, baselines, and trends. Delegates rendering to a user-supplied `VitestAgentReporterFactory` (defaults to `defaultReporter` from `vitest-agent-reporter`). Declares `vitest-agent-reporter`, `vitest-agent-cli`, and `vitest-agent-mcp` as required `peerDependencies`. No bin entries. |
+| `vitest-agent-sdk` | `packages/sdk/` | Effect Schema, SQLite migrations, errors, `DataStore`/`DataReader` services + live layers, all pipeline services (Environment/Executor/Format/Detail/OutputRenderer) and live layers, History/ProjectDiscovery, Logger, formatters, utilities, the XDG path-resolution stack (`AppDirs`, ConfigFile, WorkspaceDiscovery, `resolveDataPath`), the `lib/` markdown generators (`format-triage`, `format-wrapup`), and the public **reporter contract types** (`contracts/reporter.ts`: `ResolvedReporterConfig`, `ReporterKit`, `ReporterRenderInput`, `VitestAgentReporter`, `VitestAgentReporterFactory`). No internal dependencies. |
+| `vitest-agent-plugin` | `packages/plugin/` | The Vitest plugin + the internal `AgentReporter` Vitest-API class + `ReporterLive` + `CoverageAnalyzer` + reporter-side utilities (`build-reporter-kit`, `route-rendered-output`, `process-failure`, `capture-env`, `capture-settings`, `resolve-thresholds`, `strip-console-reporters`). Owns the Vitest lifecycle, persistence, classification, baselines, and trends. Delegates rendering to a user-supplied `VitestAgentReporterFactory` (defaults to `defaultReporter` from `vitest-agent-reporter`). Declares `vitest-agent-reporter`, `vitest-agent-cli`, and `vitest-agent-mcp` as required `peerDependencies`. No bin entries. |
 | `vitest-agent-reporter` | `packages/reporter/` | Named `VitestAgentReporterFactory` implementations only — no Vitest-API code. Exports `defaultReporter` (env-aware composition that picks a primary reporter from `kit.config.format` and adds `githubSummaryReporter` as a sidecar under GitHub Actions) plus the focused single-formatter factories `markdownReporter`, `terminalReporter`, `jsonReporter`, `silentReporter`, `ciAnnotationsReporter`, and `githubSummaryReporter`. Each named reporter wraps exactly one shared `Formatter`. Depends on shared. No bin entries. |
-| `vitest-agent-cli` | `packages/cli/` | `vitest-agent-reporter` bin (`@effect/cli`-based) with `status`, `overview`, `coverage`, `history`, `trends`, `cache` (incl. `prune`), `doctor`, `record` (with `turn`, `session-start`, `session-end`, `tdd-artifact`, `run-workspace-changes` actions), `triage`, and `wrapup` subcommands. Owns `CliLive`. |
+| `vitest-agent-cli` | `packages/cli/` | `vitest-agent` bin (`@effect/cli`-based) with `status`, `overview`, `coverage`, `history`, `trends`, `cache` (incl. `prune`), `doctor`, `record` (with `turn`, `session-start`, `session-end`, `tdd-artifact`, `run-workspace-changes` actions), `triage`, and `wrapup` subcommands. Owns `CliLive`. |
 | `vitest-agent-mcp` | `packages/mcp/` | `vitest-agent-mcp` bin (`@modelcontextprotocol/sdk` + tRPC) exposing 41 tools to LLM agents. Owns the tRPC idempotency middleware and `McpLive`. |
 
 Examples live under `examples/*` (included as a sixth Vitest project for
@@ -80,7 +80,7 @@ Claude Code plugin and is NOT a pnpm workspace.
   `findFunctionBoundary` on the resolved source, computes a stable
   failure signature, and persists `failure_signatures` plus per-frame
   source-mapped/function-boundary line columns.
-- **CLI** -- `vitest-agent-reporter` bin with `status`, `overview`,
+- **CLI** -- `vitest-agent` bin with `status`, `overview`,
   `coverage`, `history`, `trends`, `cache` (incl. `cache prune
   --keep-recent` for turn-history retention), `doctor`, `record`
   (with five actions: `turn`, `session-start`, `session-end`,
@@ -129,11 +129,11 @@ Claude Code plugin and is NOT a pnpm workspace.
   `PreToolUse` hook that auto-allows all 41 MCP tools.
 
 The repository is a pnpm monorepo with five publishable workspaces
-under `packages/` (`shared`, `agent`, `reporter`, `cli`, `mcp`) plus
+under `packages/` (`sdk`, `plugin`, `reporter`, `cli`, `mcp`) plus
 `examples/*` for integration coverage. The `plugin/` directory
 contains the Claude Code plugin (NOT a pnpm workspace). The root
 `vitest.config.ts` imports the plugin from
-`./packages/agent/src/plugin.js` and runs six named Vitest projects
+`./packages/plugin/src/plugin.js` and runs six named Vitest projects
 (one per package plus `example-basic`).
 
 ---
@@ -144,10 +144,10 @@ contains the Claude Code plugin (NOT a pnpm workspace). The root
   migrations, errors, services, formatters, utilities, the XDG
   path-resolution stack, the `lib/` markdown generators, and the
   public reporter contract types live in `vitest-agent-sdk`.
-  `vitest-agent` (plugin + lifecycle), `vitest-agent-reporter`
+  `vitest-agent-plugin` (plugin + lifecycle), `vitest-agent-reporter`
   (named reporter factories), `vitest-agent-cli`, and
   `vitest-agent-mcp` each depend on the shared package and are
-  released in lockstep. `vitest-agent` declares
+  released in lockstep. `vitest-agent-plugin` declares
   `vitest-agent-reporter`, the CLI, and the MCP packages as required
   `peerDependencies` so the default reporter and the agent tooling
   story are always installed alongside the plugin.
@@ -163,12 +163,12 @@ contains the Claude Code plugin (NOT a pnpm workspace). The root
   array of reporters so multi-target outputs (e.g. console markdown
   plus GitHub Step Summary) compose without bespoke plugin support.
 - **Deterministic XDG-based data path** -- the SQLite database
-  lives at `$XDG_DATA_HOME/vitest-agent-reporter/<workspaceKey>/data.db`
+  lives at `$XDG_DATA_HOME/vitest-agent/<workspaceKey>/data.db`
   (falling back to `~/.local/share/...`). `<workspaceKey>` is
   derived from the root `package.json` `name` via `WorkspaceDiscovery`
   from `workspaces-effect` and normalized via
   `normalizeWorkspaceKey` (`@org/pkg` -> `@org__pkg`). Optional
-  `vitest-agent-reporter.config.toml` overrides via `cacheDir` (full
+  `vitest-agent.config.toml` overrides via `cacheDir` (full
   path) or `projectKey` (key segment). Programmatic
   `reporter.cacheDir` is highest precedence. The path is a function
   of identity, not filesystem layout.
@@ -190,7 +190,7 @@ contains the Claude Code plugin (NOT a pnpm workspace). The root
 - **Process-level migration coordination** --
   `ensureMigrated(dbPath)` serializes SQLite migrations across
   reporter instances in the same process via a `globalThis`-keyed
-  promise cache (`Symbol.for("vitest-agent-reporter/migration-promises")`).
+  promise cache (`Symbol.for("vitest-agent/migration-promises")`).
   Required for multi-project Vitest configs sharing a single
   `data.db`, where concurrent migration attempts on a fresh database
   would otherwise hit `SQLITE_BUSY` because deferred-transaction
@@ -241,7 +241,7 @@ contains the Claude Code plugin (NOT a pnpm workspace). The root
 - **Hook-driven session/turn capture** -- shell hooks under
   `plugin/hooks/` (SessionStart, UserPromptSubmit, PreToolUse,
   PostToolUse, Stop, SessionEnd, PreCompact, SubagentStart,
-  SubagentStop) call the `vitest-agent-reporter record` subcommand
+  SubagentStop) call the `vitest-agent record` subcommand
   to write `sessions` and `turns` rows. Turn payloads are validated
   against the `TurnPayload` Effect Schema discriminated union before
   persistence. Interpretive hooks (`stop-record`,
@@ -310,12 +310,12 @@ Package layout (the five pnpm workspaces under `packages/`):
         ^            ^            ^            ^
         |            |            |            |
 +----------------+ +-----------+ +---------+ +---------+
-| agent          | | reporter  | | cli     | | mcp     |
+| plugin         | | reporter  | | cli     | | mcp     |
 | plugin.ts,     | | named     | | bin:    | | bin:    |
 | reporter.ts    | | factories | | vitest- | | vitest- |
-| (internal      | | only:     | | agent-  | | agent-  |
-|  Vitest-API    | |  default, | | reporter| | mcp     |
-|  class),       | |  markdown,| | CliLive | | McpLive |
+| (internal      | | only:     | | agent   | | agent-  |
+|  Vitest-API    | |  default, | | CliLive | | mcp     |
+|  class),       | |  markdown,| |         | | McpLive |
 | ReporterLive,  | |  terminal,| |         | |         |
 | CoverageAnalyzr| |  json,    | |         | |         |
 | build-reporter-| |  silent,  | |         | |         |
@@ -378,12 +378,12 @@ Package layout (the five pnpm workspaces under `packages/`):
      commit_changes MCP tool.
 ```
 
-XDG data path resolution (`resolveDataPath`, `packages/shared`).
+XDG data path resolution (`resolveDataPath`, `packages/sdk`).
 Precedence, highest first:
 
 1. `options.cacheDir` (programmatic, e.g. plugin's `reporter.cacheDir`)
    -> `<cacheDir>/data.db`
-2. `cacheDir` from `vitest-agent-reporter.config.toml`
+2. `cacheDir` from `vitest-agent.config.toml`
    -> `<cacheDir>/data.db`
 3. `projectKey` from config TOML
    -> `<XDG data root>/<normalized projectKey>/data.db`
@@ -403,34 +403,34 @@ The most important components, with their canonical locations. See
 
 | Component | Location |
 | --------- | -------- |
-| AgentPlugin | `packages/agent/src/plugin.ts` |
-| Internal AgentReporter (Vitest-API class) | `packages/agent/src/reporter.ts` |
-| Reporter contract types | `packages/shared/src/contracts/reporter.ts` (`ResolvedReporterConfig`, `ReporterKit`, `ReporterRenderInput`, `VitestAgentReporter`, `VitestAgentReporterFactory`) |
+| AgentPlugin | `packages/plugin/src/plugin.ts` |
+| Internal AgentReporter (Vitest-API class) | `packages/plugin/src/reporter.ts` |
+| Reporter contract types | `packages/sdk/src/contracts/reporter.ts` (`ResolvedReporterConfig`, `ReporterKit`, `ReporterRenderInput`, `VitestAgentReporter`, `VitestAgentReporterFactory`) |
 | Default reporter factory | `packages/reporter/src/default.ts` (env-aware composition; primary chosen from `kit.config.format`, GitHub Step Summary added as sidecar under GitHub Actions) |
 | Named reporter factories | `packages/reporter/src/{markdown,terminal,json,silent,ci-annotations,github-summary}.ts` (each wraps one shared `Formatter`) |
 | Reporter kit context helper | `packages/reporter/src/_kit-context.ts` (private `FormatterContext` builder shared by the named factories) |
-| Effect Services (11) | `packages/shared/src/services/` (10) + `packages/agent/src/services/CoverageAnalyzer.ts` |
-| DataStore + DataReader | `packages/shared/src/services/DataStore.ts`, `packages/shared/src/services/DataReader.ts` |
-| CLI bin (`vitest-agent-reporter`) | `packages/cli/` |
+| Effect Services (11) | `packages/sdk/src/services/` (10) + `packages/plugin/src/services/CoverageAnalyzer.ts` |
+| DataStore + DataReader | `packages/sdk/src/services/DataStore.ts`, `packages/sdk/src/services/DataReader.ts` |
+| CLI bin (`vitest-agent`) | `packages/cli/` |
 | MCP server (`vitest-agent-mcp`) | `packages/mcp/` |
-| Output pipeline | `packages/shared/src/layers/OutputPipelineLive.ts` (5 services) |
-| `ensureMigrated` | `packages/shared/src/utils/ensure-migrated.ts` |
-| XDG path resolution | `packages/shared/src/utils/resolve-data-path.ts`, `packages/shared/src/layers/PathResolutionLive.ts` |
-| SQLite migrations | `packages/shared/src/migrations/` (`0001_initial`, `0002_comprehensive`, `0003_idempotent_responses`, `0004_test_cases_created_turn_id`, `0005_failure_signatures_last_seen_at`) |
-| Turn payload schemas | `packages/shared/src/schemas/turns/` (7 payload `Schema.Struct` types + `TurnPayload` union) |
-| Failure signature + function boundary | `packages/shared/src/utils/failure-signature.ts`, `packages/shared/src/utils/function-boundary.ts` (TypeScript-aware via `acorn-typescript`) |
-| Phase-transition validator | `packages/shared/src/utils/validate-phase-transition.ts` |
-| Plugin failure-signature wiring | `packages/agent/src/utils/process-failure.ts`, called from `packages/agent/src/reporter.ts` |
-| Plugin kit + routing utilities | `packages/agent/src/utils/build-reporter-kit.ts` (constructs `ReporterKit`), `packages/agent/src/utils/route-rendered-output.ts` (dispatches by target: `stdout` / `github-summary` / `file`) |
+| Output pipeline | `packages/sdk/src/layers/OutputPipelineLive.ts` (5 services) |
+| `ensureMigrated` | `packages/sdk/src/utils/ensure-migrated.ts` |
+| XDG path resolution | `packages/sdk/src/utils/resolve-data-path.ts`, `packages/sdk/src/layers/PathResolutionLive.ts` |
+| SQLite migrations | `packages/sdk/src/migrations/` (`0001_initial`, `0002_comprehensive`, `0003_idempotent_responses`, `0004_test_cases_created_turn_id`, `0005_failure_signatures_last_seen_at`) |
+| Turn payload schemas | `packages/sdk/src/schemas/turns/` (7 payload `Schema.Struct` types + `TurnPayload` union) |
+| Failure signature + function boundary | `packages/sdk/src/utils/failure-signature.ts`, `packages/sdk/src/utils/function-boundary.ts` (TypeScript-aware via `acorn-typescript`) |
+| Phase-transition validator | `packages/sdk/src/utils/validate-phase-transition.ts` |
+| Plugin failure-signature wiring | `packages/plugin/src/utils/process-failure.ts`, called from `packages/plugin/src/reporter.ts` |
+| Plugin kit + routing utilities | `packages/plugin/src/utils/build-reporter-kit.ts` (constructs `ReporterKit`), `packages/plugin/src/utils/route-rendered-output.ts` (dispatches by target: `stdout` / `github-summary` / `file`) |
 | `record` CLI subcommand | `packages/cli/src/commands/record.ts`, with five lib actions: `record-turn.ts`, `record-session.ts`, `record-tdd-artifact.ts`, `record-workspace-changes.ts` |
-| Shared lib generators | `packages/shared/src/lib/format-triage.ts`, `packages/shared/src/lib/format-wrapup.ts` |
+| Shared lib generators | `packages/sdk/src/lib/format-triage.ts`, `packages/sdk/src/lib/format-wrapup.ts` |
 | CLI subcommands | `packages/cli/src/commands/{status,overview,coverage,history,trends,cache,doctor,record,triage,wrapup}.ts` |
 | MCP tools | `packages/mcp/src/tools/` (one file per tool; the 6 note CRUD ops live in `notes.ts`, totaling 41 tools) |
 | tRPC idempotency middleware | `packages/mcp/src/middleware/idempotency.ts` (with `idempotentProcedure` + `idempotencyKeys` registry) |
-| Plugin hooks | `plugin/hooks/{session-start,user-prompt-submit-record,pre-tool-use-mcp,pre-tool-use-record,pre-tool-use-bash-tdd,post-test-run,post-tool-use-record,post-tool-use-tdd-artifact,post-tool-use-test-quality,post-tool-use-git-commit,session-end-record,stop-record,pre-compact-record,subagent-start-tdd,subagent-stop-tdd}.sh` plus `lib/match-tdd-agent.sh`, `lib/detect-pm.sh`, `lib/hook-output.sh`, and `lib/safe-mcp-vitest-agent-reporter-ops.txt` |
-| CI annotations formatter | `packages/shared/src/formatters/ci-annotations.ts` |
-| Terminal formatter | `packages/shared/src/formatters/terminal.ts` |
-| OSC-8 hyperlink utility | `packages/shared/src/utils/hyperlink.ts` (`osc8(url, label, { enabled })`) |
+| Plugin hooks | `plugin/hooks/{session-start,user-prompt-submit-record,pre-tool-use-mcp,pre-tool-use-record,pre-tool-use-bash-tdd,post-test-run,post-tool-use-record,post-tool-use-tdd-artifact,post-tool-use-test-quality,post-tool-use-git-commit,session-end-record,stop-record,pre-compact-record,subagent-start-tdd,subagent-stop-tdd}.sh` plus `lib/match-tdd-agent.sh`, `lib/detect-pm.sh`, `lib/hook-output.sh`, and `lib/safe-mcp-vitest-agent-ops.txt` |
+| CI annotations formatter | `packages/sdk/src/formatters/ci-annotations.ts` |
+| Terminal formatter | `packages/sdk/src/formatters/terminal.ts` |
+| OSC-8 hyperlink utility | `packages/sdk/src/utils/hyperlink.ts` (`osc8(url, label, { enabled })`) |
 | TDD orchestrator agent | `plugin/agents/tdd-orchestrator.md` |
 | `/tdd` slash command | `plugin/commands/tdd.md` |
 | TDD sub-skill primitives | `plugin/skills/{interpret-test-failure,derive-test-name-from-behavior,derive-test-shape-from-name,verify-test-quality,run-and-classify,record-hypothesis-before-fix,commit-cycle,revert-on-extended-red,decompose-goal-into-behaviors}/SKILL.md` |
@@ -463,7 +463,7 @@ The most important components, with their canonical locations. See
   plugin. After the plugin/reporter split, `vitest-agent-reporter`
   exports only named `VitestAgentReporterFactory` implementations
   and no Vitest-API class. Users must adopt `agentPlugin()` from
-  `vitest-agent`. Documented as a 2.0 breaking change.
+  `vitest-agent-plugin`. Documented as a 2.0 breaking change.
 - **`route-rendered-output` `file` target is a no-op** -- the
   `RenderedOutput.target === "file"` branch is reserved for a future
   convention; current routing handles `stdout` and `github-summary`

@@ -2,15 +2,15 @@
 	"name": "vitest-agent-cli",
 	"version": "1.3.1",
 	"private": true,
-	"description": "On-demand CLI for vitest-agent-reporter. Reads cached test data and reports status, overview, coverage, history, trends, and cache health.",
+	"description": "On-demand CLI for vitest-agent. Reads cached test data and reports status, overview, coverage, history, trends, and cache health.",
 	"keywords": ["vitest", "agent", "cli", "tests", "coverage"],
-	"homepage": "https://github.com/spencerbeggs/vitest-agent-reporter#readme",
+	"homepage": "https://github.com/spencerbeggs/vitest-agent#readme",
 	"bugs": {
-		"url": "https://github.com/spencerbeggs/vitest-agent-reporter/issues"
+		"url": "https://github.com/spencerbeggs/vitest-agent/issues"
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/spencerbeggs/vitest-agent-reporter.git",
+		"url": "git+https://github.com/spencerbeggs/vitest-agent.git",
 		"directory": "packages/cli"
 	},
 	"license": "MIT",
@@ -24,7 +24,7 @@
 		".": "./src/index.ts"
 	},
 	"bin": {
-		"vitest-agent-reporter": "./src/bin.ts"
+		"vitest-agent": "./src/bin.ts"
 	},
 	"scripts": {
 		"build:dev": "rslib build --config-loader native --env-mode dev",

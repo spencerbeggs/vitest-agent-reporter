@@ -51,14 +51,14 @@ covers one package; load only the section you need:
   `/tdd` slash command, and 9 sub-skill primitives
 
 The 11 Effect services are split: 10 services live in
-`packages/shared/src/services/` (Config, DataReader, DataStore,
+`packages/sdk/src/services/` (Config, DataReader, DataStore,
 DetailResolver, EnvironmentDetector, ExecutorResolver, FormatSelector,
 HistoryTracker, OutputRenderer, ProjectDiscovery), plus CoverageAnalyzer
 in the agent package -- 11 services in total.
 
 ---
 
-## Agent package (vitest-agent)
+## Agent package (vitest-agent-plugin)
 
 The agent package owns everything Vitest-API-aware: the plugin, the
 internal `AgentReporter` Vitest-lifecycle class, the
@@ -69,9 +69,9 @@ persistence, classification, baselines, trends, and Vitest lifecycle
 wiring; rendering is delegated to whatever `VitestAgentReporter`(s)
 the factory returns.
 
-**npm name:** `vitest-agent`
-**Location:** `packages/agent/`
-**Entry:** `packages/agent/src/index.ts`
+**npm name:** `vitest-agent-plugin`
+**Location:** `packages/plugin/`
+**Entry:** `packages/plugin/src/index.ts`
 **Internal dependencies:** `vitest-agent-sdk`
 **Required peer dependencies:** `vitest-agent-reporter` (for the
 default reporter), `vitest-agent-cli`, `vitest-agent-mcp`,
@@ -79,7 +79,7 @@ default reporter), `vitest-agent-cli`, `vitest-agent-mcp`,
 
 ### AgentPlugin
 
-**Location:** `packages/agent/src/plugin.ts`
+**Location:** `packages/plugin/src/plugin.ts`
 
 **Purpose:** Vitest plugin that injects `AgentReporter` into the
 reporter chain via the `configureVitest` hook. Manages environment
@@ -98,7 +98,7 @@ the user's `VitestAgentReporterFactory`.
   `terminal`, `ci-github`, `ci-generic`) and resolves executor via
   `ExecutorResolver` (`human`, `agent`, or `ci`)
 - Resolves cache directory with two-step priority: explicit
-  `reporter.cacheDir` option > `outputFile['vitest-agent-reporter']`
+  `reporter.cacheDir` option > `outputFile['vitest-agent']`
   from Vitest config. When both are unset, passes
   `cacheDir: undefined` to `AgentReporter`, which falls through to
   XDG-based resolution via `resolveDataPath` -- the canonical default.
@@ -175,7 +175,7 @@ paths) and non-console built-in reporters (`json`, `junit`, `html`,
 
 ### AgentReporter (internal Vitest-API class)
 
-**Location:** `packages/agent/src/reporter.ts`
+**Location:** `packages/plugin/src/reporter.ts`
 
 **Purpose:** Internal Vitest Reporter that owns the Vitest lifecycle
 hooks, runs persistence / classification / baseline / trend
@@ -305,9 +305,9 @@ interface AgentReporterConstructorOptions extends AgentReporterOptions {
 
 ### CoverageAnalyzer
 
-**Location:** `packages/agent/src/services/CoverageAnalyzer.ts`,
-`packages/agent/src/layers/CoverageAnalyzerLive.ts`,
-`packages/agent/src/layers/CoverageAnalyzerTest.ts`
+**Location:** `packages/plugin/src/services/CoverageAnalyzer.ts`,
+`packages/plugin/src/layers/CoverageAnalyzerLive.ts`,
+`packages/plugin/src/layers/CoverageAnalyzerTest.ts`
 
 **Purpose:** Effect service that processes istanbul `CoverageMap` data
 with optional scoping. Provides `process` (full analysis) and
@@ -333,7 +333,7 @@ co-located with the lifecycle code that feeds it.
 
 ### Reporter-side utilities
 
-**Location:** `packages/agent/src/utils/`
+**Location:** `packages/plugin/src/utils/`
 
 Pure utilities that only the plugin's lifecycle class calls. Anything
 used by more than one runtime package lives in shared instead.
@@ -349,7 +349,7 @@ used by more than one runtime package lives in shared instead.
 - `capture-settings.ts` -- captures Vitest config settings (pool,
   environment, timeouts, coverage provider, etc.) and computes a
   deterministic hash. The `SettingsInput` return type lives in
-  `packages/shared/src/services/DataStore.ts` so DataStore owns its
+  `packages/sdk/src/services/DataStore.ts` so DataStore owns its
   full input contract without circular imports between agent and
   shared
 - `process-failure.ts` -- per-error processing pipeline called from
@@ -383,7 +383,7 @@ used by more than one runtime package lives in shared instead.
 
 ### ReporterLive composition layer
 
-**Location:** `packages/agent/src/layers/ReporterLive.ts`
+**Location:** `packages/plugin/src/layers/ReporterLive.ts`
 
 **Signature:** `ReporterLive(dbPath: string, logLevel?, logFile?)`
 
@@ -415,7 +415,7 @@ the kit and routes the outputs.
 **Internal dependencies:** `vitest-agent-sdk`
 **Required peer dependencies:** none of the runtime packages
 
-This package is required as a peer dependency of `vitest-agent` so
+This package is required as a peer dependency of `vitest-agent-plugin` so
 the default reporter is always available; users who want only their
 own custom reporter can still install just `vitest-agent` and pass
 their own factory, but most consumers never import from this package
@@ -428,7 +428,7 @@ when no `reporterFactory` is provided.
 
 Each file exports a single `VitestAgentReporterFactory`. Every
 factory wraps exactly one shared `Formatter` from
-`packages/shared/src/formatters/`, so the formatter library remains
+`packages/sdk/src/formatters/`, so the formatter library remains
 the source of truth for content rendering. The factories add the
 contract glue (`render(input) -> RenderedOutput[]`) and the
 `FormatterContext` construction.
@@ -517,8 +517,8 @@ one of the three runtime packages lives here. Anything used by exactly
 one of them stays in that package.
 
 **npm name:** `vitest-agent-sdk`
-**Location:** `packages/shared/`
-**Entry:** `packages/shared/src/index.ts`
+**Location:** `packages/sdk/`
+**Entry:** `packages/sdk/src/index.ts`
 **Internal dependencies:** none
 
 **Key external dependencies:**
@@ -550,7 +550,7 @@ install it transitively as a dependency of the reporter.
 
 ### Effect Services
 
-**Location:** `packages/shared/src/services/` (10 services). One
+**Location:** `packages/sdk/src/services/` (10 services). One
 additional service (`CoverageAnalyzer`) lives in the reporter package
 -- 11 services in total.
 
@@ -593,7 +593,7 @@ The 10 services in shared:
 
 ### Effect Layers
 
-**Location:** `packages/shared/src/layers/`
+**Location:** `packages/sdk/src/layers/`
 
 Live and test implementations for the shared services. Composition
 layers for the runtime packages (`ReporterLive`, `CliLive`,
@@ -630,7 +630,7 @@ service.
 
 ### Error Types
 
-**Location:** `packages/shared/src/errors/`
+**Location:** `packages/sdk/src/errors/`
 
 Tagged error types for Effect service failure channels.
 
@@ -664,7 +664,7 @@ Tagged error types for Effect service failure channels.
 
 ### Schemas
 
-**Location:** `packages/shared/src/schemas/`
+**Location:** `packages/sdk/src/schemas/`
 
 Single source of truth for all data structures. Defines Effect Schema
 definitions with `typeof Schema.Type` for TypeScript types and
@@ -681,7 +681,7 @@ definitions with `typeof Schema.Type` for TypeScript types and
 | `CacheManifest.ts` | `CacheManifest`, `CacheManifestEntry` schemas |
 | `Options.ts` | `AgentReporterOptions`, `AgentPluginOptions`, `CoverageOptions`, `FormatterOptions` schemas |
 | `History.ts` | `TestRun`, `TestHistory`, `HistoryRecord` schemas |
-| `Config.ts` | `VitestAgentReporterConfig` schema for the optional `vitest-agent-reporter.config.toml`. Both fields (`cacheDir?: string`, `projectKey?: string`) are optional. When absent, `resolveDataPath` falls back to deriving the path from the workspace's `package.json` `name` under the XDG data directory |
+| `Config.ts` | `VitestAgentConfig` schema for the optional `vitest-agent.config.toml`. Both fields (`cacheDir?: string`, `projectKey?: string`) are optional. When absent, `resolveDataPath` falls back to deriving the path from the workspace's `package.json` `name` under the XDG data directory |
 | `turns/` | Discriminated `TurnPayload` union over seven payload schemas (`UserPromptPayload`, `ToolCallPayload`, `ToolResultPayload`, `FileEditPayload`, `HookFirePayload`, `NotePayload`, `HypothesisPayload`). Each is a `Schema.Struct` with a `type` literal discriminator. The `record` CLI validates the JSON-stringified payloads against this union before writing `turns.payload`. Re-exported from `index.ts` |
 
 Istanbul duck-type interfaces remain as TypeScript interfaces, not
@@ -689,9 +689,9 @@ schemas.
 
 ### DataStore service
 
-**Location:** `packages/shared/src/services/DataStore.ts`,
-`packages/shared/src/layers/DataStoreLive.ts`,
-`packages/shared/src/layers/DataStoreTest.ts`
+**Location:** `packages/sdk/src/services/DataStore.ts`,
+`packages/sdk/src/layers/DataStoreLive.ts`,
+`packages/sdk/src/layers/DataStoreTest.ts`
 
 **Purpose:** Effect service for writing all test data to the SQLite
 database.
@@ -749,9 +749,9 @@ database.
 -- all defined in `DataStore.ts`. Also re-exports **`Phase`**, **`ArtifactKind`**,
 and **`ChangeKind`** literal types so callers (CLI subcommands, MCP tools) can
 reference them without dipping into `schemas/` directly. `SettingsInput` is
-owned by DataStore (rather than by `utils/capture-settings.ts` in the reporter
+owned by DataStore (rather than by `utils/capture-settings.ts` in the plugin
 package, which produces values matching this shape) to avoid a circular import
-path between reporter and shared.
+path between plugin and sdk.
 
 **`StackFrameInput`** -- shape attached to `TestErrorInput.frames` carrying
 `function_name`, `file_path`, `raw_line`, `raw_column`, optional
@@ -795,8 +795,8 @@ don't need to fabricate a stub.
 
 ### DataReader service
 
-**Location:** `packages/shared/src/services/DataReader.ts`,
-`packages/shared/src/layers/DataReaderLive.ts`
+**Location:** `packages/sdk/src/services/DataReader.ts`,
+`packages/sdk/src/layers/DataReaderLive.ts`
 
 **Purpose:** Effect service for reading all test data from the SQLite
 database. Shared between reporter, CLI, and MCP.
@@ -876,7 +876,7 @@ per-file rows; in that case the query falls back to
 
 ### Formatters
 
-**Location:** `packages/shared/src/formatters/`
+**Location:** `packages/sdk/src/formatters/`
 
 Pluggable output formatters implementing the `Formatter` interface.
 Each formatter produces `RenderedOutput[]` with target, content, and
@@ -946,14 +946,14 @@ interface RenderedOutput {
 
 **Locations:**
 
-- `packages/shared/src/utils/resolve-data-path.ts` -- the headline
+- `packages/sdk/src/utils/resolve-data-path.ts` -- the headline
   `resolveDataPath(projectDir, options?)` orchestrator
-- `packages/shared/src/utils/resolve-workspace-key.ts` --
+- `packages/sdk/src/utils/resolve-workspace-key.ts` --
   `resolveWorkspaceKey(projectDir)` walks `WorkspaceDiscovery` to
   find the root workspace and normalize its `name`
-- `packages/shared/src/utils/normalize-workspace-key.ts` -- pure
+- `packages/sdk/src/utils/normalize-workspace-key.ts` -- pure
   `normalizeWorkspaceKey(name)` (the path-segment normalizer)
-- `packages/shared/src/layers/PathResolutionLive.ts` --
+- `packages/sdk/src/layers/PathResolutionLive.ts` --
   `PathResolutionLive(projectDir)` composite layer
 
 **Purpose:** Deterministic XDG-based DB path resolution. The path is a
@@ -970,7 +970,7 @@ See Decision 31 in decisions.md for the design rationale.
    and walks the package graph at layer construction). Returns
    `<cacheDir>/data.db` after `mkdirSync(<cacheDir>, { recursive:
    true })`
-2. `cacheDir` from `vitest-agent-reporter.config.toml`. Same shape:
+2. `cacheDir` from `vitest-agent.config.toml`. Same shape:
    `<cacheDir>/data.db` after `mkdirSync`
 3. `projectKey` from the same config TOML. Used as the
    `<workspaceKey>` segment under the XDG data root. Normalized via
@@ -983,10 +983,10 @@ See Decision 31 in decisions.md for the design rationale.
    path hash**
 
 The XDG data root is `AppDirs.ensureData` from `xdg-effect` with
-`namespace: "vitest-agent-reporter"`. On systems with
+`namespace: "vitest-agent"`. On systems with
 `XDG_DATA_HOME` that resolves to
-`$XDG_DATA_HOME/vitest-agent-reporter`; otherwise it falls back to
-`~/.local/share/vitest-agent-reporter` per `xdg-effect`'s `AppDirs`
+`$XDG_DATA_HOME/vitest-agent`; otherwise it falls back to
+`~/.local/share/vitest-agent` per `xdg-effect`'s `AppDirs`
 semantics. `ensureData` creates the directory if missing so
 better-sqlite3 can open the DB without separately mkdir'ing the
 parent.
@@ -1004,10 +1004,10 @@ parent.
 
 Merges three layers in one shot:
 
-- `XdgLive(new AppDirsConfig({ namespace: "vitest-agent-reporter" }))`
+- `XdgLive(new AppDirsConfig({ namespace: "vitest-agent" }))`
   -- provides `AppDirs`
 - `ConfigLive(projectDir)` -- provides
-  `VitestAgentReporterConfigFile`
+  `VitestAgentConfigFile`
 - `WorkspacesLive` from `workspaces-effect` -- provides
   `WorkspaceDiscovery` and `WorkspaceRoot`
 
@@ -1019,15 +1019,15 @@ packages use this composite when calling `resolveDataPath`.
 
 **Locations:**
 
-- `packages/shared/src/schemas/Config.ts` --
-  `VitestAgentReporterConfig` schema
-- `packages/shared/src/services/Config.ts` --
-  `VitestAgentReporterConfigFile` typed `Context.Tag` and the
-  `VitestAgentReporterConfigFileService` type alias
-- `packages/shared/src/layers/ConfigLive.ts` --
+- `packages/sdk/src/schemas/Config.ts` --
+  `VitestAgentConfig` schema
+- `packages/sdk/src/services/Config.ts` --
+  `VitestAgentConfigFile` typed `Context.Tag` and the
+  `VitestAgentConfigFileService` type alias
+- `packages/sdk/src/layers/ConfigLive.ts` --
   `ConfigLive(projectDir)` factory
 
-**Purpose:** Optional `vitest-agent-reporter.config.toml` lets users
+**Purpose:** Optional `vitest-agent.config.toml` lets users
 override the default XDG data location without code changes. Both
 fields are optional. When the file is absent or both fields are
 unset, `resolveDataPath` falls back to deriving the path from the
@@ -1036,7 +1036,7 @@ workspace's `package.json` `name`.
 **Schema:**
 
 ```typescript
-class VitestAgentReporterConfig extends Schema.Class<...>(...)({
+class VitestAgentConfig extends Schema.Class<...>(...)({
   cacheDir: Schema.optional(Schema.String),
   projectKey: Schema.optional(Schema.String),
 }) {}
@@ -1052,26 +1052,26 @@ class VitestAgentReporterConfig extends Schema.Class<...>(...)({
 **Service tag:**
 
 ```typescript
-type VitestAgentReporterConfigFileService =
-  ConfigFileService<VitestAgentReporterConfig>;
-const VitestAgentReporterConfigFile =
-  ConfigFile.Tag<VitestAgentReporterConfig>("vitest-agent-reporter/Config");
+type VitestAgentConfigFileService =
+  ConfigFileService<VitestAgentConfig>;
+const VitestAgentConfigFile =
+  ConfigFile.Tag<VitestAgentConfig>("vitest-agent/Config");
 ```
 
 **Live layer:** `ConfigLive(projectDir)` builds a `ConfigFile.Live`
 with `TomlCodec` and `FirstMatch` strategy, chaining
 `WorkspaceRoot` -> `GitRoot` -> `UpwardWalk` resolvers (each looking
-for `vitest-agent-reporter.config.toml`). Resolvers anchor at
+for `vitest-agent.config.toml`). Resolvers anchor at
 `projectDir` rather than `process.cwd()` so the plugin-spawned MCP
 server sees the right config when invoked from elsewhere.
 
 When no file is present, downstream callers use
-`config.loadOrDefault(new VitestAgentReporterConfig({}))` to get an
+`config.loadOrDefault(new VitestAgentConfig({}))` to get an
 empty config (both fields undefined) -- never an error.
 
 ### LoggerLive
 
-**Location:** `packages/shared/src/layers/LoggerLive.ts`
+**Location:** `packages/sdk/src/layers/LoggerLive.ts`
 
 **Purpose:** Effect-based structured logging layer factory. Provides
 NDJSON logging to stderr plus optional file logging via `Logger.zip`.
@@ -1098,7 +1098,7 @@ methods provide comprehensive I/O tracing.
 
 ### ensureMigrated
 
-**Location:** `packages/shared/src/utils/ensure-migrated.ts`
+**Location:** `packages/sdk/src/utils/ensure-migrated.ts`
 
 **Purpose:** Process-level migration coordinator that ensures the
 SQLite database at a given `dbPath` is migrated exactly once per
@@ -1130,7 +1130,7 @@ function _resetMigrationCacheForTesting(): void; // @internal
 **Implementation:**
 
 - Uses a `globalThis`-keyed cache
-  (`Symbol.for("vitest-agent-reporter/migration-promises")`) of
+  (`Symbol.for("vitest-agent/migration-promises")`) of
   `Map<string, Promise<void>>`. The cache lives on `globalThis`
   because Vite's multi-project pipeline can load this module under
   separate module instances within one process; a module-local Map
@@ -1163,26 +1163,26 @@ function _resetMigrationCacheForTesting(): void; // @internal
 
 **Locations:**
 
-- `packages/shared/src/migrations/0001_initial.ts` -- initial database
+- `packages/sdk/src/migrations/0001_initial.ts` -- initial database
   migration (1.x schema; superseded by `0002_comprehensive`'s
   drop-and-recreate)
-- `packages/shared/src/migrations/0002_comprehensive.ts` --
+- `packages/sdk/src/migrations/0002_comprehensive.ts` --
   drops every 1.x table and recreates the full schema with 15 new
   tables for session/turn logging, TDD lifecycle state, code-change
   context, hook execution, and stable failure signatures. Per
   Decision D9, this is the **last drop-and-recreate** migration;
   future migrations are ALTER-only
-- `packages/shared/src/migrations/0003_idempotent_responses.ts`
+- `packages/sdk/src/migrations/0003_idempotent_responses.ts`
   -- additive `CREATE TABLE mcp_idempotent_responses`
   (no DROP), composite PK `(procedure_path, key)`. D9-compliant
-- `packages/shared/src/migrations/0004_test_cases_created_turn_id.ts`
+- `packages/sdk/src/migrations/0004_test_cases_created_turn_id.ts`
   -- additive ALTER on `test_cases` adding
   `created_turn_id INTEGER REFERENCES turns(id) ON DELETE SET NULL`
   plus an index. Required by D2 binding rule 1 (the validator
   joins through this column to resolve `test_case_created_turn_at`
   and `test_case_authored_in_session`). Tables count is unchanged
   -- still 41. D9-compliant
-- `packages/shared/src/migrations/0005_failure_signatures_last_seen_at.ts`
+- `packages/sdk/src/migrations/0005_failure_signatures_last_seen_at.ts`
   -- additive ALTER on `failure_signatures` adding
   `last_seen_at TEXT` (nullable) plus
   `idx_failure_signatures_last_seen ON failure_signatures(last_seen_at
@@ -1192,9 +1192,9 @@ function _resetMigrationCacheForTesting(): void; // @internal
   DO UPDATE` path alongside the existing `occurrence_count`
   increment, so consumers can sort/filter signatures by recency.
   Tables count is unchanged -- still 41. D9-compliant
-- `packages/shared/src/sql/rows.ts` -- Effect Schema `Schema.Struct`
+- `packages/sdk/src/sql/rows.ts` -- Effect Schema `Schema.Struct`
   row definitions for SQLite query results
-- `packages/shared/src/sql/assemblers.ts` -- assembler functions to
+- `packages/sdk/src/sql/assemblers.ts` -- assembler functions to
   reconstruct domain types from rows
 
 **Migrations:** All five migrations register through `ensureMigrated`,
@@ -1263,7 +1263,7 @@ The 15 new tables are: `sessions`, `turns`, `tool_invocations`,
   already-updated row and accumulated stale tokens
 
 See [data-structures.md](./data-structures.md) for the navigational
-table list and `packages/shared/src/migrations/0002_comprehensive.ts`
+table list and `packages/sdk/src/migrations/0002_comprehensive.ts`
 for the canonical DDL.
 
 **SQL helpers:** `rows.ts` defines `Schema.Struct` row types for
@@ -1277,7 +1277,7 @@ Assemblers join data from multiple tables to build `AgentReport`,
 
 ### Output Pipeline
 
-**Location:** `packages/shared/src/layers/OutputPipelineLive.ts`
+**Location:** `packages/sdk/src/layers/OutputPipelineLive.ts`
 (composition), plus the five service tags and live layers in
 `services/` and `layers/`.
 
@@ -1317,11 +1317,11 @@ OutputRenderer.render(reports, format, context)
 
 **Locations:**
 
-- `packages/shared/src/services/HistoryTracker.ts`
-- `packages/shared/src/layers/HistoryTrackerLive.ts`
-- `packages/shared/src/layers/HistoryTrackerTest.ts`
-- `packages/shared/src/schemas/History.ts`
-- `packages/shared/src/utils/classify-test.ts` -- pure
+- `packages/sdk/src/services/HistoryTracker.ts`
+- `packages/sdk/src/layers/HistoryTrackerLive.ts`
+- `packages/sdk/src/layers/HistoryTrackerTest.ts`
+- `packages/sdk/src/schemas/History.ts`
+- `packages/sdk/src/utils/classify-test.ts` -- pure
   `classifyTest()` function shared between live layer and CLI
   formatting
 
@@ -1373,23 +1373,23 @@ runs.
 
 Three coordinated subsystems form the coverage data layer.
 
-**Thresholds** -- `packages/shared/src/schemas/Thresholds.ts`,
-`packages/agent/src/utils/resolve-thresholds.ts`
+**Thresholds** -- `packages/sdk/src/schemas/Thresholds.ts`,
+`packages/plugin/src/utils/resolve-thresholds.ts`
 
 Vitest-native coverage threshold parsing and resolution. The
 `MetricThresholds`, `PatternThresholds`, and `ResolvedThresholds`
-schemas define the shape; `resolveThresholds()` (in the agent
+schemas define the shape; `resolveThresholds()` (in the plugin
 package) parses Vitest's resolved coverage config into the typed form.
 
-**Baselines** -- `packages/shared/src/schemas/Baselines.ts`
+**Baselines** -- `packages/sdk/src/schemas/Baselines.ts`
 
 Auto-ratcheting coverage baselines that persist high-water marks per
 metric. Stored in SQLite's `coverage_baselines` table. Read via
 `DataReader.getBaselines()`, written via
 `DataStore.writeBaselines()`.
 
-**Trends** -- `packages/shared/src/schemas/Trends.ts`,
-`packages/shared/src/utils/compute-trend.ts`
+**Trends** -- `packages/sdk/src/schemas/Trends.ts`,
+`packages/sdk/src/utils/compute-trend.ts`
 
 Per-project coverage trend tracking with a sliding window for
 direction analysis over time. Stored in SQLite's `coverage_trends`
@@ -1401,7 +1401,7 @@ target-change resets via hash comparison, and produces the next
 
 ### Utility Functions
 
-**Location:** `packages/shared/src/utils/`
+**Location:** `packages/sdk/src/utils/`
 
 Pure utility functions that don't warrant Effect service wrapping.
 
@@ -1428,7 +1428,7 @@ Pure utility functions that don't warrant Effect service wrapping.
 | `hyperlink.ts` | `osc8(url, label, { enabled })` returns a labeled OSC-8 escape sequence (`\x1b]8;;<url>\x1b\\<label>\x1b]8;;\x1b\\`) when enabled, plain text otherwise. Wired into `formatters/markdown.ts` via a regex post-processor that wraps test-file paths in failing-test header lines, gated on `target === "stdout"` AND `!ctx.noColor`. The MCP `triage_brief` and `wrapup_prompt` tools call the `format-triage` / `format-wrapup` shared lib generators directly (not the markdown formatter), so MCP responses never receive OSC-8 codes -- terminal hyperlinks are a CLI-and-stdout-only concern per W4 spec |
 
 **Package manager detection:** The canonical detector lives at
-`packages/shared/src/utils/detect-pm.ts` and is used by reporter and
+`packages/sdk/src/utils/detect-pm.ts` and is used by reporter and
 CLI for run-command generation. A zero-deps inline copy (~20 lines)
 ships at `plugin/bin/mcp-server.mjs` for the Claude Code plugin
 loader -- the loader cannot import from the shared package because it
@@ -1452,7 +1452,7 @@ runtime.
 
 ### Shared Lib Generators
 
-**Location:** `packages/shared/src/lib/`
+**Location:** `packages/sdk/src/lib/`
 
 A new sibling to `utils/`, `formatters/`, `services/`, `layers/`,
 and `migrations/`. The distinguishing feature: each `lib/` module
@@ -1478,7 +1478,7 @@ or call AI providers. All commands support `--format` flag for output
 format selection.
 
 **npm name:** `vitest-agent-cli`
-**bin:** `vitest-agent-reporter`
+**bin:** `vitest-agent`
 **Location:** `packages/cli/`
 **Entry:** `packages/cli/src/bin.ts`
 **Internal dependencies:** `vitest-agent-sdk`
@@ -1488,8 +1488,8 @@ footprint for users who only want the CLI bin without the reporter or
 the MCP server, and clear ownership of `@effect/cli` (which the
 reporter doesn't need at runtime).
 
-The reporter package declares the CLI as a required `peerDependency`
-so installing the reporter pulls the CLI along with it.
+The plugin package declares the CLI as a required `peerDependency`
+so installing the plugin pulls the CLI along with it.
 
 ### CLI Bin & Commands
 
@@ -1629,8 +1629,8 @@ so installing the reporter pulls the CLI along with it.
   resolution; `@effect/cli` for command framework;
   `@effect/platform-node` for `NodeContext` / `NodeRuntime`;
   `@effect/sql-sqlite-node` for `SqliteClient` / `SqliteMigrator`
-- Used by: end users via the `vitest-agent-reporter` bin (installed
-  alongside the reporter package as a required peer dependency)
+- Used by: end users via the `vitest-agent` bin (installed
+  alongside the plugin package as a required peer dependency)
 
 ### CliLive composition layer
 
@@ -1675,7 +1675,7 @@ coordination without bundling the dependency tree.
 
 **Entry point:** `packages/mcp/src/bin.ts` -- resolves the user's
 `projectDir` via the precedence
-`VITEST_AGENT_REPORTER_PROJECT_DIR` (set by the plugin loader) >
+`VITEST_AGENT_PROJECT_DIR` (set by the plugin loader) >
 `CLAUDE_PROJECT_DIR` > `process.cwd()`. Then resolves `dbPath` via
 `resolveDataPath(projectDir)` under
 `PathResolutionLive(projectDir) + NodeContext.layer`, creates
@@ -1765,7 +1765,7 @@ interface McpContext {
   input with a zod schema, calls the matching `DataReader` method
   via `ctx.runtime.runPromise`, and returns JSON. All seven are
   read-only. Auto-allowed via
-  `plugin/hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt`. The
+  `plugin/hooks/lib/safe-mcp-vitest-agent-ops.txt`. The
   `help` tool (`tools/help.ts`) lists them under a
   "Sessions / Turns / TDD reads" section
 - **Triage / wrapup reads** (markdown output) --
@@ -1774,7 +1774,7 @@ interface McpContext {
   `wrapup_prompt({ sessionId?, ccSessionId?, kind?,
   userPromptHint? })`. Both delegate verbatim to the matching
   shared `format-triage` / `format-wrapup` generators in
-  `packages/shared/src/lib/`, so the MCP and CLI surfaces share
+  `packages/sdk/src/lib/`, so the MCP and CLI surfaces share
   exactly the same output. Read-only; no idempotency middleware
   needed
 - **Hypothesis writes** (JSON output) --
@@ -1932,7 +1932,7 @@ markdown) consumed by Claude Code directly.
 
 **Dependencies:**
 
-- Depends on: a project-level install of `vitest-agent-reporter`
+- Depends on: a project-level install of `vitest-agent-plugin`
   (which in turn pulls `vitest-agent-mcp` via its required
   `peerDependency`). The MCP server is not bundled with the plugin
   because both packages depend on the shared package, which depends
@@ -1945,7 +1945,7 @@ markdown) consumed by Claude Code directly.
 **Location:** `plugin/.claude-plugin/plugin.json`
 
 Plugin manifest (name, version, author) with inline `mcpServers`
-configuration. Declares a `vitest-reporter` server with
+configuration. Declares a `mcp` server with
 `command: "node"` and
 `args: ["${CLAUDE_PLUGIN_ROOT}/bin/mcp-server.mjs"]`.
 
@@ -1970,13 +1970,13 @@ decisions.md covers the loader rewrite; Decision 29 (the prior
    `npx --no-install`, `yarn run`, or `bun x`) with
    `stdio: "inherit"` and `cwd: projectDir`
 4. Forwards `CLAUDE_PROJECT_DIR` through a new
-   `VITEST_AGENT_REPORTER_PROJECT_DIR` env var so the spawned MCP
+   `VITEST_AGENT_PROJECT_DIR` env var so the spawned MCP
    subprocess sees the right project root (Claude Code does not
    reliably propagate `CLAUDE_PROJECT_DIR` to MCP server
    subprocesses)
 5. Forwards exit code; on non-zero exit prints PM-specific install
-   instructions (e.g. `pnpm add -D vitest-agent-reporter`,
-   `npm install --save-dev vitest-agent-reporter`)
+   instructions (e.g. `pnpm add -D vitest-agent-plugin`,
+   `npm install --save-dev vitest-agent-plugin`)
 6. Re-raises termination signals on the parent so kill semantics
    propagate
 
@@ -1996,7 +1996,7 @@ PreCompact, SubagentStart, SubagentStop.
   and emits `hookSpecificOutput.additionalContext` with the
   triage markdown (or generic context fallback if the triage is
   empty), then writes the `sessions` row via
-  `vitest-agent-reporter record session-start
+  `vitest-agent record session-start
   --triage-was-non-empty <bool> ...`
 - **UserPromptSubmit** -- `user-prompt-submit-record.sh` reads
   the prompt envelope, invokes `record turn` with a
@@ -2006,11 +2006,11 @@ PreCompact, SubagentStart, SubagentStop.
   The text-match logic for "is this a failure prompt?" lives in
   `format-wrapup`, not the hook
 - **PreToolUse** -- `pre-tool-use-mcp.sh` matches
-  `mcp__vitest-agent-reporter__.*`. Reads the PreToolUse envelope,
-  strips the `mcp__vitest-agent-reporter__` prefix from `tool_name`,
+  `mcp__(plugin_vitest-agent_mcp|vitest-agent_mcp)__.*`. Reads the PreToolUse envelope,
+  strips the matched MCP prefix from `tool_name`,
   and emits a `permissionDecision: "allow"` JSON response when the
   remaining suffix appears in
-  `hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt`. Tools not in
+  `hooks/lib/safe-mcp-vitest-agent-ops.txt`. Tools not in
   the allowlist fall through to the standard permission prompt.
   5-second hook timeout. Parallel `pre-tool-use-record.sh`
   invokes `record turn` with a `ToolCallPayload`
@@ -2029,7 +2029,7 @@ PreCompact, SubagentStart, SubagentStop.
   resilient if either side changes). Pairs with the
   `agent_type` clarification in the agent-definition
   subsection above
-- **Allowlist** -- `hooks/lib/safe-mcp-vitest-agent-reporter-ops.txt`
+- **Allowlist** -- `hooks/lib/safe-mcp-vitest-agent-ops.txt`
   enumerates 41 auto-allow MCP tool entries (one operation suffix
   per line, with `#` comments for category headings: meta `help`;
   11 read-only queries; 5 discovery tools; `run_tests`; 6 note CRUD
@@ -2190,8 +2190,8 @@ PreCompact, SubagentStart, SubagentStop.
 | CacheError | DataStoreError |
 | AgentDetection (service) | EnvironmentDetector |
 | AgentDetectionLive / AgentDetectionTest | EnvironmentDetectorLive / EnvironmentDetectorTest |
-| `package/src/utils/format-console.ts` | `packages/shared/src/formatters/markdown.ts` |
-| `package/src/utils/format-gfm.ts` | `packages/shared/src/formatters/gfm.ts` |
+| `package/src/utils/format-console.ts` | `packages/sdk/src/formatters/markdown.ts` |
+| `package/src/utils/format-gfm.ts` | `packages/sdk/src/formatters/gfm.ts` |
 | `resolveDbPath` (artifact-probing in CLI) | `resolveDataPath` (XDG-derived) in shared |
 | Plugin `file://` import + `node_modules` walk loader | PM-detect + spawn `vitest-agent-mcp` |
 | Reporter `./mcp` subpath export | `vitest-agent-mcp` package + bin |

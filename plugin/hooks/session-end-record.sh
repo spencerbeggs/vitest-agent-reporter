@@ -30,14 +30,14 @@ ended_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # 1. Record the session end.
 if [ -n "$reason" ]; then
-	cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record session-end \
+	cd "$cwd" >/dev/null && $pm_exec vitest-agent record session-end \
 		--cc-session-id "$cc_session_id" \
 		--ended-at "$ended_at" \
 		--end-reason "$reason" \
 		>/dev/null 2>&1 \
 		|| true
 else
-	cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record session-end \
+	cd "$cwd" >/dev/null && $pm_exec vitest-agent record session-end \
 		--cc-session-id "$cc_session_id" \
 		--ended-at "$ended_at" \
 		>/dev/null 2>&1 \
@@ -45,7 +45,7 @@ else
 fi
 
 # 2. Compute the wrap-up prompt.
-wrapup=$(cd "$cwd" && $pm_exec vitest-agent-reporter wrapup \
+wrapup=$(cd "$cwd" && $pm_exec vitest-agent wrapup \
 	--cc-session-id "$cc_session_id" \
 	--kind session_end \
 	--format markdown 2>/dev/null || echo "")

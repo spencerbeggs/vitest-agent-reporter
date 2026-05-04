@@ -25,7 +25,7 @@ describe("formatDoctor", () => {
 		];
 		const output = formatDoctor(results);
 		expect(output).toContain("- [ ] History:");
-		expect(output).toContain("Suggestion: Run `vitest-agent-reporter cache clean`");
+		expect(output).toContain("Suggestion: Run `vitest-agent cache clean`");
 	});
 
 	it("renders empty results", () => {

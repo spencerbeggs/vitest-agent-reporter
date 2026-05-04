@@ -5,15 +5,15 @@
 # Empirically, Claude Code emits `.agent_type` in plugin-prefixed form
 # `<plugin-name>:<agent name field>` for plugin-bundled subagents, so
 # our orchestrator (declared as `name: TDD Orchestrator` in the
-# vitest-agent-reporter plugin) shows up as
-# `"vitest-agent-reporter:TDD Orchestrator"`. We also accept the bare
+# vitest-agent plugin) shows up as
+# `"vitest-agent:TDD Orchestrator"`. We also accept the bare
 # `"TDD Orchestrator"` and the legacy `"tdd-orchestrator"` slug for
 # resilience if Claude Code changes the prefix scheme or if the agent
 # is invoked from a non-plugin context.
 
 is_tdd_orchestrator() {
 	case "$1" in
-		"vitest-agent-reporter:TDD Orchestrator") return 0 ;;
+		"vitest-agent:TDD Orchestrator") return 0 ;;
 		"TDD Orchestrator") return 0 ;;
 		"tdd-orchestrator") return 0 ;;
 		*) return 1 ;;

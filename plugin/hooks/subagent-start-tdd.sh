@@ -48,7 +48,7 @@ pm_exec=$(detect_pm_exec "$cwd")
 project=$(jq -r '.name // "unknown"' < "$cwd/package.json" 2>/dev/null || echo "unknown")
 started_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-cd "$cwd" >/dev/null && $pm_exec vitest-agent-reporter record session-start \
+cd "$cwd" >/dev/null && $pm_exec vitest-agent record session-start \
 	--cc-session-id "$cc_session_id" \
 	--project "$project" \
 	--cwd "$cwd" \

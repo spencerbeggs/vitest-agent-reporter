@@ -118,7 +118,7 @@ describe("MCP Router", () => {
 	it("help returns complete tool catalog", async () => {
 		const caller = createTestCaller();
 		const result = await caller.help();
-		expect(result).toContain("vitest-agent-reporter MCP Tools");
+		expect(result).toContain("vitest-agent MCP Tools");
 		expect(result).toContain("test_status");
 		expect(result).toContain("run_tests");
 		expect(result).toContain("note_create");
@@ -243,7 +243,7 @@ describe("MCP Router", () => {
 		// Anchor at an empty tempdir so the nested vitest invocation does not
 		// pick up this monorepo's vitest.config.ts (which would re-load the
 		// AgentPlugin and contend with the outer reporter on the same DB).
-		const isolated = mkdtempSync(join(tmpdir(), "vitest-agent-reporter-run-tests-"));
+		const isolated = mkdtempSync(join(tmpdir(), "vitest-agent-run-tests-"));
 		try {
 			const caller = createTestCaller(isolated);
 			const result = await caller.run_tests({ files: ["nonexistent.test.ts"], timeout: 5 });
