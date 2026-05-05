@@ -955,10 +955,11 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 
 		const writeBehaviorDependencies = (behaviorId: number, goalId: number, depIds: ReadonlyArray<number>) =>
 			Effect.gen(function* () {
-				if (depIds.length === 0) return;
+				const uniqueDepIds = Array.from(new Set(depIds));
+				if (uniqueDepIds.length === 0) return;
 				const verified = yield* sql<{ id: number }>`
 					SELECT id FROM tdd_session_behaviors
-					WHERE goal_id = ${goalId} AND id IN ${sql.in([...depIds])}
+					WHERE goal_id = ${goalId} AND id IN ${sql.in(uniqueDepIds)}
 				`.pipe(
 					Effect.mapError(
 						(e) =>
@@ -966,7 +967,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 					),
 				);
 				const verifiedIds = new Set(verified.map((r) => r.id));
-				for (const depId of depIds) {
+				for (const depId of uniqueDepIds) {
 					if (!verifiedIds.has(depId)) {
 						return yield* Effect.fail(
 							new BehaviorNotFoundError({
@@ -976,7 +977,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 						);
 					}
 				}
-				for (const depId of depIds) {
+				for (const depId of uniqueDepIds) {
 					yield* sql`
 						INSERT INTO tdd_behavior_dependencies (behavior_id, depends_on_id)
 						VALUES (${behaviorId}, ${depId})

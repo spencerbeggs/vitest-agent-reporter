@@ -31,7 +31,7 @@ The package family has three entry points:
 | --- | --- | --- | --- |
 | Plugin | (library import) | `vitest-agent-plugin` | Vitest plugin producing SQLite-persisted test data |
 | CLI | `vitest-agent` | `vitest-agent-cli` | Query test status, coverage, history, trends from the terminal |
-| MCP Server | `vitest-agent-mcp` | `vitest-agent-mcp` | 50 tools over stdio for LLM agent integration |
+| MCP Server | `vitest-agent-mcp` | `vitest-agent-mcp` | 53 tools over stdio for LLM agent integration |
 
 All three share the Effect service architecture and the same SQLite database in `vitest-agent-sdk` (`DataReader`, `DataStore`, `OutputRenderer`, output pipeline, formatters, etc.). The database location is derived from your root workspace's `package.json` `name` under `$XDG_DATA_HOME/vitest-agent/`.
 
@@ -159,7 +159,7 @@ Then you can will run Claude with the `--dangerously-load-development-channels` 
 claude --debug --plugin-dir ./plugin --dangerously-load-development-channels server:plugin:vitest-agent:mcp
 ```
 
-The plugin works the same without this flag, but has better observability between the main and agent and the tdd orchestrator. NOTE: The config in the root `.mcp.json` file take precidence over the plugin when you have both enabled.
+The plugin works the same without this flag, but has better observability between the main and agent and the tdd orchestrator. NOTE: The config in the root `.mcp.json` file takes precedence over the plugin when you have both enabled.
 
 ## Package documentation
 

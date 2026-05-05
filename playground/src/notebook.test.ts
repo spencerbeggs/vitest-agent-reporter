@@ -59,6 +59,14 @@ describe("Notebook", () => {
 			expect(() => nb.getEntry(5)).toThrow(RangeError);
 			expect(() => nb.getEntry(5)).toThrow("Index 5 is out of bounds");
 		});
+
+		it("should throw RangeError when index is negative", () => {
+			const nb = new Notebook();
+			nb.add("hello");
+
+			expect(() => nb.getEntry(-1)).toThrow(RangeError);
+			expect(() => nb.getEntry(-1)).toThrow("Index -1 is out of bounds");
+		});
 	});
 
 	describe("slugEntry", () => {
@@ -76,6 +84,14 @@ describe("Notebook", () => {
 			// When / Then: calling slugEntry with an out-of-range index throws RangeError
 			expect(() => nb.slugEntry(5)).toThrow(RangeError);
 			expect(() => nb.slugEntry(5)).toThrow("Index 5 is out of bounds");
+		});
+
+		it("should throw RangeError when index is negative", () => {
+			const nb = new Notebook();
+			nb.add("Hello World");
+
+			expect(() => nb.slugEntry(-1)).toThrow(RangeError);
+			expect(() => nb.slugEntry(-1)).toThrow("Index -1 is out of bounds");
 		});
 	});
 

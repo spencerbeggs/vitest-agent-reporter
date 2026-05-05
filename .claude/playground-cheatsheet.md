@@ -43,12 +43,10 @@ The source files contain deliberately imperfect code. **Do not fix these in the 
 
 When the TDD orchestrator targets this package, a sanitized task prompt should ask it to:
 
-1. Write a failing test for `notebook.getEntry` with an out-of-range index and observe the `TypeError`.
-2. Fix `getEntry` (and `slugEntry`) with a `RangeError` guard so the test passes.
-3. Write failing tests for the other untested functions (`isPrime`, `isPalindrome`, `Cache.has`).
-4. Write edge-case tests that expose the known defects (`average([])`, `size()` after TTL expiry).
-5. Fix the defects so all new tests pass.
-6. Verify coverage climbs toward the 80% aspirational targets.
+1. Write failing tests for the untested functions (`isPrime`, `isPalindrome`, `Cache.has`).
+2. Write edge-case tests that expose the known defects (`average([])`, `size()` after TTL expiry).
+3. Fix the defects so all new tests pass.
+4. Verify coverage climbs toward the 80% aspirational targets.
 
 The orchestrator should arrive at the above by exploring the playground source on its own — never by being handed this file or pointed at any of its findings verbatim.
 

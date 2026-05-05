@@ -3,7 +3,7 @@ name: dogfood
 description: Use when starting a dogfood session for the vitest-agent plugin in this repo, when continuing one from an existing handoff at docs/superpowers/dogfood/<chain>/, or after the TDD orchestrator subagent completes a dogfood task. Repo-internal — does not apply to projects that consume vitest-agent as a dependency.
 argument-hint: [--start | --from <path>]
 disable-model-invocation: true
-allowed-tools: Read Write Edit Bash Glob Grep
+allowed-tools: Read Write Edit Bash Glob Grep Task mcp__plugin_vitest-agent_mcp__*
 ---
 
 # Dogfood
@@ -58,13 +58,13 @@ Parse `$ARGUMENTS`:
 
 Use the Task tool with `subagent_type: "vitest-agent:TDD Orchestrator"`. The dispatch prompt contains **only** the contents of the handoff's `# Task for the TDD orchestrator` section — never the frontmatter, never the `# What the orchestrator MUST NOT know` section, never the verification checklist, never the cheatsheet.
 
-Capture the dispatched session id immediately:
+Capture the dispatched session id immediately by querying for the most recently created subagent session:
 
 ```text
-mcp__plugin_vitest-agent_mcp__tdd_session_resume(latest_open)
+mcp__plugin_vitest-agent_mcp__session_list({ agentKind: "subagent", limit: 1 })
 ```
 
-or query `session_list` for the most recently created subagent session.
+The returned `id` is the numeric DB id you pass to `tdd_session_get(<id>)` (or `tdd_session_resume(<id>)` for a status summary) below. The `cc_session_id` on the same row is what you pass to session-aware tools like `turn_search`.
 
 ## Verification (after orchestrator completes)
 
@@ -73,7 +73,7 @@ Run the seven-step audit. Skipping any step defeats the experiment.
 1. `tdd_session_get(<id>)` — full goal+behavior tree, phase ledger. Every transition has a cited artifact, no skipped phases, no backdated rows.
 2. `acceptance_metrics({})` — phase-evidence integrity, hook responsiveness, anti-pattern detection rate.
 3. `test_history({ project: "playground" })` — flaky / new-failure / persistent classifications.
-4. `turn_search({ ccSessionId: <subagent cc id>, type: "tool_call" })` and grep for Bash `vitest` invocations — confirm the orchestrator used `run_tests` MCP, not Bash workarounds.
+4. `turn_search({ sessionId: <subagent numeric id>, type: "tool_call" })` and grep for Bash `vitest` invocations — confirm the orchestrator used `run_tests` MCP, not Bash workarounds.
 5. `failure_signature_get` for any signatures the run produced — cross-check against past dogfood runs in the chain.
 6. `git diff playground/` and `git status` — code change matches what the cheatsheet says is the right fix; no unintended files outside `playground/`; no untracked files left behind.
 7. `hypothesis_list({ sessionId: <subagent cc id> })` — the orchestrator recorded hypotheses before non-test edits (Gate 2).

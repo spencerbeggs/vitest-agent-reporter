@@ -10,10 +10,6 @@ tools:
   - Glob
   - ToolSearch
   - TodoWrite
-  - TaskCreate
-  - TaskUpdate
-  - TaskList
-  - TaskGet
   - mcp__plugin_vitest-agent_mcp__acceptance_metrics
   - mcp__plugin_vitest-agent_mcp__cache_health
   - mcp__plugin_vitest-agent_mcp__commit_changes
@@ -251,29 +247,29 @@ Call it as: `tdd_progress_push({ payload: JSON.stringify(<payload object>) })`
 
 1. On launch, you receive a `goal` argument. You may also receive a `ccSessionId` passed explicitly by the parent agent in the launch prompt. If `ccSessionId` is provided, use that value directly. If it was **not** provided, call `get_current_session_id({})` — it is always seeded by the elicitation hook before you launch. Do **not** call `session_list` to derive the session id and do **not** inspect the SQLite database via Bash (both are DATABASE_BYPASS violations — see Anti-patterns below). The parent-session `cc_session_id` is the binding the post-tool-use hooks rely on for artifact recording — using the wrong session means `tdd_artifacts` rows land under the wrong session, breaking evidence-based phase transitions. **Call `tdd_session_start({ goal, ccSessionId })` — Gate 1 (UNREGISTERED SESSION if skipped). This is the first action, before any file is read or written.** Capture the returned `tddSessionId`.
 
-2. **Decompose the objective into goals.** Use the `decompose-goal-into-behaviors` primitive's heuristics to identify a small set of goals (typically 1–5; one if the objective is already atomic). For each goal, call `tdd_goal_create({ sessionId: tddSessionId, goal: <text> })` and capture the returned `goalId`. After all goals are created, call `tdd_progress_push` with the `goals_ready` payload (see Background progress push). Then call `TodoWrite` with one todo per goal (use the goal text as `content`); `TaskCreate` is for behavior-level tasks below.
+2. **Decompose the objective into goals.** Use the `decompose-goal-into-behaviors` primitive's heuristics to identify a small set of goals (typically 1–5; one if the objective is already atomic). For each goal, call `tdd_goal_create({ sessionId: tddSessionId, goal: <text> })` and capture the returned `goalId`. After all goals are created, call `tdd_progress_push` with the `goals_ready` payload (see Background progress push). Then call `TodoWrite` with one todo per goal (use the goal text as `content`) for your own internal tracking. Do **not** call `TaskCreate` for behaviors or phases — the main-agent `tdd` skill renders the task panel from your `tdd_progress_push` events; calling `TaskCreate` here duplicates the task list and desyncs the UI.
 
 3. **For each goal, in ordinal order:**
 
    a. Call `tdd_goal_update({ id: goalId, status: 'in_progress' })`. Then push `goal_started`. (Phase transitions for this goal will be denied with `goal_not_in_progress` until you do this.)
 
-   b. **Decompose the goal into behaviors.** Use the same primitive's heuristics to identify atomic behaviors (one red-green-refactor cycle each). For each behavior, call `tdd_behavior_create({ goalId, behavior: <text> })` and capture the returned `behaviorId`. Pass `dependsOnBehaviorIds` if the orchestration should respect ordering. Push `behaviors_ready` after all behaviors for this goal are created. Call `TaskCreate({ content: "TDD: <behavior description>", status: "pending" })` for each behavior so the task panel shows progress.
+   b. **Decompose the goal into behaviors.** Use the same primitive's heuristics to identify atomic behaviors (one red-green-refactor cycle each). For each behavior, call `tdd_behavior_create({ goalId, behavior: <text> })` and capture the returned `behaviorId`. Pass `dependsOnBehaviorIds` if the orchestration should respect ordering. Push `behaviors_ready` after all behaviors for this goal are created. The main-agent `tdd` skill creates the behavior tasks in the task panel from this event — do not call `TaskCreate` yourself.
 
    c. **For each pending behavior, in ordinal order, run a full red-green-refactor cycle (steps 4–8 below).**
 
    d. When all behaviors under this goal are `done` or `abandoned`, call `tdd_goal_update({ id: goalId, status: 'done' })`. Push `goal_completed` with `behaviorIds: [<all done behaviors>]`. Then advance to the next goal's step 3a.
 
-4. **Behavior cycle — RED.** Push `behavior_started`. **Call `TodoWrite` updating the active behavior's todo to `status: "in_progress"` and `activeForm: "Writing failing test (red)"`.** `TaskCreate` to open the RED phase task. Write a failing test (`derive-test-name-from-behavior` + `derive-test-shape-from-name`). Run it (`run_tests`). When it fails, the PostToolUse hooks record `tdd_artifacts(kind='test_failed_run')`.
+4. **Behavior cycle — RED.** Push `behavior_started`. **Call `TodoWrite` updating the active behavior's todo to `status: "in_progress"` and `activeForm: "Writing failing test (red)"`.** Write a failing test (`derive-test-name-from-behavior` + `derive-test-shape-from-name`). Run it (`run_tests`). When it fails, the PostToolUse hooks record `tdd_artifacts(kind='test_failed_run')`.
 
-5. **Behavior cycle — request RED→GREEN.** `tdd_phase_transition_request({ tddSessionId, goalId, behaviorId, requestedPhase: "green", citedArtifactId: <the test_failed_run id> })` — Gate 3. **On accept: the tool auto-promotes the behavior `pending → in_progress`.** Push `phase_transition`. `TaskUpdate({ id: <red_task_id>, status: "completed" })`, create the GREEN phase task, and `TodoWrite` with `activeForm: "Making test pass (green)"`.
+5. **Behavior cycle — request RED→GREEN.** `tdd_phase_transition_request({ tddSessionId, goalId, behaviorId, requestedPhase: "green", citedArtifactId: <the test_failed_run id> })` — Gate 3. **On accept: the tool auto-promotes the behavior `pending → in_progress`.** Push `phase_transition` (the main-agent skill updates the task panel's phase label from this event). `TodoWrite` with `activeForm: "Making test pass (green)"`.
 
 6. **Behavior cycle — GREEN.** Before writing any production code: call `hypothesis_record` with `citedTestErrorId` and `citedStackFrameId` from `test_errors` output — Gate 2 (UNCITED FIX if skipped). Then write the minimum production code to pass the test. Run again. The PostToolUse hooks record `tdd_artifacts(kind='code_written')` and `test_passed_run`. Call `hypothesis_validate({ id, outcome })`. Commit (`commit-cycle`).
 
-7. **Behavior cycle — request GREEN→REFACTOR.** Pass a `test_passed_run` citation — Gate 3 again. On accept: push `phase_transition`, `TaskUpdate({ id: <green_task_id>, status: "completed" })`, create the REFACTOR phase task, `TodoWrite` with `activeForm: "Refactoring"`.
+7. **Behavior cycle — request GREEN→REFACTOR.** Pass a `test_passed_run` citation — Gate 3 again. On accept: push `phase_transition`, `TodoWrite` with `activeForm: "Refactoring"`.
 
-8. **Behavior cycle — REFACTOR exit.** Refactor without changing behavior; all tests must still pass. Commit again at refactor exit. **Call `tdd_behavior_update({ id: behaviorId, status: 'done' })`** to mark the behavior complete. `TaskUpdate({ id: <refactor_task_id>, status: "completed" })`. `TodoWrite` with the behavior's `status: "completed"` (if you tracked behaviors as todos in addition to goals). Push `behavior_completed`. Loop back to step 4 for the next behavior under this goal.
+8. **Behavior cycle — REFACTOR exit.** Refactor without changing behavior; all tests must still pass. Commit again at refactor exit. **Call `tdd_behavior_update({ id: behaviorId, status: 'done' })`** to mark the behavior complete. `TodoWrite` with the behavior's `status: "completed"` (if you tracked behaviors as todos in addition to goals). Push `behavior_completed` — the main-agent skill marks the behavior task `completed` from this event. Loop back to step 4 for the next behavior under this goal.
 
-9. **Session exit.** When all goals are `done` or `abandoned`, push `session_complete` (with `goalIds: [<all done goals>]` and outcome `"succeeded"` / `"blocked"` / `"abandoned"`). Then `tdd_session_end({ tddSessionId, outcome })`. Write a `note_create` summary describing what was accomplished, what tests were added, and any open questions. The SubagentStop hook will fold the summary into a structured handoff message for the parent agent. **All goal and behavior todos / tasks should be `completed` before `tdd_session_end`.**
+9. **Session exit.** When all goals are `done` or `abandoned`, push `session_complete` (with `goalIds: [<all done goals>]` and outcome `"succeeded"` / `"blocked"` / `"abandoned"`). Then `tdd_session_end({ tddSessionId, outcome })`. Write a `note_create` summary describing what was accomplished, what tests were added, and any open questions. The SubagentStop hook will fold the summary into a structured handoff message for the parent agent. **All goal todos should be `completed` before `tdd_session_end`** (behavior tasks live in the main-agent task panel and are reconciled from the `session_complete` event).
 
 ### Mid-session add / abandon
 

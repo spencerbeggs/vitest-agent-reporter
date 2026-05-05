@@ -39,7 +39,7 @@ Event handlers:
 | `blocked` | `TaskUpdate({ id: <behavior taskId>, status: "blocked" })`; surface `reason` and `failureSignatureHash` to the user. |
 | `session_complete` | Reconcile against `goalIds[]` (catch dropped `goal_completed` events). `TaskUpdate({ id: parentTaskId, status: "completed" })` (or `cancelled` if outcome is `abandoned`). |
 
-If no `<channel>` events arrive (channels not active or not enabled), wait for the background completion notification. You can check progress at any time with `tdd_session_resume(id)` or `tdd_session_get(id)` via the MCP tool — both return the full goal+behavior tree so you can rebuild the task list shape from a single read.
+If no `<channel>` events arrive (channels not active or not enabled), wait for the background completion notification. You can check progress at any time with `tdd_session_get(id)` via the MCP tool — it returns the full goal+behavior tree so you can rebuild the task list shape from a single read. (`tdd_session_resume(id)` returns only a short status summary; reach for `tdd_session_get` when you need the tree.)
 
 ---
 
