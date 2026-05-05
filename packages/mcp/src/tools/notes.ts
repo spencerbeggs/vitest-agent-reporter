@@ -1,7 +1,6 @@
 import { Effect, Option, Schema } from "effect";
 import type { NoteInput } from "vitest-agent-sdk";
 import { DataReader, DataStore } from "vitest-agent-sdk";
-import { CoercedNumber } from "../coerce-schema.js";
 import { publicProcedure } from "../context.js";
 
 const NoteScope = Schema.Literal("global", "project", "module", "suite", "test", "note");
@@ -17,7 +16,7 @@ export const noteCreate = publicProcedure
 				subProject: Schema.optional(Schema.String),
 				testFullName: Schema.optional(Schema.String),
 				modulePath: Schema.optional(Schema.String),
-				parentNoteId: Schema.optional(CoercedNumber),
+				parentNoteId: Schema.optional(Schema.Number),
 				createdBy: Schema.optional(Schema.String),
 				expiresAt: Schema.optional(Schema.String),
 				pinned: Schema.optional(Schema.Boolean),
@@ -84,7 +83,7 @@ export const noteGet = publicProcedure
 	.input(
 		Schema.standardSchemaV1(
 			Schema.Struct({
-				id: CoercedNumber,
+				id: Schema.Number,
 			}),
 		),
 	)
@@ -105,7 +104,7 @@ export const noteUpdate = publicProcedure
 	.input(
 		Schema.standardSchemaV1(
 			Schema.Struct({
-				id: CoercedNumber,
+				id: Schema.Number,
 				title: Schema.optional(Schema.String),
 				content: Schema.optional(Schema.String),
 				pinned: Schema.optional(Schema.Boolean),
@@ -134,7 +133,7 @@ export const noteDelete = publicProcedure
 	.input(
 		Schema.standardSchemaV1(
 			Schema.Struct({
-				id: CoercedNumber,
+				id: Schema.Number,
 			}),
 		),
 	)

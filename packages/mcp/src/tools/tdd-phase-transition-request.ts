@@ -1,7 +1,6 @@
 import { Effect, Option, Schema } from "effect";
 import type { Phase } from "vitest-agent-sdk";
 import { DataReader, DataStore, validatePhaseTransition } from "vitest-agent-sdk";
-import { CoercedNumber } from "../coerce-schema.js";
 import { publicProcedure } from "../context.js";
 
 const phaseLiteral = Schema.Literal(
@@ -19,11 +18,11 @@ export const tddPhaseTransitionRequest = publicProcedure
 	.input(
 		Schema.standardSchemaV1(
 			Schema.Struct({
-				tddSessionId: CoercedNumber,
-				goalId: CoercedNumber,
+				tddSessionId: Schema.Number,
+				goalId: Schema.Number,
 				requestedPhase: phaseLiteral,
-				citedArtifactId: CoercedNumber,
-				behaviorId: Schema.optional(CoercedNumber),
+				citedArtifactId: Schema.Number,
+				behaviorId: Schema.optional(Schema.Number),
 				reason: Schema.optional(Schema.String),
 			}),
 		),
@@ -40,7 +39,7 @@ export const tddPhaseTransitionRequest = publicProcedure
 				const currentPhase: Phase = Option.isSome(currentOpt) ? currentOpt.value.phase : "spike";
 				const phaseStartedAt = Option.isSome(currentOpt) ? currentOpt.value.startedAt : new Date().toISOString();
 
-				// 2. Validate goal: exists + status is in_progress.
+				// 2. Validate goal: exists + belongs to the requested TDD session + status is in_progress.
 				const goalOpt = yield* reader.getGoalById(input.goalId);
 				if (Option.isNone(goalOpt)) {
 					return {
@@ -51,6 +50,21 @@ export const tddPhaseTransitionRequest = publicProcedure
 							suggestedTool: "tdd_goal_list",
 							suggestedArgs: { sessionId: input.tddSessionId },
 							humanHint: `No tdd_session_goals row with id=${input.goalId}. Call tdd_goal_list to find the correct goal id.`,
+						},
+					};
+				}
+				if (goalOpt.value.sessionId !== input.tddSessionId) {
+					return {
+						accepted: false as const,
+						phase: currentPhase,
+						denialReason: "goal_not_in_session" as const,
+						remediation: {
+							suggestedTool: "tdd_goal_list",
+							suggestedArgs: { sessionId: input.tddSessionId },
+							humanHint:
+								`Goal id=${input.goalId} belongs to TDD session ${goalOpt.value.sessionId}, ` +
+								`not the requested tddSessionId=${input.tddSessionId}. ` +
+								"Pass the tddSessionId of the goal's parent session, or pick a goal that belongs to the active session.",
 						},
 					};
 				}

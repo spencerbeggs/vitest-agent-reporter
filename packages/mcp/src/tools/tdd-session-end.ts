@@ -1,15 +1,14 @@
 import { Effect, Schema } from "effect";
 import { DataStore } from "vitest-agent-sdk";
-import { CoercedNumber } from "../coerce-schema.js";
 import { idempotentProcedure } from "../middleware/idempotency.js";
 
 export const tddSessionEnd = idempotentProcedure
 	.input(
 		Schema.standardSchemaV1(
 			Schema.Struct({
-				tddSessionId: CoercedNumber,
+				tddSessionId: Schema.Number,
 				outcome: Schema.Literal("succeeded", "blocked", "abandoned"),
-				summaryNoteId: Schema.optional(CoercedNumber),
+				summaryNoteId: Schema.optional(Schema.Number),
 			}),
 		),
 	)

@@ -2,7 +2,7 @@ import { publicProcedure } from "../context.js";
 
 const HELP_TEXT = `# vitest-agent MCP Tools
 
-> 42 tools total.
+> 53 tools total (52 tRPC procedures + \`tdd_progress_push\` registered directly on the MCP server).
 
 ## General
 
@@ -107,6 +107,13 @@ Scopes: \`run_tests({})\` all tests, \`run_tests({ project: "name" })\` by proje
 ## Workspace history (final)
 
 - commit_changes — commit metadata + changed files (populated by post-commit hook)
+
+## MCP-server session-id association
+
+| Tool | Parameters | Description |
+| ---- | ---------- | ----------- |
+| \`get_current_session_id\` | _(none)_ | Read the Claude Code session id this MCP server process is currently associated with |
+| \`set_current_session_id\` | \`id\` (string or null) | Associate this MCP server process with a Claude Code session id; session-aware tools default to it when \`ccSessionId\` is omitted. Pass \`null\` to clear |
 
 ## Parameter Key
 

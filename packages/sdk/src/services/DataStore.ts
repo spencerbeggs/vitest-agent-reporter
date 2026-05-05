@@ -395,7 +395,10 @@ export class DataStore extends Context.Tag("vitest-agent/DataStore")<
 		readonly getGoal: (id: number) => Effect.Effect<Option.Option<GoalRow>, DataStoreError>;
 		readonly updateGoal: (
 			input: UpdateGoalInput,
-		) => Effect.Effect<GoalRow, DataStoreError | GoalNotFoundError | IllegalStatusTransitionError>;
+		) => Effect.Effect<
+			GoalRow,
+			DataStoreError | GoalNotFoundError | TddSessionAlreadyEndedError | IllegalStatusTransitionError
+		>;
 		readonly deleteGoal: (id: number) => Effect.Effect<void, DataStoreError | GoalNotFoundError>;
 		readonly listGoalsBySession: (
 			sessionId: number,
@@ -413,7 +416,10 @@ export class DataStore extends Context.Tag("vitest-agent/DataStore")<
 		readonly getBehavior: (id: number) => Effect.Effect<Option.Option<BehaviorRow>, DataStoreError>;
 		readonly updateBehavior: (
 			input: UpdateBehaviorInput,
-		) => Effect.Effect<BehaviorRow, DataStoreError | BehaviorNotFoundError | IllegalStatusTransitionError>;
+		) => Effect.Effect<
+			BehaviorRow,
+			DataStoreError | BehaviorNotFoundError | TddSessionAlreadyEndedError | IllegalStatusTransitionError
+		>;
 		readonly deleteBehavior: (id: number) => Effect.Effect<void, DataStoreError | BehaviorNotFoundError>;
 		readonly listBehaviorsByGoal: (
 			goalId: number,

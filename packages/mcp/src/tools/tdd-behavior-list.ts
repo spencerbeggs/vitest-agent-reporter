@@ -1,16 +1,15 @@
 import { Effect, Schema } from "effect";
 import { DataReader, DataStore } from "vitest-agent-sdk";
-import { CoercedNumber } from "../coerce-schema.js";
 import { publicProcedure } from "../context.js";
 import { catchTddErrorsAsEnvelope } from "./_tdd-error-envelope.js";
 
 const ListByGoal = Schema.Struct({
 	scope: Schema.Literal("goal"),
-	goalId: CoercedNumber,
+	goalId: Schema.Number,
 });
 const ListBySession = Schema.Struct({
 	scope: Schema.Literal("session"),
-	sessionId: CoercedNumber,
+	sessionId: Schema.Number,
 });
 
 export const tddBehaviorList = publicProcedure

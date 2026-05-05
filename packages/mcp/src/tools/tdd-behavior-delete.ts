@@ -1,6 +1,5 @@
 import { Effect, Schema } from "effect";
 import { DataStore } from "vitest-agent-sdk";
-import { CoercedNumber } from "../coerce-schema.js";
 import { publicProcedure } from "../context.js";
 import { catchTddErrorsAsEnvelope } from "./_tdd-error-envelope.js";
 
@@ -8,7 +7,7 @@ export const tddBehaviorDelete = publicProcedure
 	.input(
 		Schema.standardSchemaV1(
 			Schema.Struct({
-				id: CoercedNumber,
+				id: Schema.Number,
 			}),
 		),
 	)

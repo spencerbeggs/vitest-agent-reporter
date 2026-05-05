@@ -46,6 +46,7 @@ export type DenialReason =
 	| "goal_not_started"
 	| "goal_not_found"
 	| "goal_not_in_progress"
+	| "goal_not_in_session"
 	| "behavior_not_found"
 	| "behavior_not_in_goal"
 	| "refactor_without_passing_run"

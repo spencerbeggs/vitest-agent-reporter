@@ -51,7 +51,7 @@ Examples (split needed):
 ## Rules
 
 1. **Each behavior asserts one observable outcome.** If a behavior contains a non-clarifying `and`, split it.
-2. **Order matters when there are data dependencies.** Use `dependsOnBehaviorIds` to encode that — the junction table enforces that all referenced ids belong to the same goal.
+2. **Order matters when there are data dependencies.** Use `dependsOnBehaviorIds` to encode that. The `tdd_behavior_dependencies` junction table only carries FKs back to `tdd_session_behaviors` — same-goal membership is checked in `DataStore.createBehavior` / `updateBehavior` and surfaces as a `BehaviorNotFoundError` envelope when a referenced id belongs to a different goal.
 3. **Per-goal idempotency on create.** Re-calling `tdd_goal_create({ sessionId, goal })` or `tdd_behavior_create({ goalId, behavior })` with the same key returns the existing row (idempotent replay) so retries after transport blips are safe.
 4. **Status, not delete, to drop work.** Orchestrator-level deletes are blocked at the hook layer. Use `tdd_goal_update({ status: 'abandoned' })` or `tdd_behavior_update({ status: 'abandoned' })` to record that scope was dropped.
 

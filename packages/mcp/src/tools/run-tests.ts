@@ -3,7 +3,6 @@ import { Writable } from "node:stream";
 import { Effect, Schema } from "effect";
 import type { AgentReport, VitestModuleError } from "vitest-agent-sdk";
 import { DataReader, DataStore, buildAgentReport } from "vitest-agent-sdk";
-import { CoercedNumber } from "../coerce-schema.js";
 import { publicProcedure } from "../context.js";
 
 const FORBIDDEN_CHARS = /[;|&`$(){}[\]<>!#]/;
@@ -198,7 +197,7 @@ export const runTests = publicProcedure
 			Schema.Struct({
 				files: Schema.optional(Schema.Array(Schema.String)),
 				project: Schema.optional(Schema.String),
-				timeout: Schema.optional(CoercedNumber),
+				timeout: Schema.optional(Schema.Number),
 				format: Schema.optional(Schema.Literal("markdown", "json")),
 			}),
 		),

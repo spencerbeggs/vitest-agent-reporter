@@ -22,9 +22,6 @@ The source files contain deliberately imperfect code. **Do not fix these in the 
 
 | Gap | Description |
 | --- | ----------- |
-| `truncate` when `maxLen < 4` | Output can exceed `maxLen`. Untested. |
-| `slugify` with consecutive spaces | Produces double hyphens. Untested. |
-| `countWords("hello  world")` | Returns `3` instead of `2` (splits on single space). |
 | `isPalindrome` is untested | 0% function coverage. |
 
 ### `src/cache.ts`
@@ -49,7 +46,7 @@ When the TDD orchestrator targets this package, a sanitized task prompt should a
 1. Write a failing test for `notebook.getEntry` with an out-of-range index and observe the `TypeError`.
 2. Fix `getEntry` (and `slugEntry`) with a `RangeError` guard so the test passes.
 3. Write failing tests for the other untested functions (`isPrime`, `isPalindrome`, `Cache.has`).
-4. Write edge-case tests that expose the known defects (`countWords` double-space, `average([])`, `size()` after TTL expiry).
+4. Write edge-case tests that expose the known defects (`average([])`, `size()` after TTL expiry).
 5. Fix the defects so all new tests pass.
 6. Verify coverage climbs toward the 80% aspirational targets.
 

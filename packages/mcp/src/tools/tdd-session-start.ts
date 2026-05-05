@@ -1,6 +1,5 @@
 import { Effect, Option, Schema } from "effect";
 import { DataReader, DataStore } from "vitest-agent-sdk";
-import { CoercedNumber } from "../coerce-schema.js";
 import { idempotentProcedure } from "../middleware/idempotency.js";
 
 export const tddSessionStart = idempotentProcedure
@@ -8,9 +7,9 @@ export const tddSessionStart = idempotentProcedure
 		Schema.standardSchemaV1(
 			Schema.Struct({
 				goal: Schema.String,
-				sessionId: Schema.optional(CoercedNumber),
+				sessionId: Schema.optional(Schema.Number),
 				ccSessionId: Schema.optional(Schema.String),
-				parentTddSessionId: Schema.optional(CoercedNumber),
+				parentTddSessionId: Schema.optional(Schema.Number),
 				startedAt: Schema.optional(Schema.String),
 			}),
 		),

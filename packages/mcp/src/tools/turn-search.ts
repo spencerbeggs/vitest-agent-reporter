@@ -1,18 +1,17 @@
 import { Effect, Schema } from "effect";
 import { DataReader } from "vitest-agent-sdk";
-import { CoercedNumber } from "../coerce-schema.js";
 import { publicProcedure } from "../context.js";
 
 export const turnSearch = publicProcedure
 	.input(
 		Schema.standardSchemaV1(
 			Schema.Struct({
-				sessionId: Schema.optional(CoercedNumber),
+				sessionId: Schema.optional(Schema.Number),
 				since: Schema.optional(Schema.String),
 				type: Schema.optional(
 					Schema.Literal("user_prompt", "tool_call", "tool_result", "file_edit", "hook_fire", "note", "hypothesis"),
 				),
-				limit: Schema.optional(CoercedNumber),
+				limit: Schema.optional(Schema.Number),
 			}),
 		),
 	)

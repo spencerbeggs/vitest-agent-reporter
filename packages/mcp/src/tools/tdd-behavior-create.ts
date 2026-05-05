@@ -1,6 +1,5 @@
 import { Effect, Schema } from "effect";
 import { DataStore } from "vitest-agent-sdk";
-import { CoercedNumber } from "../coerce-schema.js";
 import { idempotentProcedure } from "../middleware/idempotency.js";
 import { catchTddErrorsAsEnvelope } from "./_tdd-error-envelope.js";
 
@@ -8,10 +7,10 @@ export const tddBehaviorCreate = idempotentProcedure
 	.input(
 		Schema.standardSchemaV1(
 			Schema.Struct({
-				goalId: CoercedNumber,
+				goalId: Schema.Number,
 				behavior: Schema.String,
 				suggestedTestName: Schema.optional(Schema.String),
-				dependsOnBehaviorIds: Schema.optional(Schema.Array(CoercedNumber)),
+				dependsOnBehaviorIds: Schema.optional(Schema.Array(Schema.Number)),
 			}),
 		),
 	)

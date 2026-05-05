@@ -1,13 +1,12 @@
 import { Effect, Option, Schema } from "effect";
 import { DataReader } from "vitest-agent-sdk";
-import { CoercedNumber } from "../coerce-schema.js";
 import { publicProcedure } from "../context.js";
 
 export const tddBehaviorGet = publicProcedure
 	.input(
 		Schema.standardSchemaV1(
 			Schema.Struct({
-				id: CoercedNumber,
+				id: Schema.Number,
 			}),
 		),
 	)

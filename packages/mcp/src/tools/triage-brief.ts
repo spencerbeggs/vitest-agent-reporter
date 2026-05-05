@@ -1,6 +1,5 @@
 import { Effect, Schema } from "effect";
 import { formatTriageEffect } from "vitest-agent-sdk";
-import { CoercedNumber } from "../coerce-schema.js";
 import { publicProcedure } from "../context.js";
 
 export const triageBrief = publicProcedure
@@ -8,7 +7,7 @@ export const triageBrief = publicProcedure
 		Schema.standardSchemaV1(
 			Schema.Struct({
 				project: Schema.optional(Schema.String),
-				maxLines: Schema.optional(CoercedNumber),
+				maxLines: Schema.optional(Schema.Number),
 			}),
 		),
 	)

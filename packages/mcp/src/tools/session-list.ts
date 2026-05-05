@@ -1,6 +1,5 @@
 import { Effect, Schema } from "effect";
 import { DataReader } from "vitest-agent-sdk";
-import { CoercedNumber } from "../coerce-schema.js";
 import { publicProcedure } from "../context.js";
 
 export const sessionList = publicProcedure
@@ -9,7 +8,7 @@ export const sessionList = publicProcedure
 			Schema.Struct({
 				project: Schema.optional(Schema.String),
 				agentKind: Schema.optional(Schema.Literal("main", "subagent")),
-				limit: Schema.optional(CoercedNumber),
+				limit: Schema.optional(Schema.Number),
 			}),
 		),
 	)

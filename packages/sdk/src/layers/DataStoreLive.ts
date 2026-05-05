@@ -788,7 +788,10 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 
 		const updateGoal = (
 			input: UpdateGoalInput,
-		): Effect.Effect<GoalRow, DataStoreError | GoalNotFoundError | IllegalStatusTransitionError> =>
+		): Effect.Effect<
+			GoalRow,
+			DataStoreError | GoalNotFoundError | TddSessionAlreadyEndedError | IllegalStatusTransitionError
+		> =>
 			Effect.gen(function* () {
 				yield* Effect.logDebug("updateGoal").pipe(Effect.annotateLogs({ id: input.id }));
 				const existing = yield* sql<{
@@ -813,6 +816,17 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 					);
 				}
 				const current = existing[0];
+				yield* ensureTddSessionOpen(current.session_id).pipe(
+					Effect.catchTag("TddSessionNotFoundError", (e) =>
+						Effect.fail(
+							new DataStoreError({
+								operation: "read",
+								table: "tdd_sessions",
+								reason: `FK integrity violation: goal ${input.id} references missing tdd_sessions row ${e.id}`,
+							}),
+						),
+					),
+				);
 				const fromStatus = current.status as GoalStatus;
 				const toStatus = input.status ?? fromStatus;
 				if (input.status !== undefined && !isLegalLifecycleTransition(fromStatus, input.status)) {
@@ -1072,7 +1086,10 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 
 		const updateBehavior = (
 			input: UpdateBehaviorInput,
-		): Effect.Effect<BehaviorRow, DataStoreError | BehaviorNotFoundError | IllegalStatusTransitionError> =>
+		): Effect.Effect<
+			BehaviorRow,
+			DataStoreError | BehaviorNotFoundError | TddSessionAlreadyEndedError | IllegalStatusTransitionError
+		> =>
 			sql
 				.withTransaction(
 					Effect.gen(function* () {
@@ -1105,6 +1122,38 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 							);
 						}
 						const current = existing[0];
+						const goalRows = yield* sql<{ session_id: number }>`
+							SELECT session_id FROM tdd_session_goals WHERE id = ${current.goal_id}
+						`.pipe(
+							Effect.mapError(
+								(e) =>
+									new DataStoreError({
+										operation: "read",
+										table: "tdd_session_goals",
+										reason: extractSqlReason(e),
+									}),
+							),
+						);
+						if (goalRows.length === 0) {
+							return yield* Effect.fail(
+								new DataStoreError({
+									operation: "read",
+									table: "tdd_session_goals",
+									reason: `FK integrity violation: behavior ${input.id} references missing tdd_session_goals row ${current.goal_id}`,
+								}),
+							);
+						}
+						yield* ensureTddSessionOpen(goalRows[0].session_id).pipe(
+							Effect.catchTag("TddSessionNotFoundError", (e) =>
+								Effect.fail(
+									new DataStoreError({
+										operation: "read",
+										table: "tdd_sessions",
+										reason: `FK integrity violation: goal ${current.goal_id} references missing tdd_sessions row ${e.id}`,
+									}),
+								),
+							),
+						);
 						const fromStatus = current.status as BehaviorStatus;
 						if (input.status !== undefined && !isLegalLifecycleTransition(fromStatus, input.status)) {
 							return yield* Effect.fail(
@@ -1149,9 +1198,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 								),
 							);
 							if (input.dependsOnBehaviorIds.length > 0) {
-								yield* writeBehaviorDependencies(input.id, current.goal_id, input.dependsOnBehaviorIds).pipe(
-									Effect.catchTag("BehaviorNotFoundError", (e) => Effect.die(e)),
-								);
+								yield* writeBehaviorDependencies(input.id, current.goal_id, input.dependsOnBehaviorIds);
 							}
 						}
 						return {
@@ -1170,6 +1217,7 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 					Effect.mapError((e) =>
 						e instanceof DataStoreError ||
 						e instanceof BehaviorNotFoundError ||
+						e instanceof TddSessionAlreadyEndedError ||
 						e instanceof IllegalStatusTransitionError
 							? e
 							: new DataStoreError({

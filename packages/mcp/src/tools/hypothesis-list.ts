@@ -1,15 +1,14 @@
 import { Effect, Schema } from "effect";
 import { DataReader } from "vitest-agent-sdk";
-import { CoercedNumber } from "../coerce-schema.js";
 import { publicProcedure } from "../context.js";
 
 export const hypothesisList = publicProcedure
 	.input(
 		Schema.standardSchemaV1(
 			Schema.Struct({
-				sessionId: Schema.optional(CoercedNumber),
+				sessionId: Schema.optional(Schema.Number),
 				outcome: Schema.optional(Schema.Literal("confirmed", "refuted", "abandoned", "open")),
-				limit: Schema.optional(CoercedNumber),
+				limit: Schema.optional(Schema.Number),
 			}),
 		),
 	)
