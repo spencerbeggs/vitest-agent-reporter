@@ -583,7 +583,14 @@ If you want to modify the object, you will use [replaceProperty API](https://jes
 
 Vitest does not support the callback style of declaring tests. You can rewrite them to use `async`/`await` functions, or use Promise to mimic the callback style.
 
-<!--@include: ./examples/promise-done.md-->
+```js
+it('should work', (done) => {  // [!code --]
+it('should work', () => new Promise(done => { // [!code ++]
+  // ...
+  done()
+}) // [!code --]
+})) // [!code ++]
+```
 
 ### Hooks
 

@@ -182,7 +182,7 @@
 		{
 			"path": "config/browser/api",
 			"title": "config.browser.api",
-			"description": "Use when configuring `browser.api` — Type `number | object`, default `63315`, CLI `--browser.api=63315`. Configure options for Vite server that serves code in the browser. Does not affect [`test.api`](/config/api) option. By default, Vitest assigns port `63315` to avoid conflicts with the development server, allowing you..."
+			"description": "Use when configuring `browser.api` — Type `number | object`, default port `63315`, CLI `--browser.api=63315`. Vite server that serves browser-mode test code. Independent of `test.api` (the Node-mode API server); the default port avoids dev-server conflicts."
 		},
 		{
 			"path": "config/browser/commands",
@@ -207,7 +207,7 @@
 		{
 			"path": "config/browser/expect",
 			"title": "config.browser.expect",
-			"description": "Use when configuring `browser.expect` — Type `ExpectOptions`. Default options for the"
+			"description": "Use when configuring `browser.expect` — Type `ExpectOptions`. Default options for browser-mode `expect.element` matchers (timeout, interval). Browser-mode counterpart of the Node-mode `test.expect` option."
 		},
 		{
 			"path": "config/browser/headless",
@@ -317,7 +317,7 @@
 		{
 			"path": "config/dangerouslyignoreunhandlederrors",
 			"title": "config.dangerouslyIgnoreUnhandledErrors",
-			"description": "Use when configuring `dangerouslyIgnoreUnhandledErrors` — Type `boolean`, default `false`. - `--dangerouslyIgnoreUnhandledErrors`"
+			"description": "Use when configuring `dangerouslyIgnoreUnhandledErrors` — Type `boolean`, default `false`, CLI `--dangerouslyIgnoreUnhandledErrors`. Suppresses test-run failure on uncaught errors and unhandled promise rejections. Escape hatch for legacy code; rarely correct."
 		},
 		{
 			"path": "config/deps",
@@ -362,7 +362,7 @@
 		{
 			"path": "config/exclude",
 			"title": "config.exclude",
-			"description": "Use when configuring `exclude` — Type `string[]`, default `['**/node_modules/**', '**/.git/**']`, CLI `vitest --exclude \"**/excluded-file\" --exclude \"*/other-files/*.js\"`. A list of [glob patterns](https://superchupu.dev/tinyglobby/comparison) that should be excluded from your test files. These patterns are resolved relative to the [`root`](/config/root) ([`process.cwd()`](https://nodej..."
+			"description": "Use when configuring `exclude` — Type `string[]`, default `['**/node_modules/**', '**/.git/**']`, CLI `--exclude`. Glob patterns of files excluded from test discovery, resolved relative to `root`. Pair with `include` to scope discovery; tinyglobby is the matcher."
 		},
 		{
 			"path": "config/execargv",
@@ -422,7 +422,7 @@
 		{
 			"path": "config/include",
 			"title": "config.include",
-			"description": "Use when configuring `include` — Type `string[]`, default `['**/*.{test,spec}.?(c|m)[jt]s?(x)']`, CLI `vitest [...include]`. A list of [glob patterns](https://superchupu.dev/tinyglobby/comparison) that match your test files. These patterns are resolved relative to the [`root`](/config/root) ([`process.cwd()`](https://nodejs.org/api/process...."
+			"description": "Use when configuring `include` — Type `string[]`, default `['**/*.{test,spec}.?(c|m)[jt]s?(x)']`, CLI `vitest [...include]`. Glob patterns matching test files, resolved relative to `root`. Pair with `includeSource` for in-source tests; tinyglobby is the matcher."
 		},
 		{
 			"path": "config/include-source",
@@ -562,7 +562,7 @@
 		{
 			"path": "config/server",
 			"title": "config.server",
-			"description": "Use when configuring `server` — Type `(string | RegExp)[]`, default files inside [`moduleDirectories`](/config/deps#moduledirectories). Before Vitest 4, this option was used to define the configuration for the `vite-node` server."
+			"description": "Use when configuring `server` — pre-Vitest-4 option that configured the `vite-node` server. Removed in Vitest 4 (vite-node is gone); kept as a reference for users migrating from v3 configs. New code should not set this."
 		},
 		{
 			"path": "config/setupfiles",
@@ -686,7 +686,7 @@
 		},
 		{
 			"path": "guide/browser/component-testing",
-			"title": "Component testing (browser mode)",
+			"title": "Component testing (browser)",
 			"description": "Use when testing UI components in real browsers — Vue, React, Svelte, Lit, Preact, Qwik, Solid, Marko via the corresponding `vitest-browser-*` package, browser-mode setup with Playwright/WebdriverIO/preview, why real browsers over jsdom for catching CSS/layout bugs."
 		},
 		{
@@ -696,7 +696,7 @@
 		},
 		{
 			"path": "guide/browser/multiple-setups",
-			"title": "Multiple browser instances",
+			"title": "Multiple browser instances (browser)",
 			"description": "Use when running the same browser tests against multiple browsers or configurations — `browser.instances` array (chromium, firefox, webkit, mobile devices), per-instance overrides, shared Vite-server cache benefit over multi-project alternative."
 		},
 		{
@@ -738,16 +738,6 @@
 			"path": "guide/environment",
 			"title": "Test environments",
 			"description": "Use when picking a JS runtime environment for tests — `environment` option (node default, jsdom, happy-dom, edge-runtime), `@vitest-environment` per-file directive, `environmentMatchGlobs`, `environmentOptions` for jsdom/happy-dom config, custom environments."
-		},
-		{
-			"path": "guide/examples/projects-workspace",
-			"title": "Snippet: test.workspace → test.projects",
-			"description": "Use as a quick diff snippet showing the `test.workspace` to `test.projects` rename in 3.2 / 4. Tiny code-only example; for full guidance see /guide/projects."
-		},
-		{
-			"path": "guide/examples/promise-done",
-			"title": "Snippet: done callback → Promise",
-			"description": "Use as a quick diff snippet showing how to convert a Jest-style `(done) => {}` callback test into a Promise-returning test. Tiny code-only example; full migration guidance at /guide/migration."
 		},
 		{
 			"path": "guide/extending-matchers",

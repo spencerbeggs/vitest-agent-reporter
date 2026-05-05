@@ -69,8 +69,6 @@ const OVERRIDES: Record<string, string> = {
 	"guide/projects": "Test projects",
 	"guide/test-context": "Test context",
 	"guide/testing-types": "Testing types",
-	"guide/examples/projects-workspace": "Snippet: test.workspace → test.projects",
-	"guide/examples/promise-done": "Snippet: done callback → Promise",
 	"guide/mocking": "Mocking overview",
 	"guide/mocking/classes": "Mocking: classes",
 	"guide/mocking/dates": "Mocking: dates",
@@ -82,7 +80,8 @@ const OVERRIDES: Record<string, string> = {
 	"guide/mocking/timers": "Mocking: timers",
 	"guide/browser/index": "Browser mode setup",
 	"guide/browser/aria-snapshots": "ARIA snapshots (browser, experimental)",
-	"guide/browser/component-testing": "Component testing (browser mode)",
+	"guide/browser/component-testing": "Component testing (browser)",
+	"guide/browser/multiple-setups": "Multiple browser instances (browser)",
 	"guide/browser/trace-view": "Playwright trace files (browser)",
 	"guide/browser/visual-regression-testing": "Visual regression testing (browser)",
 };
