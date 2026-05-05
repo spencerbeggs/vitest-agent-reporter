@@ -2,10 +2,9 @@
 
 The `vitest-agent-mcp` binary provides an
 [MCP](https://modelcontextprotocol.io/) server over stdio transport,
-exposing 50 tools for querying test data, managing notes, running
+exposing 52 tools for querying test data, managing notes, running
 tests, discovering project structure, and managing TDD goals and
-behaviors. LLM agent hosts like Claude Code can call these tools
-directly during a session.
+behaviors. The server also exposes four resources (vendored Vitest docs and curated testing patterns) and six framing-only prompts for common workflows. LLM agent hosts like Claude Code can call these tools directly during a session.
 
 ## How It Works
 
@@ -673,3 +672,44 @@ Agent: "note_search" for test X -- finds note from previous session:
 
 Agent: Skips investigation, focuses on other failures
 ```
+
+## Resources
+
+The server exposes four resources under two URI schemes. All resources return `text/markdown`.
+
+| URI | Description |
+| --- | --- |
+| `vitest://docs/` | Index of the vendored Vitest documentation snapshot |
+| `vitest://docs/{path}` | Any page from the snapshot (e.g., `vitest://docs/api/mock`) |
+| `vitest-agent://patterns/` | Index of the curated testing-patterns library |
+| `vitest-agent://patterns/{slug}` | A single pattern by slug |
+
+`vitest://` content is a vendored MIT-licensed snapshot of `vitest-dev/vitest` at a pinned upstream tag. `vendor/vitest-docs/manifest.json` carries `tag`, `commitSha`, `capturedAt` and `source` for verification; `vendor/vitest-docs/ATTRIBUTION.md` carries the MIT-license attribution.
+
+`vitest-agent://` content is project-authored: a curated testing-patterns library encoding guidance for testing Effect services, Effect schemas, and custom reporters.
+
+## Prompts
+
+MCP clients can pick these from a prompt menu to orient the agent toward common workflows. Each prompt emits a small templated user message — no tool data is pre-fetched on the server. The agent fetches data via tools after the prompt orients it.
+
+| Name | Arguments | Description |
+| --- | --- | --- |
+| `triage` | `project?` | Orient toward a failure-triage workflow; composes `triage_brief`, `failure_signature_get` and `hypothesis_record` |
+| `why-flaky` | `test`, `project?` | Diagnose a named flaky test; composes `test_history` and `failure_signature_get` |
+| `regression-since-pass` | `test`, `project?` | Find the change that broke a test; composes `test_history`, `commit_changes` and `turn_search` |
+| `explain-failure` | `signature` | Synthesize a root cause from a failure signature's recurrence history |
+| `tdd-resume` | `cc_session_id?` | Resume the active TDD session from its current phase and iron-law transitions |
+| `wrapup` | `kind?`, `since?` | Generate the same content the post-hooks emit automatically |
+
+The `kind` argument on `wrapup` accepts the same five values the `wrapup_prompt` tool accepts: `stop`, `session_end`, `pre_compact`, `tdd_handoff` and `user_prompt_nudge`.
+
+## Refreshing the snapshot
+
+Contributors can update the vendored Vitest documentation to a new upstream release:
+
+```bash
+pnpm run update-vitest-snapshot --tag v4.3.0
+# example output (varies by environment)
+```
+
+Run this command from the `packages/mcp/` directory. It sparse-clones `vitest-dev/vitest` at the requested tag, rewrites `vendor/vitest-docs/`, and updates `manifest.json`. The `update-vitest-snapshot` Claude Code skill wraps this command and walks through the steps interactively.

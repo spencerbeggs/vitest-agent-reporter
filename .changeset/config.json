@@ -20,7 +20,7 @@
 	"fixed": [
 		["vitest-agent-plugin", "vitest-agent-reporter", "vitest-agent-sdk", "vitest-agent-cli", "vitest-agent-mcp"]
 	],
-	"ignore": ["example-basic"],
+	"ignore": ["playground"],
 	"privatePackages": {
 		"tag": true,
 		"version": true

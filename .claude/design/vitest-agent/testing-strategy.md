@@ -3,8 +3,8 @@ status: current
 module: vitest-agent-reporter
 category: testing
 created: 2026-04-29
-updated: 2026-05-04
-last-synced: 2026-05-04
+updated: 2026-05-05
+last-synced: 2026-05-05
 completeness: 95
 related:
   - ./architecture.md
@@ -33,9 +33,19 @@ explicit `include` globs per project.
 | `vitest-agent-sdk` | `packages/sdk/` | 621 |
 | `vitest-agent-plugin` | `packages/plugin/` | 107 |
 | `vitest-agent-cli` | `packages/cli/` | 65 |
-| `vitest-agent-mcp` | `packages/mcp/` | 84 |
+| `vitest-agent-mcp` | `packages/mcp/` | 146 |
 | `example-basic` | `examples/basic/` | 9 |
-| **Total** | | **886** |
+| **Total** | | **948** |
+
+The MCP suite jumped from 84 to 146 in the resources/prompts
+work: 21 new tests cover `paths.ts` (path-traversal rejections),
+the per-scheme readers (`upstream-docs.test.ts`,
+`patterns.test.ts`), the index renderers (`indexes.test.ts`), the
+patterns inventory (`patterns-inventory.test.ts`), and one prompt
+factory test per prompt (`triage.test.ts`,
+`why-flaky.test.ts`, `regression-since-pass.test.ts`,
+`explain-failure.test.ts`, `tdd-resume.test.ts`,
+`wrapup.test.ts`).
 
 All four coverage metrics (statements, branches, functions, lines)
 are above 80%. The root `vitest.config.ts` `coverage.exclude` list

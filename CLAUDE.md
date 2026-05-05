@@ -81,13 +81,28 @@ server family for LLM coding agents. Six primary capabilities:
 6. **MCP server & Claude Code plugin** -- 50 MCP tools via tRPC router
    (shipped by `vitest-agent-mcp`), including the three-tier
    Objective→Goal→Behavior CRUD surface (10 tools) added in 2.0,
-   plus a file-based Claude Code plugin at `plugin/` with a
-   `PreToolUse` hook that auto-allows the non-destructive MCP tools
-   without per-call permission prompts. The two `tdd_*_delete` tools
-   are intentionally omitted from the auto-allow list (main-agent
-   deletes prompt for user confirmation), and a separate
-   `pre-tool-use-tdd-restricted.sh` hook denies them outright when
-   the TDD orchestrator subagent calls them.
+   plus four MCP resources under two URI schemes (`vitest://docs/`
+   and `vitest://docs/{+path}` for the vendored Vitest documentation
+   snapshot at `packages/mcp/src/vendor/vitest-docs/`;
+   `vitest-agent://patterns/` and `vitest-agent://patterns/{slug}`
+   for the curated patterns library at `packages/mcp/src/patterns/`)
+   and six framing-only prompts (`triage`, `why-flaky`,
+   `regression-since-pass`, `explain-failure`, `tdd-resume`,
+   `wrapup`) registered directly with `@modelcontextprotocol/sdk`
+   alongside the tRPC router. A file-based Claude Code plugin at
+   `plugin/` ships a `PreToolUse` hook that auto-allows the
+   non-destructive MCP tools without per-call permission prompts.
+   The two `tdd_*_delete` tools are intentionally omitted from the
+   auto-allow list (main-agent deletes prompt for user confirmation),
+   and a separate `pre-tool-use-tdd-restricted.sh` hook denies them
+   outright when the TDD orchestrator subagent calls them.
+   Refreshing the vendored documentation is a repo-internal
+   workflow driven by the project-local
+   `.claude/skills/update-vitest-snapshot/SKILL.md` skill — a
+   five-phase fetch → prune → scaffold → enrich → validate flow with
+   explicit user checkpoints, backed by Effect-based TypeScript
+   scripts at `packages/mcp/lib/scripts/` (`fetch-upstream-docs.ts`,
+   `build-snapshot.ts`, `validate-snapshot.ts`).
 
 Effect service architecture: I/O encapsulated in Effect services
 (DataStore, DataReader, EnvironmentDetector, ExecutorResolver,
@@ -211,13 +226,44 @@ assemblers).
 `record`, `triage`, `wrapup`),
 `lib/` (testable formatting logic), `layers/CliLive.ts`.
 
-`packages/mcp/src/` -- `bin.ts` (entry), `index.ts`, `server.ts`,
-`router.ts`, `context.ts`, `tools/` (50 tool implementations,
-including the 10 new `tdd_goal_*` / `tdd_behavior_*` CRUD tools and
-the private `_tdd-error-envelope.ts` helper that surfaces tagged
-TDD errors as success-shape responses; the 1.x
+`packages/mcp/src/` -- `bin.ts` (entry), `index.ts`, `server.ts`
+(calls `registerAllResources(server)` and
+`registerAllPrompts(server)` before constructing
+`StdioServerTransport`), `router.ts`, `context.ts`, `tools/`
+(50 tool implementations, including the 10 new `tdd_goal_*` /
+`tdd_behavior_*` CRUD tools and the private
+`_tdd-error-envelope.ts` helper that surfaces tagged TDD errors
+as success-shape responses; the 1.x
 `decompose_goal_into_behaviors` tool was removed in 2.0),
-`middleware/idempotency.ts`, `layers/McpLive.ts`.
+`resources/` (registrar + path-traversal-safe path resolver +
+two per-scheme readers + index renderers + `manifest-schema.ts`
+defining the per-page metadata Effect Schema; surfaces four MCP
+resources under `vitest://docs/...` and
+`vitest-agent://patterns/...`), `prompts/` (registrar + six
+framing-only prompts), `middleware/idempotency.ts`,
+`layers/McpLive.ts`. Sibling content trees, now colocated under
+`src/`: `src/vendor/vitest-docs/` (vendored upstream documentation
+snapshot with `manifest.json` carrying per-page metadata
+(`title`, `description`) consumed by the `vitest_docs_page`
+ResourceTemplate's `list` callback so MCP clients see real titles
+and "load when" descriptions for every page) and `src/patterns/`
+(curated patterns library, three launch patterns shipped). Both
+trees are mirrored into `dist/dev/` and `dist/npm/` by rslib's
+`copyPatterns` declaration in `rslib.config.ts` (no postbuild
+copier script). Maintenance lives at `packages/mcp/lib/scripts/`
+as Effect-based TypeScript: `fetch-upstream-docs.ts` (sparse-clones
+`vitest-dev/vitest` at a tag into the gitignored
+`packages/mcp/lib/vitest-docs-raw/`, records `.upstream-info.json`
+validated against an Effect Schema), `build-snapshot.ts` (applies
+denylist, strips VitePress frontmatter, derives titles, scaffolds
+`src/vendor/vitest-docs/` + `manifest.json` with `[TODO: ...]`
+description placeholders), and `validate-snapshot.ts` (refuses
+TODO-marked descriptions, enforces minimum length, ensures
+file/manifest correspondence). Run via
+`pnpm exec tsx packages/mcp/lib/scripts/<name>.ts`. The repo
+convention: `lib/` is for tooling that reuses workspace
+dependencies and `src/` code; turbo treats `lib/` changes as
+build-invalidating.
 
 `plugin/` -- `.claude-plugin/plugin.json` (manifest with inline
 `mcpServers`), `bin/mcp-server.mjs` (PM-detect + spawn loader),
@@ -227,7 +273,12 @@ denies `tdd_goal_delete`, `tdd_behavior_delete`,
 `tdd_artifact_record` for the orchestrator subagent),
 `lib/safe-mcp-vitest-agent-ops.txt`),
 `skills/` (TDD, debugging, configuration, coverage-improvement;
-`tdd/SKILL.md` owns the 2.0 channel-event handler section),
+`tdd/SKILL.md` owns the 2.0 channel-event handler section. The
+`update-vitest-snapshot` skill is **not** shipped with the plugin
+— it lives at `.claude/skills/update-vitest-snapshot/SKILL.md`
+as a repo-internal workflow because it is tightly coupled to this
+repo's structure (paths, scripts, build pipeline) and never
+applied to plugin consumers),
 `commands/` (setup, configure).
 
 **Spec:** [GitHub Issue #1](https://github.com/spencerbeggs/vitest-agent/issues/1)

@@ -45,7 +45,7 @@ environment.
 | [Direct Reporter Usage](reporter.md) | Using `AgentReporter` without the plugin, lifecycle hooks, advanced configuration |
 | [Schemas](schemas.md) | Effect Schema definitions, programmatic database access, type inference |
 | [CLI Commands](cli.md) | Status, overview, coverage, history, trends, cache, and doctor commands |
-| [MCP Server](mcp.md) | MCP tools reference, notes system, manual server usage |
+| [MCP Server](mcp.md) | MCP server reference: tools, resources, prompts and notes system |
 | [Failure History](history.md) | Test classification and failure tracking across runs |
 | [Claude Code Plugin](../plugin/README.md) | Plugin installation, hooks, skills, and commands |
 | [Dogfooding](dogfooding.md) | Contributor guide to testing the vitest-agent system on its own playground |

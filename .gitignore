@@ -45,3 +45,6 @@ docs/superpowers/
 
 # Local plugin development
 .vitest-agent-reporter-db
+
+# Raw upstream Vitest docs work area (populated by lib/scripts/fetch-upstream-docs.ts)
+packages/mcp/lib/vitest-docs-raw/

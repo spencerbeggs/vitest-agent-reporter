@@ -1,5 +1,5 @@
 {
-	"name": "vitest-agent-monorepo",
+	"name": "vitest-agent",
 	"version": "0.0.0",
 	"private": true,
 	"description": "Monorepo for vitest-agent development",
@@ -40,6 +40,7 @@
 		"@types/node": "catalog:silk",
 		"@typescript/native-preview": "catalog:silk",
 		"@vitest/coverage-v8": "^4.1.5",
+		"tsx": "catalog:silk",
 		"typescript": "catalog:silk",
 		"vitest": "^4.1.5",
 		"vitest-agent-cli": "workspace:*",

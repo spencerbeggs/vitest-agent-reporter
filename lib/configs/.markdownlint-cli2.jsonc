@@ -12,7 +12,8 @@
 		"**/docs/superpowers",
 		"**/dist",
 		"**/CHANGELOG.md",
-		"**/.claude/plans"
+		"**/.claude/plans",
+		"**/vendor/**"
 	],
 	"customRules": ["@savvy-web/changesets/markdownlint"],
 	"config": {

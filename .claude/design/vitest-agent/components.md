@@ -6,6 +6,17 @@ created: 2026-03-20
 updated: 2026-05-05
 last-synced: 2026-05-05
 completeness: 100
+# Note: 2026-05-05 sync added the MCP resources + prompts surface
+# (vitest:// + vitest-agent:// URI schemes, six framing-only
+# prompts) and the vendor-snapshot/copy-to-dist build scripts.
+# 2026-05-05 (later): vendor + patterns content moved under
+# packages/mcp/src/, postbuild copy-vendor-to-dist.mjs replaced by
+# rslib `copyPatterns`, the zero-deps update-vitest-snapshot.mjs
+# split into three Effect-based TS scripts under
+# packages/mcp/lib/scripts/, manifest schema landed at
+# resources/manifest-schema.ts with a `list` callback on the
+# `vitest_docs_page` template, and the update-vitest-snapshot
+# skill went project-local at .claude/skills/.
 related:
   - ./architecture.md
   - ./decisions.md
@@ -44,8 +55,17 @@ covers one package; load only the section you need:
   layers, formatters, errors, migrations, utilities, XDG path stack,
   and the public reporter contract types (`contracts/reporter.ts`)
 - **CLI package** -- `vitest-agent-reporter` bin and `CliLive`
-- **MCP package** -- `vitest-agent-mcp` bin, tRPC router, 41
-  tools, the tRPC idempotency middleware, and `McpLive`
+- **MCP package** -- `vitest-agent-mcp` bin, tRPC router, 50
+  tools, the tRPC idempotency middleware, the four MCP resources
+  (vendored Vitest docs + curated patterns under
+  `vitest://docs/...` and `vitest-agent://patterns/...`), the
+  six framing-only MCP prompts (`triage`, `why-flaky`,
+  `regression-since-pass`, `explain-failure`, `tdd-resume`,
+  `wrapup`), the three Effect-based snapshot maintenance scripts
+  under `packages/mcp/lib/scripts/`, and `McpLive`. Vendor +
+  patterns content lives under `src/` and is mirrored into
+  `dist/<env>/` by rslib's `copyPatterns` config (no separate
+  postbuild step)
 - **Claude Code plugin** -- file-based plugin with the MCP loader,
   hooks, skills, commands, the TDD orchestrator agent definition,
   `/tdd` slash command, and 9 sub-skill primitives
@@ -1731,12 +1751,20 @@ Used by the CLI bin via `NodeRuntime.runMain`.
 ## MCP package (vitest-agent-mcp)
 
 Model Context Protocol server providing 50 tools for agent
-integration via tRPC router. Tools cover read-only queries,
-discovery, note CRUD, session/turn/TDD reads, hypothesis writes
-(via idempotency middleware), TDD lifecycle reads/writes, the 10
-goal/behavior CRUD tools introduced in 2.0, and workspace history.
-Uses `@modelcontextprotocol/sdk` with stdio transport and tRPC for
-routing.
+integration via tRPC router, plus four MCP resources under two URI
+schemes and six framing-only prompts registered directly with
+`@modelcontextprotocol/sdk` (alongside the tRPC tool router). Tools
+cover read-only queries, discovery, note CRUD, session/turn/TDD
+reads, hypothesis writes (via idempotency middleware), TDD lifecycle
+reads/writes, the 10 goal/behavior CRUD tools introduced in 2.0,
+and workspace history. Resources expose the vendored upstream Vitest
+documentation snapshot (`vitest://docs/...`) and the curated
+testing-patterns library (`vitest-agent://patterns/...`). Prompts
+emit small templated user messages that orient the agent toward the
+right tools without pre-fetching tool data on the server. Uses
+`@modelcontextprotocol/sdk` with stdio transport, tRPC for tool
+routing, and the SDK's native resource/prompt registration APIs for
+content surfaces.
 
 **npm name:** `vitest-agent-mcp`
 **bin:** `vitest-agent-mcp`
@@ -1777,10 +1805,45 @@ coordination without bundling the dependency tree.
 - `router.ts` -- tRPC router aggregating all 50 tool procedures
 - `server.ts` -- `startMcpServer()` registers all tools with the MCP
   SDK using zod input schemas (the SDK side; tRPC inputs are also
-  zod, kept in sync between the two registrations)
+  zod, kept in sync between the two registrations); also calls
+  `registerAllResources(server)` and `registerAllPrompts(server)`
+  before constructing `StdioServerTransport`
+- `resources/` -- the four MCP resources surface (covered below):
+  `index.ts` (registrar), `paths.ts` (path-traversal-safe
+  resolver), `upstream-docs.ts` / `patterns.ts` (per-scheme
+  readers), `indexes.ts` (index renderers)
+- `prompts/` -- the six framing-only MCP prompts surface (covered
+  below): `index.ts` (registrar) plus one file per prompt
+  (`triage.ts`, `why-flaky.ts`, `regression-since-pass.ts`,
+  `explain-failure.ts`, `tdd-resume.ts`, `wrapup.ts`)
 - `middleware/idempotency.ts` -- tRPC idempotency
   middleware (covered below)
 - `layers/McpLive.ts` -- composition layer (covered below)
+
+Sibling content trees colocated under `src/` (so turbo's build
+cache invalidates on edits) and mirrored into `dist/dev/` and
+`dist/npm/` by rslib's `copyPatterns` configuration in
+`packages/mcp/rslib.config.ts` (no separate postbuild step;
+`copyPatterns: [{ from: "src/vendor", to: "vendor" }, { from:
+"src/patterns", to: "patterns" }]`):
+
+- `src/vendor/vitest-docs/` -- vendored upstream Vitest
+  documentation snapshot (markdown files mirroring
+  `vitest-dev/vitest`'s `docs/` directory, plus `manifest.json`
+  carrying `tag`, `commitSha`, `capturedAt`, `source`, and
+  optional per-page `pages[]` metadata, and `ATTRIBUTION.md`).
+  Refreshed via the three Effect-based scripts under
+  `lib/scripts/` (covered in **MCP maintenance scripts** below)
+- `src/patterns/` -- curated testing patterns library
+  (`_meta.json` index + per-pattern markdown). Three launch
+  patterns ship in 2.0:
+  `testing-effect-services-with-mock-layers`,
+  `testing-effect-schema-definitions`, and
+  `authoring-a-custom-vitest-agent-reporter`
+
+The prior `packages/mcp/scripts/` directory has been removed
+entirely; the maintenance scripts now live under `lib/scripts/`
+(covered in **MCP maintenance scripts** below).
 
 **Dependencies:**
 
@@ -2077,6 +2140,277 @@ delivery) gets the cached result back instead of double-writing.
 `Migrator`, `NodeContext`, `NodeFileSystem`, and `LoggerLive(...)`.
 Used by the MCP server bin via `ManagedRuntime`.
 
+### MCP resources (4 resources, 2 URI schemes)
+
+**Locations:**
+
+- `packages/mcp/src/resources/index.ts` --
+  `registerAllResources(server)` registrar. Resolves
+  `vendorRoot` and `patternsRoot` from `import.meta.url` so the
+  same code works in tests/dev (resolves to
+  `packages/mcp/src/<vendor|patterns>/` via `join(here, "..")`,
+  one level up from `resources/`) and after build (resolves to
+  `dist/<env>/<vendor|patterns>/` via `join(here, "vendor")` /
+  `join(here, "patterns")` — siblings of the compiled bundle
+  file thanks to rslib's `copyPatterns` mirroring). An
+  `existsSync` fallback selects the correct layout at runtime,
+  also fixing a latent bug in the prior `join(here, "..", "..")`
+  resolution which would have looked outside the dist root for
+  npm-installed consumers. The `vitest_docs_page` template is
+  now registered with a `list` callback (was `list: undefined`)
+  that decodes `manifest.json` against the `UpstreamManifest`
+  Effect Schema and emits per-page `{ name, uri, title,
+  description, mimeType }` so MCP clients show "load when"
+  signals in their resource picker
+- `packages/mcp/src/resources/manifest-schema.ts` --
+  `UpstreamManifest` Effect Schema with required `tag`,
+  `commitSha`, `capturedAt`, `source` fields plus an **optional**
+  `pages: ReadonlyArray<{ path, title, description }>` field.
+  `pages` is optional in the schema so the registrar's `list`
+  callback can fall back gracefully during a transitional
+  pre-skill-run state (skip enumeration, return empty
+  `resources: []`); the `validate-snapshot.ts` script enforces
+  non-empty `pages[]` as a quality gate before commit
+- `packages/mcp/src/resources/paths.ts` -- `resolveResourcePath`
+  helper. Rejects null bytes, absolute paths, and any resolved
+  path that does not stay within `root` (path-traversal guard).
+  Auto-appends `.md` when the input lacks an extension
+- `packages/mcp/src/resources/upstream-docs.ts` --
+  `readUpstreamDoc(vendorRoot, relative)` reader for the
+  `vitest://docs/{+path}` template
+- `packages/mcp/src/resources/patterns.ts` --
+  `readPattern(patternsRoot, slug)` reader for the
+  `vitest-agent://patterns/{slug}` template
+- `packages/mcp/src/resources/indexes.ts` --
+  `renderUpstreamIndex(vendorRoot)` and
+  `renderPatternsIndex(patternsRoot)` index renderers (consumed
+  by the index-URI handlers)
+
+**Purpose:** Surface the vendored upstream Vitest documentation
+and the curated `vitest-agent` testing patterns to MCP clients
+as first-class MCP resources, so agents can discover and read
+documentation without needing a tool roundtrip per page.
+
+**Registered resources** (all `mimeType: text/markdown`):
+
+| Name | URI | Title | Source |
+| ---- | --- | ----- | ------ |
+| `vitest_docs_index` | `vitest://docs/` | Vitest Documentation Index | `src/vendor/vitest-docs/` |
+| `vitest_docs_page` | `vitest://docs/{+path}` (template) | Vitest Documentation Page | `src/vendor/vitest-docs/{path}.md` |
+| `vitest_agent_patterns_index` | `vitest-agent://patterns/` | vitest-agent Patterns Index | `src/patterns/_meta.json` |
+| `vitest_agent_pattern` | `vitest-agent://patterns/{slug}` (template) | vitest-agent Pattern | `src/patterns/{slug}.md` |
+
+The two index resources are static URIs. The
+`vitest_docs_page` `ResourceTemplate` is passed to
+`server.registerResource` with a `list` callback that decodes
+`manifest.json` (validated against the `UpstreamManifest` Effect
+Schema) and emits per-page `{ name, uri, title, description,
+mimeType }` entries so MCP clients see strong "load when"
+descriptions in their resource picker — the headline reason the
+manifest carries authored per-page metadata. The
+`vitest_agent_pattern` template still uses `{ list: undefined }`
+because the patterns index URI already serves the enumeration
+role and the patterns library is small enough that explicit
+enumeration is unnecessary. Each page handler resolves the
+template variable, calls the matching reader, and returns
+`{ contents: [{ uri: uri.href, mimeType, text }] }`.
+
+**Why two URI schemes:**
+
+- `vitest://` carries the vendored upstream content -- it is a
+  snapshot of `vitest-dev/vitest`'s `docs/` tree at a pinned tag.
+  The scheme name signals provenance to clients
+- `vitest-agent://` carries content authored *for* this project
+  -- the curated pattern library encoding our own opinions about
+  testing Effect services, testing schemas, and authoring a
+  custom reporter. Splitting the schemes makes it impossible to
+  conflate vendored content with curated guidance, even at a
+  glance
+
+**Why path-traversal guarding (`paths.ts`):** the MCP server
+runs as a long-lived process and the resource URIs come from
+clients. A naïve `join(vendorRoot, relative)` would let
+`vitest://docs/../../etc/passwd` escape the vendored tree.
+`resolveResourcePath` enforces three invariants: no null bytes,
+no absolute paths, and the resolved path must start with
+`<root><sep>` (or equal `root` for empty input). Tests in
+`paths.test.ts` cover each rejection case.
+
+**Dependencies:**
+
+- Depends on: `@modelcontextprotocol/sdk` (`McpServer` +
+  `ResourceTemplate`), Node `node:fs` / `node:path` for vendor
+  reads
+- Used by: `server.ts` (`registerAllResources(server)` is
+  invoked alongside `registerAllPrompts(server)` before the
+  `StdioServerTransport` is connected)
+
+### MCP prompts (6 framing-only prompts)
+
+**Locations:**
+
+- `packages/mcp/src/prompts/index.ts` --
+  `registerAllPrompts(server)` registrar that wires each
+  prompt's argument zod schema, the matching factory function,
+  and a small `toMessages(...)` adapter. The adapter narrows
+  the user-only message shape returned by each factory to the
+  SDK-permitted `role: "user" | "assistant"` form
+- `packages/mcp/src/prompts/triage.ts` --
+  `triagePrompt({ project? })`
+- `packages/mcp/src/prompts/why-flaky.ts` --
+  `whyFlakyPrompt({ test, project? })`
+- `packages/mcp/src/prompts/regression-since-pass.ts` --
+  `regressionSincePassPrompt({ test, project? })`
+- `packages/mcp/src/prompts/explain-failure.ts` --
+  `explainFailurePrompt({ signature })`
+- `packages/mcp/src/prompts/tdd-resume.ts` --
+  `tddResumePrompt({ cc_session_id? })`
+- `packages/mcp/src/prompts/wrapup.ts` --
+  `wrapupPrompt({ kind?, since? })` plus the `WrapupKind` type
+  re-exported for the registrar's argument coercion
+
+**Purpose:** Surface canonical workflow primings as MCP prompts
+so a client can pick "Triage Recent Failures" from a menu and
+the agent receives the right framing without the user needing to
+remember which tools to compose. Each prompt emits one or more
+templated user messages; **no tool data is pre-fetched on the
+server** -- the prompt only orients the agent, and the agent
+then composes the tools (`triage_brief`, `failure_signature_get`,
+`hypothesis_record`, etc.) as needed.
+
+**Registered prompts:**
+
+| Name | Title | Args | Composes |
+| ---- | ----- | ---- | -------- |
+| `triage` | Triage Recent Failures | `project?` | `triage_brief`, `failure_signature_get`, `hypothesis_record` |
+| `why-flaky` | Diagnose a Flaky Test | `test`, `project?` | `test_history`, `failure_signature_get` |
+| `regression-since-pass` | Find What Broke a Test | `test`, `project?` | `test_history`, `commit_changes`, `turn_search` |
+| `explain-failure` | Explain a Failure Class | `signature` (16-char hex) | (synthesizes from `failure_signature_get` recurrence history) |
+| `tdd-resume` | Resume TDD Work | `cc_session_id?` | (orients toward the active TDD session and iron-law transitions) |
+| `wrapup` | Generate a Session Wrapup | `kind?`, `since?` | (mirrors what the post-hooks emit automatically) |
+
+The `wrapup` prompt's `kind` argument is a closed `z.enum([...])`
+matching the same five `WrapupKind` variants the
+`format-wrapup` library generator emits (`stop`, `session_end`,
+`pre_compact`, `tdd_handoff`, `user_prompt_nudge`); the
+registrar narrows `args.kind` to `WrapupKind` before forwarding
+to the factory.
+
+**Why "framing-only":** the prompts are not tool wrappers. A
+client that imports the `triage` prompt receives a short
+templated user message like "Orient toward triage workflow over
+the most recent test run, scoped to project X." It is the *agent*
+that then calls the tools to fetch data. This keeps the server's
+prompt surface free of latency and side effects -- prompt
+selection on the client costs zero tool roundtrips, and the
+server never reads the database while assembling a prompt
+response. It also keeps the prompts composable with the existing
+tools: the prompts don't duplicate tool data, they direct the
+agent toward the right tools.
+
+**Dependencies:**
+
+- Depends on: `@modelcontextprotocol/sdk`'s `registerPrompt` API,
+  `zod` for argument schemas
+- Used by: `server.ts` (`registerAllPrompts(server)` invoked
+  alongside `registerAllResources(server)` before the
+  `StdioServerTransport` is connected)
+
+### MCP maintenance scripts
+
+The prior `packages/mcp/scripts/` directory has been removed.
+Vendor + patterns mirroring is now done at build time by rslib's
+`copyPatterns` config, and snapshot maintenance is split across
+three Effect-based TypeScript scripts under
+`packages/mcp/lib/scripts/` (the `lib/` convention lets the
+scripts reuse code from `src/` and the workspace's
+dependencies; turbo treats `lib/` changes as build-invalidating).
+All three are invoked via `pnpm exec tsx
+packages/mcp/lib/scripts/<name>.ts`.
+
+**Locations:**
+
+- `packages/mcp/lib/scripts/fetch-upstream-docs.ts` --
+  sparse-clones `vitest-dev/vitest` at the requested tag
+  (`--depth 1 --filter=blob:none --sparse --branch <tag>`,
+  `sparse-checkout set docs`) and writes the cloned tree to
+  `packages/mcp/lib/vitest-docs-raw/` (a gitignored work area).
+  Records `.upstream-info.json` validated against the
+  `UpstreamManifest` Effect Schema. **Uses `execFileSync` with
+  array args** for every git invocation -- never `execSync`
+  with a shell-interpolated string -- so a malicious upstream
+  tag like `v4.0.0; rm -rf $HOME` cannot inject shell commands.
+  Invoked as `pnpm exec tsx
+  packages/mcp/lib/scripts/fetch-upstream-docs.ts --tag <vN.M.K>`
+- `packages/mcp/lib/scripts/build-snapshot.ts` -- reads
+  `lib/vitest-docs-raw/`, applies a denylist (drops
+  `index.md`, `team.md`, `todo.md`, `blog.md`, `blog/`,
+  `.vitepress/`, `public/`), strips VitePress YAML frontmatter,
+  derives mechanical titles from each page's H1, and writes the
+  cleaned tree to `src/vendor/vitest-docs/` plus a
+  schema-validated `manifest.json`. The manifest's `pages[]`
+  entries land with placeholder descriptions marked
+  `[TODO: replace with load-when signal]` — the
+  `update-vitest-snapshot` skill drives the agent through
+  rewriting each one as a concrete "load when" signal naming
+  the APIs and scenarios the page covers
+- `packages/mcp/lib/scripts/validate-snapshot.ts` -- quality
+  gate. Decodes `manifest.json` against `UpstreamManifest`,
+  asserts `pages[]` is non-empty, checks every committed `.md`
+  has a manifest entry and every entry resolves to a real file,
+  refuses any description still carrying the `[TODO` marker,
+  and enforces a 30-character minimum description length
+
+**rslib `copyPatterns` config (replaces the old postbuild
+copier):** `packages/mcp/rslib.config.ts` declares
+`copyPatterns: [{ from: "src/vendor", to: "vendor" }, { from:
+"src/patterns", to: "patterns" }]`. The dist layout is
+unchanged from before — `vendor/` and `patterns/` end up at
+`dist/<env>/vendor/` and `dist/<env>/patterns/` — but the
+mechanism is rsbuild's `output.copy` rather than a separate
+node process chained via `&&` in `package.json`. The old
+`packages/mcp/scripts/copy-vendor-to-dist.mjs` script and the
+`&& node scripts/copy-vendor-to-dist.mjs` chain in `build:dev`
+/ `build:prod` are gone.
+
+**Why `execFileSync` over `execSync`:** the snapshot fetcher
+takes the tag as a CLI argument and passes it to `git`. Building
+a shell command string and passing to `execSync` (`git clone ...
+--branch ${tag} ...`) opens a shell-injection hole at the exact
+boundary where the input is least trusted. `execFileSync("git",
+[..., "--branch", tag, ...], { cwd })` invokes git directly
+without spawning a shell, so `tag` is treated verbatim as one
+argv element regardless of its contents. `fetch-upstream-docs.ts`
+preserves this discipline.
+
+**Why three scripts instead of one:** the prior
+`update-vitest-snapshot.mjs` did fetch, transform, and
+implicit-validation in one pass, which made it impossible to
+pause for the agent to author per-page descriptions between
+scaffolding and validation. Splitting the lifecycle into fetch
+→ build → validate gives the
+`.claude/skills/update-vitest-snapshot/` skill a place to insert
+the description-authoring step (phase 4) between scaffolding
+(phase 3) and the gate (phase 5). It also lets each script have
+a single tight responsibility, which is easier to test.
+
+**Why `lib/scripts/` (not `src/scripts/`):** scripts are
+maintenance code, not part of the published bundle. Putting
+them under `src/` would pull them into the rslib build entry
+list. `lib/` is the repo convention for Effect-based,
+turbo-cache-affecting TypeScript that lives outside the bundle —
+matching the `lib/configs/` directory at the repo root.
+
+**Why the build-time copy (still):** `rslib` only knows how to
+build TypeScript sources. The vendor tree and patterns tree are
+runtime data, not source. Bundling them through a build plugin
+would either (a) inline the markdown into the JS bundle (wasteful
+for resources clients fetch by URI) or (b) require a custom
+loader. rslib's `copyPatterns` is the rsbuild-native answer to
+the same problem the standalone copier solved, with the bonus
+that the build/copy pair is now a single rsbuild invocation —
+no `&&` chain that could partially succeed.
+
 ---
 
 ## Claude Code Plugin (plugin/)
@@ -2370,6 +2704,16 @@ PreCompact, SubagentStart, SubagentStop.
 - `configuration/SKILL.md` -- Vitest configuration skill
 - `coverage-improvement/SKILL.md` -- coverage improvement
   skill
+
+The `update-vitest-snapshot` skill that previously lived at
+`plugin/skills/update-vitest-snapshot/` has been **removed from
+the plugin** (and therefore from `plugin/README.md`'s skills
+table). The workflow is tightly coupled to this repo's structure
+(paths, scripts, build pipeline) and does not apply to consumers
+who install the plugin, so it now lives at the project-local
+`.claude/skills/update-vitest-snapshot/SKILL.md` (covered in the
+**Project-local skills** subsection below).
+
 - `tdd-primitives/<9 dirs>/SKILL.md` --
   the 9 sub-skill primitives the orchestrator embeds inline,
   also published as standalone Skill files for non-TDD
@@ -2387,6 +2731,45 @@ PreCompact, SubagentStart, SubagentStop.
     server tool involved). Covers what counts as one goal vs
     one behavior, the `dependsOnBehaviorIds` junction-table
     contract, and per-goal idempotency keys for safe retries
+
+### Project-local skills (`.claude/skills/`)
+
+These skills are **not** shipped with the Claude Code plugin —
+they are repo-internal and apply only to contributors working
+in this monorepo.
+
+- `.claude/skills/update-vitest-snapshot/SKILL.md` -- guided
+  5-phase interactive workflow for refreshing
+  `packages/mcp/src/vendor/vitest-docs/`. Lives here (not under
+  `plugin/skills/`) because the workflow is tightly coupled to
+  this repo's paths, maintenance scripts, and build pipeline; a
+  consumer installing the Claude Code plugin would have nothing
+  to do with it. **Phases:**
+  1. **Fetch** — `pnpm exec tsx
+     packages/mcp/lib/scripts/fetch-upstream-docs.ts --tag <vN.M.K>`
+     pulls raw upstream into `packages/mcp/lib/vitest-docs-raw/`
+  2. **Inventory and prune** — agent reviews the raw tree with
+     the user, deciding which pages to drop (denylist already
+     covers VitePress meta files like `.vitepress/`, `index.md`,
+     `team.md`, `todo.md`, `blog.md`, `blog/`, `public/`)
+  3. **Scaffold** — `build-snapshot.ts` writes
+     `src/vendor/vitest-docs/` and a `manifest.json` with
+     placeholder descriptions marked `[TODO: replace with
+     load-when signal]`
+  4. **Author per-page descriptions** — the agent reads each
+     page and rewrites its manifest entry's `description` as a
+     concrete "load when" signal naming the APIs and scenarios
+     the page covers. **This is the headline reason the skill
+     exists**: the per-page `title` and `description` fields
+     drive what MCP clients display in their resource picker
+     (via the `vitest_docs_page` template's `list` callback), so
+     they directly determine discoverability. Mechanical
+     extractions are not enough
+  5. **Validate** — `validate-snapshot.ts` enforces the gate
+     (non-empty `pages[]`, no `[TODO` markers, 30-char minimum
+     description length, every committed `.md` has a manifest
+     entry, every entry resolves), then `pnpm ci:build` confirms
+     the snapshot integrates cleanly
 
 ---
 
@@ -2409,3 +2792,10 @@ PreCompact, SubagentStart, SubagentStop.
 | `AgentReporter` class export from `vitest-agent-reporter` | `agentPlugin()` from `vitest-agent` (standalone reporter usage is intentionally broken in 2.0; see decisions.md) |
 | `AgentPlugin` factory export from `vitest-agent-reporter` | `agentPlugin()` from `vitest-agent` |
 | `vitest-agent-reporter`-shipped `AgentReporter.onTestRunEnd` GFM write path (`shouldWriteGfm` block) | `defaultReporter` emits a `github-summary` `RenderedOutput` under GitHub Actions; `routeRenderedOutput` appends to the summary file |
+| `packages/mcp/scripts/copy-vendor-to-dist.mjs` (postbuild copier) | `copyPatterns` config in `packages/mcp/rslib.config.ts` |
+| `packages/mcp/scripts/update-vitest-snapshot.mjs` (zero-deps single-pass fetcher) | Three Effect-based scripts under `packages/mcp/lib/scripts/`: `fetch-upstream-docs.ts`, `build-snapshot.ts`, `validate-snapshot.ts` |
+| `packages/mcp/scripts/` directory (entire) | Removed; maintenance scripts now live under `packages/mcp/lib/scripts/`; build-time copy is rsbuild-native |
+| `plugin/skills/update-vitest-snapshot/SKILL.md` (plugin-shipped) | `.claude/skills/update-vitest-snapshot/SKILL.md` (project-local, not plugin-shipped); rewritten as a 5-phase interactive workflow with per-page-description authoring |
+| `packages/mcp/vendor/vitest-docs/` (under package root) | `packages/mcp/src/vendor/vitest-docs/` (under `src/`, so turbo's build cache invalidates on edits) |
+| `packages/mcp/patterns/` (under package root) | `packages/mcp/src/patterns/` (under `src/`, sibling of vendor/) |
+| `vitest_docs_page` template `{ list: undefined }` | `list` callback decoding `manifest.json` and emitting per-page `{ name, uri, title, description, mimeType }` |

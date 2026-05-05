@@ -13,6 +13,10 @@ export default NodeLibraryBuilder.create({
 		"vitest/node",
 		"vitest-agent-sdk",
 	],
+	copyPatterns: [
+		{ from: "src/vendor", to: "vendor" },
+		{ from: "src/patterns", to: "patterns" },
+	],
 	apiModel: {
 		suppressWarnings: [{ messageId: "ae-forgotten-export", pattern: "_base" }],
 	},

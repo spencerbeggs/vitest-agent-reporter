@@ -3,7 +3,12 @@
 The Model Context Protocol server (`vitest-agent-mcp` bin)
 exposing 50 tools to LLM agents over stdio via `@modelcontextprotocol/sdk`.
 Routes tool calls through a tRPC router; runs as a long-lived process with
-a `ManagedRuntime`. Required as a peerDependency by the plugin package.
+a `ManagedRuntime`. Also surfaces four MCP resources under two URI schemes
+(vendored Vitest docs + curated patterns; per-page titles and
+descriptions come from `manifest.json`, which the registrar's `list`
+callback decodes via an Effect Schema) and six framing-only prompts
+registered directly with the MCP SDK alongside the tRPC tool router.
+Required as a peerDependency by the plugin package.
 
 ## Layout
 
@@ -15,39 +20,104 @@ src/
   index.ts            -- programmatic entry
   context.ts          -- tRPC McpContext: { runtime, cwd }
   router.ts           -- tRPC router aggregating all 50 procedures
-  server.ts           -- startMcpServer() registers tools with MCP SDK
-                         (StdioServerTransport)
-  tools/              -- 50 tool implementations (one file per tool):
-                         meta + read-only queries (help, status,
-                         overview, coverage, history, trends, errors,
-                         test-for-file, test-get, file-coverage,
-                         cache-health, configure); discovery
-                         (project-list, test-list, module-list,
-                         suite-list, settings-list); mutation
-                         (run-tests); note CRUD (notes.ts);
-                         sessions/turns/TDD reads (session-list,
-                         session-get, turn-search,
-                         failure-signature-get, tdd-session-get,
-                         hypothesis-list, acceptance-metrics);
-                         triage/wrapup (triage-brief, wrapup-prompt);
-                         hypothesis writes (hypothesis-record,
-                         hypothesis-validate); TDD session lifecycle
-                         (tdd-session-start, tdd-session-end,
-                         tdd-session-resume,
-                         tdd-phase-transition-request);
-                         TDD goal CRUD (2.0: tdd-goal-create / -get /
-                         -update / -delete / -list); TDD behavior CRUD
-                         (2.0: tdd-behavior-create / -get / -update /
-                         -delete / -list); workspace history
-                         (commit-changes); plus the private
-                         _tdd-error-envelope.ts helper.
-                         The 1.x decompose-goal-into-behaviors tool
-                         was removed in 2.0.
+  server.ts           -- startMcpServer(): registers all tools, then
+                         calls registerAllResources(server) and
+                         registerAllPrompts(server) BEFORE constructing
+                         StdioServerTransport
+  tools/              -- 50 tool implementations (see design docs for the
+                         full inventory); plus the private
+                         _tdd-error-envelope.ts helper. The 1.x
+                         decompose-goal-into-behaviors tool was removed
+                         in 2.0
+  resources/          -- four MCP resources surfaced under two URI schemes:
+    index.ts          -- registerAllResources(server); resolves vendorRoot
+                         and patternsRoot from import.meta.url so the
+                         same code works in dev (sources at
+                         packages/mcp/src/<vendor|patterns>/) and
+                         post-build (mirrored to
+                         dist/<env>/<vendor|patterns>/ by rslib's
+                         copyPatterns). The vitest_docs_page
+                         ResourceTemplate's list callback decodes
+                         manifest.json via manifest-schema.ts and
+                         emits per-page { name, uri, title,
+                         description, mimeType } so MCP clients see
+                         real titles and "load when" descriptions in
+                         their resource picker
+    manifest-schema.ts -- Effect Schema describing the manifest.json
+                         shape: { tag, commitSha, capturedAt, source,
+                         pages?: Array<{ path, title, description }> }
+    paths.ts          -- resolveResourcePath: rejects null bytes,
+                         absolute paths, and any resolved path that
+                         escapes <root>. The security boundary -- ALWAYS
+                         call this before any readFile in the readers
+    upstream-docs.ts  -- vitest://docs/{+path} reader (vendored snapshot)
+    patterns.ts       -- vitest-agent://patterns/{slug} reader
+    indexes.ts        -- renderUpstreamIndex / renderPatternsIndex for
+                         the two static index URIs (vitest://docs/
+                         and vitest-agent://patterns/)
+  vendor/
+    vitest-docs/      -- vendored upstream Vitest docs snapshot
+                         (markdown files mirroring vitest-dev/vitest's
+                         docs/ tree, plus manifest.json (tag,
+                         commitSha, capturedAt, source, and the
+                         pages[] metadata array) and ATTRIBUTION.md).
+                         Pinned at a specific upstream tag; refreshed
+                         via the project-local update-vitest-snapshot
+                         skill or the lib/scripts/ TS pipeline below
+  patterns/           -- curated testing patterns library (_meta.json
+                         index + per-pattern markdown). Three launch
+                         patterns ship in 2.0
+  prompts/            -- six framing-only prompts (no server-side tool
+                         data fetching; each prompt emits templated user
+                         messages that orient the agent toward the right
+                         tool composition):
+    index.ts          -- registerAllPrompts(server); wires zod arg
+                         schemas + factory functions + a toMessages
+                         adapter that narrows user-only message shape
+                         to SDK-permitted role: "user" | "assistant"
+    triage.ts, why-flaky.ts, regression-since-pass.ts,
+    explain-failure.ts, tdd-resume.ts, wrapup.ts -- one file per prompt
+  middleware/
+    idempotency.ts    -- idempotentProcedure drop-in + idempotencyKeys
+                         registry (6 entries in 2.0)
   layers/
     McpLive.ts        -- (dbPath, logLevel?, logFile?) composition:
                          DataReader + DataStore + ProjectDiscovery +
                          OutputPipeline + SqliteClient + Migrator +
                          NodeContext + NodeFileSystem + Logger
+
+lib/
+  scripts/            -- Effect-based TypeScript maintenance scripts.
+                         Repo convention: lib/ is for tooling that
+                         reuses workspace dependencies and src/ code
+                         (turbo treats lib/ changes as build-
+                         invalidating). Run via
+                         `pnpm exec tsx packages/mcp/lib/scripts/<name>.ts`:
+    fetch-upstream-docs.ts  -- sparse-clones vitest-dev/vitest at a
+                               tag (--depth 1 --filter=blob:none
+                               --sparse --branch <tag>), writes the
+                               raw download to lib/vitest-docs-raw/
+                               (gitignored), records .upstream-info.json
+                               validated against an Effect Schema. Uses
+                               execFileSync with array args ONLY --
+                               never execSync with a shell-interpolated
+                               string. Replaces the 1.x zero-deps
+                               update-vitest-snapshot.mjs
+    build-snapshot.ts       -- reads the raw download, applies a
+                               denylist (team.md, todo.md, index.md,
+                               blog/, etc.), strips VitePress
+                               frontmatter, derives titles from H1,
+                               writes scaffolded src/vendor/vitest-docs/
+                               + manifest.json with placeholder
+                               [TODO: ...] descriptions for the agent
+                               to enrich
+    validate-snapshot.ts    -- decodes manifest.json against
+                               manifest-schema.ts, refuses any TODO-
+                               marked description, enforces minimum
+                               description length, ensures every file
+                               has a manifest entry and vice versa
+  vitest-docs-raw/    -- gitignored sparse-clone target for the
+                         fetch-upstream-docs script (NOT shipped)
 ```
 
 ## Key files
@@ -89,6 +159,41 @@ src/
   confirmation; the orchestrator subagent is also blocked from
   calling them at the runtime hook layer
   (`pre-tool-use-tdd-restricted.sh`).
+- **Resources and prompts use the SDK's native APIs, not tRPC.**
+  tRPC owns the tool surface; resources go through
+  `server.registerResource` (with `ResourceTemplate` + `{ list:
+  undefined }` for the page templates so the SDK doesn't enumerate
+  every page on `resources/list` — the index URIs serve that role)
+  and prompts go through `server.registerPrompt`. Both surfaces
+  share the same `McpServer` instance, the same stdio transport,
+  and the same process. Don't try to bridge resources/prompts
+  through the tRPC router.
+- **Two URI schemes for resources.** `vitest://` is vendored
+  upstream content (provenance: vitest-dev/vitest at a pinned tag,
+  MIT-licensed via `ATTRIBUTION.md`); `vitest-agent://` is content
+  authored for this project. Splitting the schemes is load-bearing
+  for licensing/provenance clarity — don't conflate them.
+- **Prompts are framing-only.** Each prompt's factory returns
+  templated user messages that orient the agent toward the right
+  tools. The factories MUST NOT call into `DataReader` /
+  `DataStore` to pre-fetch tool data on the server — selection
+  cost is zero tool roundtrips by design, and the agent fetches
+  data via tools after the prompt orients it.
+- **Vendor snapshot is checked in.** The `src/vendor/vitest-docs/`
+  tree ships in git. Don't fetch on demand at runtime — the MCP
+  server often runs without network egress. The snapshot is
+  refreshed through an explicit human action (the project-local
+  `.claude/skills/update-vitest-snapshot/` skill + the
+  `lib/scripts/` TS pipeline), not silently between server starts.
+  Living under `src/` is load-bearing for turbo cache invalidation:
+  refreshes correctly show up as build-affecting.
+- **`fetch-upstream-docs.ts` uses `execFileSync` only.** The
+  fetcher takes a tag argument and passes it to `git`. Building a
+  shell command with `execSync` and string interpolation opens a
+  shell-injection hole; the array-args form treats the tag verbatim
+  as one argv element. The new TS script preserves this invariant
+  inherited from the 1.x `update-vitest-snapshot.mjs`. Don't regress
+  this when editing the script.
 - **`run_tests` uses `spawnSync` deliberately.** The MCP server
   cannot process other tool requests during a test run; this is
   acceptable because agents wait for results before proceeding.
@@ -124,6 +229,59 @@ src/
   `dbPath` resolution fails at boot, the server should not start --
   surface the error via stderr and exit non-zero so the loader can
   print install instructions.
+- Adding a resource: drop the markdown into `src/vendor/vitest-docs/`
+  (vendored upstream — the snapshot pipeline at `lib/scripts/`
+  manages this) or `src/patterns/` (curated content — author
+  directly + update `_meta.json`). For `src/vendor/vitest-docs/`,
+  every page MUST have a corresponding entry in `manifest.json`'s
+  `pages[]` array (path, title, description) — the registrar's
+  `list` callback in `resources/index.ts` reads it to emit the
+  per-page resource list MCP clients see in their picker. The
+  existing template URIs (`vitest://docs/{+path}`,
+  `vitest-agent://patterns/{slug}`) automatically address the file
+  itself; no registrar change unless adding a new URI scheme. If
+  adding a new scheme, register it in `resources/index.ts`, add a
+  reader file using path-traversal-safe root resolution, and extend
+  `copyPatterns` in `rslib.config.ts` for the new content tree.
+- Adding a prompt: create `prompts/<slug>.ts` exporting a factory
+  that returns one or more user-role messages. Add a zod arg schema
+  and register the prompt in `prompts/index.ts`. Keep the factory
+  pure — no `DataReader` / `DataStore` calls. If the prompt has a
+  closed enum argument, mirror the pattern in `wrapup.ts` where the
+  `WrapupKind` union is re-exported and the registrar coerces
+  `args.kind` through it.
+- Refreshing the vendored Vitest docs: invoke the project-local
+  `.claude/skills/update-vitest-snapshot/SKILL.md` skill (the
+  recommended path — it walks the agent through five phases:
+  fetch → prune → scaffold → enrich → validate, with explicit user
+  checkpoints; the agent's careful per-page description authoring
+  during the enrich phase is the "load when" signal that drives MCP
+  resource discoverability). Or run the scripts manually in order:
+  `pnpm exec tsx packages/mcp/lib/scripts/fetch-upstream-docs.ts
+  --tag <vN.M.K>`, then `build-snapshot.ts`, then
+  `validate-snapshot.ts`. The pipeline rewrites
+  `src/vendor/vitest-docs/` and `manifest.json` (`tag`, `commitSha`,
+  `capturedAt`, plus `pages[]` metadata after enrichment). Commit
+  the whole `src/vendor/vitest-docs/` tree as a single change. The
+  npm script alias for `update-vitest-snapshot` was removed in
+  favor of the explicit `tsx` invocations.
+- Adding to the build pipeline: vendor and patterns are mirrored
+  into `dist/<env>/` by rslib's `copyPatterns` declaration in
+  `rslib.config.ts` (`[{ from: "src/vendor", to: "vendor" }, { from:
+  "src/patterns", to: "patterns" }]`). The 1.x postbuild copier
+  (`scripts/copy-vendor-to-dist.mjs`, chained via `&&` from
+  `build:dev` / `build:prod`) is gone. Build outputs are unchanged
+  at the dist level: `dist/<env>/vendor/` and `dist/<env>/patterns/`
+  remain siblings of the compiled `resources/` directory, so the
+  runtime path resolution in `resources/index.ts` still works
+  post-build.
+- Adding a new content tree (e.g., `vitest-agent://decisions/`):
+  add the source directory under `src/` as a sibling of
+  `src/vendor/` and `src/patterns/`, extend `copyPatterns` in
+  `rslib.config.ts` with another `{ from, to }` entry to mirror it
+  into `dist/<env>/`, and resolve the new root from
+  `import.meta.url` in `resources/index.ts` using the same
+  dev/post-build dual-path pattern.
 
 ## Design references
 
