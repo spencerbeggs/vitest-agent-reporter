@@ -28,9 +28,7 @@ describe("resolveResourcePath", () => {
 		expect(() => resolveResourcePath(root, "api/mock\0.md")).toThrow(/null byte/i);
 	});
 
-	it("normalizes leading slashes (treated as relative)", () => {
-		// A user-typed leading slash is forgivable; reject only if it resolves outside root.
-		// Since "api/mock" is identical to "/api/mock" once normalized, accept the latter.
+	it("resolves the empty path to the root directory", () => {
 		expect(resolveResourcePath(root, "")).toBe("/abs/vendor/vitest-docs");
 	});
 });
