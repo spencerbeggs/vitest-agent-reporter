@@ -1,6 +1,6 @@
-# vitest-agent-reporter Claude Code Plugin
+# vitest-agent Claude Code Plugin
 
-A Claude Code plugin that integrates `vitest-agent-reporter` into your
+A Claude Code plugin that integrates `vitest-agent` into your
 coding sessions. Provides MCP tools for test data queries, session
 context injection via hooks, and teaching skills for TDD, debugging,
 and configuration.
@@ -14,7 +14,7 @@ and configuration.
 /plugin marketplace add spencerbeggs/bot
 
 # Install the plugin for this project
-/plugin install vitest-agent-reporter@spencerbeggs-bot --scope project
+/plugin install vitest-agent@spencerbeggs-bot --scope project
 ```
 
 This adds the plugin to your `.claude/settings.json`:
@@ -22,7 +22,7 @@ This adds the plugin to your `.claude/settings.json`:
 ```json
 {
   "enabledPlugins": {
-    "vitest-agent-reporter@spencerbeggs-bot": true
+    "vitest-agent@spencerbeggs-bot": true
   }
 }
 ```
@@ -101,7 +101,6 @@ Skills are invoked via `/skill <name>` in Claude Code.
 | `debugging` | Systematic failure diagnosis using `test_history`, `test_errors`, `test_for_file` |
 | `coverage-improvement` | Systematic coverage improvement using `file_coverage`, `test_for_file`, `test_trends` |
 | `configuration` | Plugin setup and `AgentPlugin` option reference |
-| `update-vitest-snapshot` | Bump the vendored Vitest documentation snapshot to a new upstream tag |
 
 ### Commands
 
@@ -114,15 +113,12 @@ Commands are invoked via `/<name>` in Claude Code.
 
 ## Prerequisites
 
-`vitest-agent-reporter` must be installed as a project dependency so
+`vitest-agent-plugin` must be installed as a project dependency so
 the plugin's loader can spawn the MCP server through your package
 manager:
 
 ```bash
-npm install --save-dev vitest-agent-reporter
-pnpm add -D vitest-agent-reporter
-yarn add -D vitest-agent-reporter
-bun add -d vitest-agent-reporter
+npm install --save-dev vitest-agent-plugin
 ```
 
 The required peer dependencies (`vitest-agent-mcp` for the

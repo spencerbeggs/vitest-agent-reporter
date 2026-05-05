@@ -27,12 +27,11 @@
 		"vitest-agent-mcp": "./src/bin.ts"
 	},
 	"scripts": {
-		"build:dev": "rslib build --config-loader native --env-mode dev && node scripts/copy-vendor-to-dist.mjs",
+		"build:dev": "rslib build --config-loader native --env-mode dev",
 		"build:inspect": "rslib inspect --config-loader native --env-mode npm --verbose",
-		"build:prod": "rslib build --config-loader native --env-mode npm && node scripts/copy-vendor-to-dist.mjs",
+		"build:prod": "rslib build --config-loader native --env-mode npm",
 		"prepare": "turbo run build:dev build:prod --log-order=grouped --log-prefix=none",
-		"types:check": "tsgo --noEmit",
-		"update-vitest-snapshot": "node scripts/update-vitest-snapshot.mjs"
+		"types:check": "tsgo --noEmit"
 	},
 	"dependencies": {
 		"@effect/platform": "catalog:silk",

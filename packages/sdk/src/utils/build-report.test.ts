@@ -280,10 +280,10 @@ describe("buildAgentReport", () => {
 			errors: [
 				{
 					message: "expected 2 to be 3",
-					// biome-ignore lint/suspicious/noExplicitAny: simulates Vitest ParsedStack runtime shape
 					stacks: [
 						{ method: "anonymous", file: "src/math.test.ts", line: 10, column: 5 },
 						{ method: "Module._compile", file: "node:internal/modules/cjs/loader", line: 100, column: 12 },
+						// biome-ignore lint/suspicious/noExplicitAny: simulates Vitest ParsedStack runtime shape
 					] as any,
 				},
 			],

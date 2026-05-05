@@ -4,7 +4,9 @@ The Model Context Protocol server (`vitest-agent-mcp` bin)
 exposing 50 tools to LLM agents over stdio via `@modelcontextprotocol/sdk`.
 Routes tool calls through a tRPC router; runs as a long-lived process with
 a `ManagedRuntime`. Also surfaces four MCP resources under two URI schemes
-(vendored Vitest docs + curated patterns) and six framing-only prompts
+(vendored Vitest docs + curated patterns; per-page titles and
+descriptions come from `manifest.json`, which the registrar's `list`
+callback decodes via an Effect Schema) and six framing-only prompts
 registered directly with the MCP SDK alongside the tRPC tool router.
 Required as a peerDependency by the plugin package.
 
@@ -31,8 +33,19 @@ src/
     index.ts          -- registerAllResources(server); resolves vendorRoot
                          and patternsRoot from import.meta.url so the
                          same code works in dev (sources at
-                         packages/mcp/<vendor|patterns>/) and post-build
-                         (mirrored to dist/<env>/<vendor|patterns>/)
+                         packages/mcp/src/<vendor|patterns>/) and
+                         post-build (mirrored to
+                         dist/<env>/<vendor|patterns>/ by rslib's
+                         copyPatterns). The vitest_docs_page
+                         ResourceTemplate's list callback decodes
+                         manifest.json via manifest-schema.ts and
+                         emits per-page { name, uri, title,
+                         description, mimeType } so MCP clients see
+                         real titles and "load when" descriptions in
+                         their resource picker
+    manifest-schema.ts -- Effect Schema describing the manifest.json
+                         shape: { tag, commitSha, capturedAt, source,
+                         pages?: Array<{ path, title, description }> }
     paths.ts          -- resolveResourcePath: rejects null bytes,
                          absolute paths, and any resolved path that
                          escapes <root>. The security boundary -- ALWAYS
@@ -42,6 +55,18 @@ src/
     indexes.ts        -- renderUpstreamIndex / renderPatternsIndex for
                          the two static index URIs (vitest://docs/
                          and vitest-agent://patterns/)
+  vendor/
+    vitest-docs/      -- vendored upstream Vitest docs snapshot
+                         (markdown files mirroring vitest-dev/vitest's
+                         docs/ tree, plus manifest.json (tag,
+                         commitSha, capturedAt, source, and the
+                         pages[] metadata array) and ATTRIBUTION.md).
+                         Pinned at a specific upstream tag; refreshed
+                         via the project-local update-vitest-snapshot
+                         skill or the lib/scripts/ TS pipeline below
+  patterns/           -- curated testing patterns library (_meta.json
+                         index + per-pattern markdown). Three launch
+                         patterns ship in 2.0
   prompts/            -- six framing-only prompts (no server-side tool
                          data fetching; each prompt emits templated user
                          messages that orient the agent toward the right
@@ -61,32 +86,38 @@ src/
                          OutputPipeline + SqliteClient + Migrator +
                          NodeContext + NodeFileSystem + Logger
 
-vendor/
-  vitest-docs/        -- vendored upstream Vitest docs snapshot
-                         (markdown files mirroring vitest-dev/vitest's
-                         docs/ tree, plus manifest.json (tag, commitSha,
-                         capturedAt, source) and ATTRIBUTION.md). Pinned
-                         at a specific upstream tag; refreshed via
-                         scripts/update-vitest-snapshot.mjs
-
-patterns/             -- curated testing patterns library (_meta.json
-                         index + per-pattern markdown). Three launch
-                         patterns ship in 2.0
-
-scripts/              -- zero-deps Node maintenance scripts:
-  update-vitest-snapshot.mjs  -- sparse-clones vitest-dev/vitest at a
-                                 tag, rewrites vendor/vitest-docs/.
-                                 Uses execFileSync with array args
-                                 ONLY -- never execSync with a
-                                 shell-interpolated string. Run via
-                                 `pnpm run update-vitest-snapshot --tag
-                                 <vN.M.K>` (or the
-                                 update-vitest-snapshot Claude Code skill)
-  copy-vendor-to-dist.mjs     -- postbuild copier chained from
-                                 build:dev / build:prod via &&. Mirrors
-                                 vendor/ + patterns/ into dist/dev/ and
-                                 dist/npm/ so resources/index.ts's
-                                 runtime path resolution works post-build
+lib/
+  scripts/            -- Effect-based TypeScript maintenance scripts.
+                         Repo convention: lib/ is for tooling that
+                         reuses workspace dependencies and src/ code
+                         (turbo treats lib/ changes as build-
+                         invalidating). Run via
+                         `pnpm exec tsx packages/mcp/lib/scripts/<name>.ts`:
+    fetch-upstream-docs.ts  -- sparse-clones vitest-dev/vitest at a
+                               tag (--depth 1 --filter=blob:none
+                               --sparse --branch <tag>), writes the
+                               raw download to lib/vitest-docs-raw/
+                               (gitignored), records .upstream-info.json
+                               validated against an Effect Schema. Uses
+                               execFileSync with array args ONLY --
+                               never execSync with a shell-interpolated
+                               string. Replaces the 1.x zero-deps
+                               update-vitest-snapshot.mjs
+    build-snapshot.ts       -- reads the raw download, applies a
+                               denylist (team.md, todo.md, index.md,
+                               blog/, etc.), strips VitePress
+                               frontmatter, derives titles from H1,
+                               writes scaffolded src/vendor/vitest-docs/
+                               + manifest.json with placeholder
+                               [TODO: ...] descriptions for the agent
+                               to enrich
+    validate-snapshot.ts    -- decodes manifest.json against
+                               manifest-schema.ts, refuses any TODO-
+                               marked description, enforces minimum
+                               description length, ensures every file
+                               has a manifest entry and vice versa
+  vitest-docs-raw/    -- gitignored sparse-clone target for the
+                         fetch-upstream-docs script (NOT shipped)
 ```
 
 ## Key files
@@ -148,17 +179,21 @@ scripts/              -- zero-deps Node maintenance scripts:
   `DataStore` to pre-fetch tool data on the server — selection
   cost is zero tool roundtrips by design, and the agent fetches
   data via tools after the prompt orients it.
-- **Vendor snapshot is checked in.** The `vendor/vitest-docs/` tree
-  ships in git. Don't fetch on demand at runtime — the MCP server
-  often runs without network egress. The snapshot is refreshed
-  through an explicit human action (the
-  `update-vitest-snapshot` script + skill), not silently between
-  server starts.
-- **`update-vitest-snapshot.mjs` uses `execFileSync` only.** The
+- **Vendor snapshot is checked in.** The `src/vendor/vitest-docs/`
+  tree ships in git. Don't fetch on demand at runtime — the MCP
+  server often runs without network egress. The snapshot is
+  refreshed through an explicit human action (the project-local
+  `.claude/skills/update-vitest-snapshot/` skill + the
+  `lib/scripts/` TS pipeline), not silently between server starts.
+  Living under `src/` is load-bearing for turbo cache invalidation:
+  refreshes correctly show up as build-affecting.
+- **`fetch-upstream-docs.ts` uses `execFileSync` only.** The
   fetcher takes a tag argument and passes it to `git`. Building a
   shell command with `execSync` and string interpolation opens a
   shell-injection hole; the array-args form treats the tag verbatim
-  as one argv element. Don't regress this when editing the script.
+  as one argv element. The new TS script preserves this invariant
+  inherited from the 1.x `update-vitest-snapshot.mjs`. Don't regress
+  this when editing the script.
 - **`run_tests` uses `spawnSync` deliberately.** The MCP server
   cannot process other tool requests during a test run; this is
   acceptable because agents wait for results before proceeding.
@@ -194,14 +229,20 @@ scripts/              -- zero-deps Node maintenance scripts:
   `dbPath` resolution fails at boot, the server should not start --
   surface the error via stderr and exit non-zero so the loader can
   print install instructions.
-- Adding a resource: drop the markdown into `vendor/vitest-docs/`
-  (vendored upstream — the snapshot fetcher manages this) or
-  `patterns/` (curated content — author directly + update
-  `_meta.json`). The existing template URIs (`vitest://docs/{+path}`,
-  `vitest-agent://patterns/{slug}`) automatically address it; no
-  registrar change unless adding a new URI scheme. If adding a new
-  scheme, register it in `resources/index.ts` and add a reader file
-  - path-traversal-safe root resolution.
+- Adding a resource: drop the markdown into `src/vendor/vitest-docs/`
+  (vendored upstream — the snapshot pipeline at `lib/scripts/`
+  manages this) or `src/patterns/` (curated content — author
+  directly + update `_meta.json`). For `src/vendor/vitest-docs/`,
+  every page MUST have a corresponding entry in `manifest.json`'s
+  `pages[]` array (path, title, description) — the registrar's
+  `list` callback in `resources/index.ts` reads it to emit the
+  per-page resource list MCP clients see in their picker. The
+  existing template URIs (`vitest://docs/{+path}`,
+  `vitest-agent://patterns/{slug}`) automatically address the file
+  itself; no registrar change unless adding a new URI scheme. If
+  adding a new scheme, register it in `resources/index.ts`, add a
+  reader file using path-traversal-safe root resolution, and extend
+  `copyPatterns` in `rslib.config.ts` for the new content tree.
 - Adding a prompt: create `prompts/<slug>.ts` exporting a factory
   that returns one or more user-role messages. Add a zod arg schema
   and register the prompt in `prompts/index.ts`. Keep the factory
@@ -209,23 +250,38 @@ scripts/              -- zero-deps Node maintenance scripts:
   closed enum argument, mirror the pattern in `wrapup.ts` where the
   `WrapupKind` union is re-exported and the registrar coerces
   `args.kind` through it.
-- Refreshing the vendored Vitest docs: run `pnpm run
-  update-vitest-snapshot --tag <vN.M.K>` from this package
-  directory, or invoke the `update-vitest-snapshot` Claude Code
-  skill. The script rewrites `vendor/vitest-docs/` and updates
-  `manifest.json` (`tag`, `commitSha`, `capturedAt`). Commit the
-  whole `vendor/vitest-docs/` tree as a single change.
-- Adding to the build pipeline: both `build:dev` and `build:prod`
-  chain `&& node scripts/copy-vendor-to-dist.mjs` so the postbuild
-  copy is atomic per command. Don't add steps that run between
-  `rslib build` and the copier — keep the chain tight so a failed
-  build halts before producing inconsistent dist output.
+- Refreshing the vendored Vitest docs: invoke the project-local
+  `.claude/skills/update-vitest-snapshot/SKILL.md` skill (the
+  recommended path — it walks the agent through five phases:
+  fetch → prune → scaffold → enrich → validate, with explicit user
+  checkpoints; the agent's careful per-page description authoring
+  during the enrich phase is the "load when" signal that drives MCP
+  resource discoverability). Or run the scripts manually in order:
+  `pnpm exec tsx packages/mcp/lib/scripts/fetch-upstream-docs.ts
+  --tag <vN.M.K>`, then `build-snapshot.ts`, then
+  `validate-snapshot.ts`. The pipeline rewrites
+  `src/vendor/vitest-docs/` and `manifest.json` (`tag`, `commitSha`,
+  `capturedAt`, plus `pages[]` metadata after enrichment). Commit
+  the whole `src/vendor/vitest-docs/` tree as a single change. The
+  npm script alias for `update-vitest-snapshot` was removed in
+  favor of the explicit `tsx` invocations.
+- Adding to the build pipeline: vendor and patterns are mirrored
+  into `dist/<env>/` by rslib's `copyPatterns` declaration in
+  `rslib.config.ts` (`[{ from: "src/vendor", to: "vendor" }, { from:
+  "src/patterns", to: "patterns" }]`). The 1.x postbuild copier
+  (`scripts/copy-vendor-to-dist.mjs`, chained via `&&` from
+  `build:dev` / `build:prod`) is gone. Build outputs are unchanged
+  at the dist level: `dist/<env>/vendor/` and `dist/<env>/patterns/`
+  remain siblings of the compiled `resources/` directory, so the
+  runtime path resolution in `resources/index.ts` still works
+  post-build.
 - Adding a new content tree (e.g., `vitest-agent://decisions/`):
-  add the source directory as a sibling of `vendor/` and `patterns/`,
-  extend `copy-vendor-to-dist.mjs` to mirror it into `dist/<env>/`,
-  and resolve the new root from `import.meta.url` in
-  `resources/index.ts` using the same dev/post-build dual-path
-  pattern.
+  add the source directory under `src/` as a sibling of
+  `src/vendor/` and `src/patterns/`, extend `copyPatterns` in
+  `rslib.config.ts` with another `{ from, to }` entry to mirror it
+  into `dist/<env>/`, and resolve the new root from
+  `import.meta.url` in `resources/index.ts` using the same
+  dev/post-build dual-path pattern.
 
 ## Design references
 
