@@ -57,6 +57,7 @@ export const AgentPluginOptions = Schema.Struct({
 		}),
 	),
 }).annotations({ identifier: "AgentPluginOptions" });
+
 export type AgentPluginOptions = typeof AgentPluginOptions.Type;
 
 /**

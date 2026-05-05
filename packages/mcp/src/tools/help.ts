@@ -2,13 +2,14 @@ import { publicProcedure } from "../context.js";
 
 const HELP_TEXT = `# vitest-agent MCP Tools
 
-> 53 tools total (52 tRPC procedures + \`tdd_progress_push\` registered directly on the MCP server).
+> 54 tools total (53 tRPC procedures + \`tdd_progress_push\` registered directly on the MCP server).
 
 ## General
 
 | Tool | Parameters | Description |
 | ---- | ---------- | ----------- |
 | \`help\` | _(none)_ | List all available MCP tools with parameters |
+| \`ping\` | _(none)_ | Ping the MCP server — returns 'pong'. Used to verify hot-patch reload |
 
 ## Test Data
 

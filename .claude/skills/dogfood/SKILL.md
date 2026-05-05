@@ -86,8 +86,8 @@ Append a new entry to `findings.md` covering: what worked, what broke, what was 
 
 | Option | When | Action |
 | --- | --- | --- |
-| **1. Local fix + retask** | Context fresh, change is .sh / skill / agent-md only | Revert `git checkout playground/`. Edit core. If MCP code, `pnpm ci:build` then `/reload-plugins`. Append `## System changes` to current handoff. Dispatch a fresh orchestrator on the same task. |
-| **2. Reboot + new handoff** | Context heavy, OR the change touches `hooks.json` (needs full Claude Code restart), OR the next experiment needs a clean slate | Make the system change. Write the next handoff at `<chain>/NN-<title>.md` with `prev_handoff` set. Tell the user to restart and run `/dogfood --from <new path>`. |
+| **1. Local fix + retask** | Context fresh, change is .sh / skill / agent-md only | Revert `git checkout playground/`. Edit core. If MCP code: `pnpm ci:build`, bump `--noop=N` in `plugin/.claude-plugin/plugin.json`, ask the user to `/reload-plugins`. Append `## System changes` to current handoff. Dispatch a fresh orchestrator on the same task. |
+| **2. Reboot + new handoff** | Context heavy, OR the change requires a full CC restart (structural `plugin.json` changes), OR the next experiment needs a clean slate | Make the system change. Write the next handoff at `<chain>/NN-<title>.md` with `prev_handoff` set. Tell the user to restart and run `/dogfood --from <new path>`. |
 | **3. Update tracking** | Findings are partial; we'll come back later | Update `findings.md` with the open question. Leave handoff `status: open`. Tell the user where the chain is and that nothing else is needed right now. |
 | **4. Confirm complete** | The meta-goal is answered; system either works or the bug is documented | Flip latest handoff `status: closed`. Append a final summary to `findings.md`. Tell the user the chain is done and they can delete the folder when ready. |
 
@@ -100,10 +100,47 @@ Append a new entry to `findings.md` covering: what worked, what broke, what was 
 | Plugin allowlist (`safe-mcp-vitest-agent-ops.txt`) | Takes effect on next tool call. No rebuild. |
 | MCP server / SDK code | `pnpm ci:build` + `/reload-plugins`. |
 | Database schema / migration | `pnpm ci:build` + delete `$XDG_DATA_HOME/vitest-agent/<key>/data.db` + `/reload-plugins`. |
-| `hooks.json` registration (new matcher, new hook entry) | **Full Claude Code restart.** `/reload-plugins` is not enough. |
-| `plugin.json` manifest | **Full Claude Code restart.** |
+| `hooks.json` registration (new matcher, new hook entry) | `/reload-plugins` — hook registrations reload with the plugin. |
+| `plugin.json` `mcpServers.<server>.command` or `.args` | `/reload-plugins` restarts that MCP server. Bump `--noop=N` to force a restart — see "Hot-patching the MCP" below. |
+| `plugin.json` all other fields (new servers, hook entries, metadata) | **Full Claude Code restart.** `/reload-plugins` is not enough. |
 
 When in doubt, reboot. The cost of a wrong-positive reboot is low; the cost of a wrong-negative ("`/reload-plugins` probably picks it up") is observing broken behavior on a shrinking context.
+
+## Hot-patching the MCP during a dogfood session
+
+When MCP server or SDK code changes mid-session and a full CC restart would destroy context, use this pattern to reload the MCP server in place:
+
+1. Build: `pnpm ci:build`
+2. Bump `--noop=N` in `plugin/.claude-plugin/plugin.json` (increment by 1 each time):
+
+   ```json
+   "mcpServers": {
+     "mcp": {
+       "command": "bash",
+       "args": ["${CLAUDE_PLUGIN_ROOT}/bin/start-mcp.sh", "--noop=2"]
+     }
+   }
+   ```
+
+3. Ask the user to run `/reload-plugins`.
+4. Confirm the MCP restarted by checking that PIDs changed: `ps aux | grep -E "start-mcp|vitest-agent-mcp" | grep -v grep`
+
+The `--noop` arg is forwarded to the MCP binary, which ignores it. Changing `args` is the trigger — `/reload-plugins` restarts the MCP server whenever `command` or `args` differs from the currently-running value.
+
+**Do not commit the bumped `--noop` value.** Revert `plugin/.claude-plugin/plugin.json` before committing or opening a PR.
+
+This hot-patch path works for:
+
+- Adding or modifying MCP tools (new tool files, router entries, server registrations) — **confirmed via dogfood**
+
+This hot-patch path also works for:
+
+- New `hooks.json` registrations (new matchers, new hook entries) — **confirmed via dogfood**
+
+This hot-patch path does NOT work for:
+
+- New `mcpServers` entries or structural `plugin.json` changes — need full CC restart
+- Database schema / migration changes — need DB delete + rebuild + reload
 
 ## Common rationalizations (verbatim near-misses, plug them when they appear)
 
@@ -112,7 +149,8 @@ When in doubt, reboot. The cost of a wrong-positive reboot is low; the cost of a
 | "I'll just add 'watch for X' to the orchestrator prompt as a helpful nudge" | That leaks the experiment. The orchestrator's behavior under uncontaminated conditions is what we're measuring. |
 | "I'll just pick the most recent chain and start" | That's guessing at user intent. Ask. |
 | "Orchestrator said complete and 14/14 pass — probably fine, I can spot-check" | The test passing is the least-interesting outcome. The dogfood is about how it got there. Run all seven verification steps. |
-| "/reload-plugins probably picks up hooks.json too, the docs are being conservative" | Wishful reading of an explicit rule. `hooks.json` needs a full restart. |
+| "/reload-plugins probably picks up hooks.json too, the docs are being conservative" | Correct — dogfood confirmed `/reload-plugins` picks up new hook registrations. Only structural `plugin.json` changes need a full CC restart. |
+| "I changed plugin.json so I need a full CC restart to pick up MCP changes" | Only structural `plugin.json` changes need a full restart. Bumping `--noop=N` in `mcpServers.<server>.args` and calling `/reload-plugins` restarts just the MCP server. |
 | "Typo in core is trivial, just fix it without writing it down" | Friction in the system is exactly what dogfood exists to surface. Append it to `findings.md`. |
 | "findings.md is the user's to update, not mine" | You are the agent running the session. Logging is your job. |
 | "I'll save context by skipping the handoff write" | The next agent reads the chain to know what was tried. Skipping writes makes future work redundant. |

@@ -9,6 +9,7 @@
 
 # === Meta ===
 help
+ping
 
 # === Read-only test data queries ===
 test_status

@@ -230,6 +230,67 @@ import { mkdir } from "node:fs/promises";
 import type { AgentReport } from "./schemas/AgentReport.js";
 ```
 
+## Working on the Claude Code plugin and MCP server
+
+The Claude Code plugin at `plugin/` bootstraps the MCP server and delivers TDD skills, hooks and commands. Changes to this layer have different reload costs depending on what changed.
+
+### How the MCP server process runs
+
+Claude Code spawns the loader script as a direct child using the stdio transport. The MCP server communicates with CC over stdin/stdout — there is no HTTP or socket server. When you close a CC session, CC closes its end of the stdio pipe and the MCP server exits via EOF, leaving no orphan processes.
+
+Claude Code sets `cwd` to the project root when it spawns the loader. `CLAUDE_PROJECT_DIR` is not passed to the loader process; both loaders resolve the project root from `process.cwd()` (Node.js) or `$(pwd)` (bash), which returns the correct directory because CC already set `cwd`.
+
+### Loader strategy
+
+The plugin ships two loader scripts in `plugin/bin/`:
+
+- `start-mcp.sh` — a POSIX shell script that uses `exec` to replace itself with the package manager command. After startup, CC's direct child is the package-manager process with no shell wrapper remaining. Total live processes: 2 (package manager + MCP server).
+- `start-mcp.mjs` — a Node.js wrapper that spawns the package manager via `child_process.spawn` with `stdio: 'inherit'`. The wrapper stays alive to forward exit codes and print install instructions on failure. Total live processes: 3 (node wrapper + package manager + MCP server).
+
+`plugin.json` controls which loader CC uses via `mcpServers.command` and `mcpServers.args`. Note that `pnpm exec` forks the MCP server rather than exec-ing into it, so it stays alive as an intermediate process regardless of which loader is used.
+
+### Hot-reload cost matrix
+
+| What changed | Action required |
+| --- | --- |
+| Hook script body (`.sh`) | None — takes effect on next hook invocation |
+| Skill or agent markdown | None — takes effect on next subagent dispatch |
+| Plugin allowlist (`safe-mcp-vitest-agent-ops.txt`) | None — takes effect on next tool call |
+| MCP server or SDK source (`packages/mcp/`, `packages/sdk/`) | `pnpm ci:build` + `/reload-plugins` |
+| Database migration | `pnpm ci:build` + delete `data.db` + `/reload-plugins` |
+| `hooks.json` (new entry or matcher) | `/reload-plugins` only — hook registrations reload with the plugin |
+| `plugin.json` `mcpServers.<server>.args` | `/reload-plugins` only — changing `args` restarts that MCP server |
+| `plugin.json` other fields (new servers, metadata) | Full CC restart — `/reload-plugins` is not sufficient |
+
+### Triggering an MCP restart without a full CC restart
+
+`/reload-plugins` only restarts the MCP server when `plugin.json`'s `command` or `args` field changes. A reload with no manifest change leaves the running MCP process untouched.
+
+After rebuilding (`pnpm ci:build`), bump the `--noop` counter in `plugin.json`'s `mcpServers.mcp.args` to force a restart on the next `/reload-plugins`:
+
+```json
+{
+  "mcpServers": {
+    "mcp": {
+      "command": "bash",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/start-mcp.sh", "--noop=2"]
+    }
+  }
+}
+```
+
+The `--noop` arg is forwarded to the MCP binary, which ignores unknown flags. Increment the counter each time you need a reload; revert it before committing.
+
+### Confirming an MCP restart
+
+Check that process IDs changed after a reload:
+
+```bash
+ps aux | grep -E "start-mcp|vitest-agent-mcp" | grep -v grep | awk '{print $2, $11, $12, $13}'
+```
+
+If the PIDs match what you saw before the reload, the manifest did not change and the MCP server was not restarted.
+
 ## Submitting Changes
 
 1. Fork the repository

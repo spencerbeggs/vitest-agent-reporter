@@ -16,6 +16,7 @@ import { hypothesisValidate } from "./tools/hypothesis-validate.js";
 import { moduleList } from "./tools/module-list.js";
 import { noteCreate, noteDelete, noteGet, noteList, noteSearch, noteUpdate } from "./tools/notes.js";
 import { testOverview } from "./tools/overview.js";
+import { ping } from "./tools/ping.js";
 import { projectList } from "./tools/project-list.js";
 import { runTests } from "./tools/run-tests.js";
 import { sessionGet } from "./tools/session-get.js";
@@ -99,6 +100,7 @@ export const appRouter = router({
 	commit_changes: commitChanges,
 	get_current_session_id: getCurrentSessionId,
 	set_current_session_id: setCurrentSessionId,
+	ping: ping,
 });
 
 export type AppRouter = typeof appRouter;
