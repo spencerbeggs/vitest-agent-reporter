@@ -44,6 +44,11 @@ export type DenialReason =
 	| "unknown_session"
 	| "session_already_ended"
 	| "goal_not_started"
+	| "goal_not_found"
+	| "goal_not_in_progress"
+	| "goal_not_in_session"
+	| "behavior_not_found"
+	| "behavior_not_in_goal"
 	| "refactor_without_passing_run"
 	| "evidence_not_in_phase_window"
 	| "evidence_not_for_behavior"
@@ -90,6 +95,30 @@ const requiredArtifactForTransition = (from: Phase, to: Phase): { kind: Artifact
 };
 
 export const validatePhaseTransition = (ctx: PhaseTransitionContext): PhaseTransitionResult => {
+	// Guard: green may only be entered from a red-family phase (red, red.triangulate)
+	// or from green.fake-it (the "generalize" sub-step). Jumping from spike or refactor
+	// directly to green skips the named red phase entirely — the tdd_phases table would
+	// never contain a phase="red" row, breaking the phase-evidence integrity metric and
+	// the D2 binding-rule model. The orchestrator must transition spike→red (or
+	// refactor→red) first, then write a failing test, then request red→green.
+	if (
+		ctx.requested_phase === "green" &&
+		ctx.current_phase !== "red" &&
+		ctx.current_phase !== "red.triangulate" &&
+		ctx.current_phase !== "green.fake-it"
+	) {
+		return {
+			accepted: false,
+			phase: ctx.current_phase,
+			denialReason: "wrong_source_phase",
+			remediation: {
+				suggestedTool: "tdd_phase_transition_request",
+				suggestedArgs: { requestedPhase: "red" },
+				humanHint: `Cannot transition from '${ctx.current_phase}' directly to 'green'. The red phase must be entered explicitly first (${ctx.current_phase}→red), then a failing test written and run, then red→green requested with a test_failed_run artifact.`,
+			},
+		};
+	}
+
 	const expected = requiredArtifactForTransition(ctx.current_phase, ctx.requested_phase);
 	if (expected === null) {
 		// Transitions without a required artifact (e.g. spike→red, the entry

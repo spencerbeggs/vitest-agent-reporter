@@ -1,9 +1,19 @@
 import { SqlClient } from "@effect/sql/SqlClient";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 import { DataStoreError, extractSqlReason } from "../errors/DataStoreError.js";
+import {
+	BehaviorNotFoundError,
+	GoalNotFoundError,
+	IllegalStatusTransitionError,
+	TddSessionAlreadyEndedError,
+	TddSessionNotFoundError,
+} from "../errors/TddErrors.js";
 import type { CoverageBaselines } from "../schemas/Baselines.js";
+import type { BehaviorRow, BehaviorStatus, GoalRow, GoalStatus } from "../schemas/Tdd.js";
 import type { TrendEntry } from "../schemas/Trends.js";
 import type {
+	CreateBehaviorInput,
+	CreateGoalInput,
 	EndTddSessionInput,
 	FailureSignatureWriteInput,
 	FileCoverageInput,
@@ -14,21 +24,63 @@ import type {
 	SessionInput,
 	SettingsInput,
 	SuiteInput,
-	TddBehaviorOutput,
 	TddSessionInput,
 	TestCaseInput,
 	TestErrorInput,
 	TestRunInput,
 	TurnInput,
+	UpdateBehaviorInput,
+	UpdateGoalInput,
 	ValidateHypothesisInput,
 	WriteCommitInput,
 	WriteRunChangedFilesInput,
 	WriteTddArtifactInput,
-	WriteTddBehaviorsInput,
 	WriteTddPhaseInput,
 	WriteTddPhaseOutput,
 } from "../services/DataStore.js";
 import { DataStore } from "../services/DataStore.js";
+
+const isLegalLifecycleTransition = (from: string, to: string): boolean => {
+	if (from === to) return true;
+	if (from === "done" || from === "abandoned") return false;
+	if (from === "pending") return to === "in_progress" || to === "done" || to === "abandoned";
+	if (from === "in_progress") return to === "done" || to === "abandoned";
+	return false;
+};
+
+const goalRowFromDb = (row: {
+	id: number;
+	session_id: number;
+	ordinal: number;
+	goal: string;
+	status: string;
+	created_at: string;
+}): GoalRow => ({
+	id: row.id,
+	sessionId: row.session_id,
+	ordinal: row.ordinal,
+	goal: row.goal,
+	status: row.status as GoalStatus,
+	createdAt: row.created_at,
+});
+
+const behaviorRowFromDb = (row: {
+	id: number;
+	goal_id: number;
+	ordinal: number;
+	behavior: string;
+	suggested_test_name: string | null;
+	status: string;
+	created_at: string;
+}): BehaviorRow => ({
+	id: row.id,
+	goalId: row.goal_id,
+	ordinal: row.ordinal,
+	behavior: row.behavior,
+	suggestedTestName: row.suggested_test_name,
+	status: row.status as BehaviorStatus,
+	createdAt: row.created_at,
+});
 
 const boolToInt = (v: boolean | undefined): number | null => (v === undefined ? null : v ? 1 : 0);
 
@@ -634,49 +686,637 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 				),
 			);
 
-		const writeTddSessionBehaviors = (
-			input: WriteTddBehaviorsInput,
-		): Effect.Effect<ReadonlyArray<TddBehaviorOutput>, DataStoreError> =>
+		interface TddSessionStatusRow {
+			ended_at: string | null;
+			outcome: string | null;
+		}
+
+		const ensureTddSessionOpen = (
+			sessionId: number,
+		): Effect.Effect<void, DataStoreError | TddSessionNotFoundError | TddSessionAlreadyEndedError> =>
 			Effect.gen(function* () {
-				yield* Effect.logDebug("writeTddSessionBehaviors").pipe(
-					Effect.annotateLogs({
-						parentTddSessionId: input.parentTddSessionId,
-						count: input.behaviors.length,
-					}),
+				const rows = yield* sql<TddSessionStatusRow>`
+					SELECT ended_at, outcome FROM tdd_sessions WHERE id = ${sessionId}
+				`.pipe(
+					Effect.mapError(
+						(e) => new DataStoreError({ operation: "read", table: "tdd_sessions", reason: extractSqlReason(e) }),
+					),
 				);
-				const out: TddBehaviorOutput[] = [];
-				for (let i = 0; i < input.behaviors.length; i++) {
-					const b = input.behaviors[i];
-					const dependsOnJson =
-						b.dependsOnBehaviorIds !== undefined && b.dependsOnBehaviorIds.length > 0
-							? JSON.stringify(b.dependsOnBehaviorIds)
-							: null;
-					const rows = yield* sql<{ id: number }>`
-						INSERT INTO tdd_session_behaviors
-							(parent_tdd_session_id, ordinal, behavior, suggested_test_name, depends_on_behavior_ids)
-						VALUES
-							(${input.parentTddSessionId}, ${i}, ${b.behavior}, ${b.suggestedTestName}, ${dependsOnJson})
-						RETURNING id
-					`;
-					out.push({
-						id: rows[0].id,
-						ordinal: i,
-						behavior: b.behavior,
-						suggestedTestName: b.suggestedTestName,
-					});
+				if (rows.length === 0) {
+					return yield* Effect.fail(
+						new TddSessionNotFoundError({ id: sessionId, reason: "no tdd_sessions row for that id" }),
+					);
 				}
-				return out;
+				const row = rows[0];
+				if (row.ended_at !== null) {
+					return yield* Effect.fail(
+						new TddSessionAlreadyEndedError({
+							id: sessionId,
+							endedAt: row.ended_at,
+							outcome: (row.outcome ?? "abandoned") as "succeeded" | "blocked" | "abandoned",
+						}),
+					);
+				}
+			});
+
+		const ensureTddSessionExists = (sessionId: number): Effect.Effect<void, DataStoreError | TddSessionNotFoundError> =>
+			Effect.gen(function* () {
+				const rows = yield* sql<{ id: number }>`SELECT id FROM tdd_sessions WHERE id = ${sessionId}`.pipe(
+					Effect.mapError(
+						(e) => new DataStoreError({ operation: "read", table: "tdd_sessions", reason: extractSqlReason(e) }),
+					),
+				);
+				if (rows.length === 0) {
+					return yield* Effect.fail(
+						new TddSessionNotFoundError({ id: sessionId, reason: "no tdd_sessions row for that id" }),
+					);
+				}
+			});
+
+		const createGoal = (
+			input: CreateGoalInput,
+		): Effect.Effect<GoalRow, DataStoreError | TddSessionNotFoundError | TddSessionAlreadyEndedError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("createGoal").pipe(
+					Effect.annotateLogs({ sessionId: input.sessionId, goal: input.goal }),
+				);
+				yield* ensureTddSessionOpen(input.sessionId);
+				const rows = yield* sql<{
+					id: number;
+					session_id: number;
+					ordinal: number;
+					goal: string;
+					status: string;
+					created_at: string;
+				}>`
+					INSERT INTO tdd_session_goals (session_id, ordinal, goal)
+					SELECT ${input.sessionId},
+					       COALESCE(MAX(ordinal), -1) + 1,
+					       ${input.goal}
+					FROM tdd_session_goals
+					WHERE session_id = ${input.sessionId}
+					RETURNING id, session_id, ordinal, goal, status, created_at
+				`.pipe(
+					Effect.mapError(
+						(e) => new DataStoreError({ operation: "write", table: "tdd_session_goals", reason: extractSqlReason(e) }),
+					),
+				);
+				return goalRowFromDb(rows[0]);
+			}).pipe(Effect.annotateLogs("service", "DataStore"));
+
+		const getGoal = (id: number): Effect.Effect<Option.Option<GoalRow>, DataStoreError> =>
+			Effect.gen(function* () {
+				const rows = yield* sql<{
+					id: number;
+					session_id: number;
+					ordinal: number;
+					goal: string;
+					status: string;
+					created_at: string;
+				}>`
+					SELECT id, session_id, ordinal, goal, status, created_at
+					FROM tdd_session_goals
+					WHERE id = ${id}
+				`;
+				return rows.length === 0 ? Option.none() : Option.some(goalRowFromDb(rows[0]));
 			}).pipe(
 				Effect.annotateLogs("service", "DataStore"),
 				Effect.mapError(
-					(e) =>
-						new DataStoreError({
-							operation: "write",
-							table: "tdd_session_behaviors",
-							reason: extractSqlReason(e),
-						}),
+					(e) => new DataStoreError({ operation: "read", table: "tdd_session_goals", reason: extractSqlReason(e) }),
 				),
 			);
+
+		const updateGoal = (
+			input: UpdateGoalInput,
+		): Effect.Effect<
+			GoalRow,
+			DataStoreError | GoalNotFoundError | TddSessionAlreadyEndedError | IllegalStatusTransitionError
+		> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("updateGoal").pipe(Effect.annotateLogs({ id: input.id }));
+				const existing = yield* sql<{
+					id: number;
+					session_id: number;
+					ordinal: number;
+					goal: string;
+					status: string;
+					created_at: string;
+				}>`
+					SELECT id, session_id, ordinal, goal, status, created_at
+					FROM tdd_session_goals
+					WHERE id = ${input.id}
+				`.pipe(
+					Effect.mapError(
+						(e) => new DataStoreError({ operation: "read", table: "tdd_session_goals", reason: extractSqlReason(e) }),
+					),
+				);
+				if (existing.length === 0) {
+					return yield* Effect.fail(
+						new GoalNotFoundError({ id: input.id, reason: "no tdd_session_goals row for that id" }),
+					);
+				}
+				const current = existing[0];
+				yield* ensureTddSessionOpen(current.session_id).pipe(
+					Effect.catchTag("TddSessionNotFoundError", (e) =>
+						Effect.fail(
+							new DataStoreError({
+								operation: "read",
+								table: "tdd_sessions",
+								reason: `FK integrity violation: goal ${input.id} references missing tdd_sessions row ${e.id}`,
+							}),
+						),
+					),
+				);
+				const fromStatus = current.status as GoalStatus;
+				const toStatus = input.status ?? fromStatus;
+				if (input.status !== undefined && !isLegalLifecycleTransition(fromStatus, input.status)) {
+					return yield* Effect.fail(
+						new IllegalStatusTransitionError({
+							entity: "goal",
+							id: input.id,
+							from: fromStatus,
+							to: input.status,
+							reason: "transition forbidden by goal lifecycle rules",
+						}),
+					);
+				}
+				const newGoalText = input.goal ?? current.goal;
+				yield* sql`
+					UPDATE tdd_session_goals
+					SET goal = ${newGoalText},
+					    status = ${toStatus}
+					WHERE id = ${input.id}
+				`.pipe(
+					Effect.mapError(
+						(e) => new DataStoreError({ operation: "write", table: "tdd_session_goals", reason: extractSqlReason(e) }),
+					),
+				);
+				return {
+					id: current.id,
+					sessionId: current.session_id,
+					ordinal: current.ordinal,
+					goal: newGoalText,
+					status: toStatus,
+					createdAt: current.created_at,
+				};
+			}).pipe(Effect.annotateLogs("service", "DataStore"));
+
+		const deleteGoal = (id: number): Effect.Effect<void, DataStoreError | GoalNotFoundError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("deleteGoal").pipe(Effect.annotateLogs({ id }));
+				const existing = yield* sql<{ id: number }>`SELECT id FROM tdd_session_goals WHERE id = ${id}`.pipe(
+					Effect.mapError(
+						(e) => new DataStoreError({ operation: "read", table: "tdd_session_goals", reason: extractSqlReason(e) }),
+					),
+				);
+				if (existing.length === 0) {
+					return yield* Effect.fail(new GoalNotFoundError({ id, reason: "no tdd_session_goals row for that id" }));
+				}
+				yield* sql`DELETE FROM tdd_session_goals WHERE id = ${id}`.pipe(
+					Effect.mapError(
+						(e) => new DataStoreError({ operation: "write", table: "tdd_session_goals", reason: extractSqlReason(e) }),
+					),
+				);
+			}).pipe(Effect.annotateLogs("service", "DataStore"));
+
+		const listGoalsBySession = (
+			sessionId: number,
+		): Effect.Effect<ReadonlyArray<GoalRow>, DataStoreError | TddSessionNotFoundError> =>
+			Effect.gen(function* () {
+				yield* ensureTddSessionExists(sessionId);
+				const rows = yield* sql<{
+					id: number;
+					session_id: number;
+					ordinal: number;
+					goal: string;
+					status: string;
+					created_at: string;
+				}>`
+					SELECT id, session_id, ordinal, goal, status, created_at
+					FROM tdd_session_goals
+					WHERE session_id = ${sessionId}
+					ORDER BY ordinal
+				`.pipe(
+					Effect.mapError(
+						(e) => new DataStoreError({ operation: "read", table: "tdd_session_goals", reason: extractSqlReason(e) }),
+					),
+				);
+				return rows.map(goalRowFromDb);
+			}).pipe(Effect.annotateLogs("service", "DataStore"));
+
+		interface GoalLifecycleRow {
+			id: number;
+			session_id: number;
+			status: string;
+		}
+
+		const ensureGoalOpenAndSessionOpen = (
+			goalId: number,
+		): Effect.Effect<
+			{ goalSessionId: number; goalStatus: BehaviorStatus },
+			DataStoreError | GoalNotFoundError | TddSessionAlreadyEndedError | IllegalStatusTransitionError
+		> =>
+			Effect.gen(function* () {
+				const goals = yield* sql<GoalLifecycleRow>`
+					SELECT id, session_id, status FROM tdd_session_goals WHERE id = ${goalId}
+				`.pipe(
+					Effect.mapError(
+						(e) => new DataStoreError({ operation: "read", table: "tdd_session_goals", reason: extractSqlReason(e) }),
+					),
+				);
+				if (goals.length === 0) {
+					return yield* Effect.fail(new GoalNotFoundError({ id: goalId, reason: "no tdd_session_goals row" }));
+				}
+				const goal = goals[0];
+				yield* ensureTddSessionOpen(goal.session_id).pipe(
+					Effect.catchTag("TddSessionNotFoundError", (e) =>
+						Effect.fail(
+							new DataStoreError({
+								operation: "read",
+								table: "tdd_sessions",
+								reason: `FK integrity violation: goal ${goalId} references missing tdd_sessions row ${e.id}`,
+							}),
+						),
+					),
+				);
+				if (goal.status === "done" || goal.status === "abandoned") {
+					return yield* Effect.fail(
+						new IllegalStatusTransitionError({
+							entity: "goal",
+							id: goalId,
+							from: goal.status,
+							to: "in_progress",
+							reason: "cannot create a behavior under a closed goal",
+						}),
+					);
+				}
+				return { goalSessionId: goal.session_id, goalStatus: goal.status as BehaviorStatus };
+			});
+
+		const writeBehaviorDependencies = (behaviorId: number, goalId: number, depIds: ReadonlyArray<number>) =>
+			Effect.gen(function* () {
+				const uniqueDepIds = Array.from(new Set(depIds));
+				if (uniqueDepIds.length === 0) return;
+				const verified = yield* sql<{ id: number }>`
+					SELECT id FROM tdd_session_behaviors
+					WHERE goal_id = ${goalId} AND id IN ${sql.in(uniqueDepIds)}
+				`.pipe(
+					Effect.mapError(
+						(e) =>
+							new DataStoreError({ operation: "read", table: "tdd_session_behaviors", reason: extractSqlReason(e) }),
+					),
+				);
+				const verifiedIds = new Set(verified.map((r) => r.id));
+				for (const depId of uniqueDepIds) {
+					if (!verifiedIds.has(depId)) {
+						return yield* Effect.fail(
+							new BehaviorNotFoundError({
+								id: depId,
+								reason: `dependency id ${depId} does not belong to goal ${goalId}`,
+							}),
+						);
+					}
+				}
+				for (const depId of uniqueDepIds) {
+					yield* sql`
+						INSERT INTO tdd_behavior_dependencies (behavior_id, depends_on_id)
+						VALUES (${behaviorId}, ${depId})
+					`.pipe(
+						Effect.mapError(
+							(e) =>
+								new DataStoreError({
+									operation: "write",
+									table: "tdd_behavior_dependencies",
+									reason: extractSqlReason(e),
+								}),
+						),
+					);
+				}
+			});
+
+		const createBehavior = (
+			input: CreateBehaviorInput,
+		): Effect.Effect<
+			BehaviorRow,
+			| DataStoreError
+			| GoalNotFoundError
+			| BehaviorNotFoundError
+			| TddSessionAlreadyEndedError
+			| IllegalStatusTransitionError
+		> =>
+			sql
+				.withTransaction(
+					Effect.gen(function* () {
+						yield* Effect.logDebug("createBehavior").pipe(
+							Effect.annotateLogs({ goalId: input.goalId, behavior: input.behavior }),
+						);
+						yield* ensureGoalOpenAndSessionOpen(input.goalId);
+						const rows = yield* sql<{
+							id: number;
+							goal_id: number;
+							ordinal: number;
+							behavior: string;
+							suggested_test_name: string | null;
+							status: string;
+							created_at: string;
+						}>`
+							INSERT INTO tdd_session_behaviors (goal_id, ordinal, behavior, suggested_test_name)
+							SELECT ${input.goalId},
+							       COALESCE(MAX(ordinal), -1) + 1,
+							       ${input.behavior},
+							       ${input.suggestedTestName ?? null}
+							FROM tdd_session_behaviors
+							WHERE goal_id = ${input.goalId}
+							RETURNING id, goal_id, ordinal, behavior, suggested_test_name, status, created_at
+						`.pipe(
+							Effect.mapError(
+								(e) =>
+									new DataStoreError({
+										operation: "write",
+										table: "tdd_session_behaviors",
+										reason: extractSqlReason(e),
+									}),
+							),
+						);
+						const beh = rows[0];
+						if (input.dependsOnBehaviorIds && input.dependsOnBehaviorIds.length > 0) {
+							yield* writeBehaviorDependencies(beh.id, input.goalId, input.dependsOnBehaviorIds);
+						}
+						return behaviorRowFromDb(beh);
+					}),
+				)
+				.pipe(
+					Effect.annotateLogs("service", "DataStore"),
+					Effect.mapError((e) =>
+						e instanceof DataStoreError ||
+						e instanceof GoalNotFoundError ||
+						e instanceof BehaviorNotFoundError ||
+						e instanceof TddSessionAlreadyEndedError ||
+						e instanceof IllegalStatusTransitionError
+							? e
+							: new DataStoreError({
+									operation: "write",
+									table: "tdd_session_behaviors",
+									reason: extractSqlReason(e),
+								}),
+					),
+				);
+
+		const getBehavior = (id: number): Effect.Effect<Option.Option<BehaviorRow>, DataStoreError> =>
+			Effect.gen(function* () {
+				const rows = yield* sql<{
+					id: number;
+					goal_id: number;
+					ordinal: number;
+					behavior: string;
+					suggested_test_name: string | null;
+					status: string;
+					created_at: string;
+				}>`
+					SELECT id, goal_id, ordinal, behavior, suggested_test_name, status, created_at
+					FROM tdd_session_behaviors
+					WHERE id = ${id}
+				`;
+				return rows.length === 0 ? Option.none() : Option.some(behaviorRowFromDb(rows[0]));
+			}).pipe(
+				Effect.annotateLogs("service", "DataStore"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "tdd_session_behaviors", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const updateBehavior = (
+			input: UpdateBehaviorInput,
+		): Effect.Effect<
+			BehaviorRow,
+			DataStoreError | BehaviorNotFoundError | TddSessionAlreadyEndedError | IllegalStatusTransitionError
+		> =>
+			sql
+				.withTransaction(
+					Effect.gen(function* () {
+						yield* Effect.logDebug("updateBehavior").pipe(Effect.annotateLogs({ id: input.id }));
+						const existing = yield* sql<{
+							id: number;
+							goal_id: number;
+							ordinal: number;
+							behavior: string;
+							suggested_test_name: string | null;
+							status: string;
+							created_at: string;
+						}>`
+							SELECT id, goal_id, ordinal, behavior, suggested_test_name, status, created_at
+							FROM tdd_session_behaviors
+							WHERE id = ${input.id}
+						`.pipe(
+							Effect.mapError(
+								(e) =>
+									new DataStoreError({
+										operation: "read",
+										table: "tdd_session_behaviors",
+										reason: extractSqlReason(e),
+									}),
+							),
+						);
+						if (existing.length === 0) {
+							return yield* Effect.fail(
+								new BehaviorNotFoundError({ id: input.id, reason: "no tdd_session_behaviors row for that id" }),
+							);
+						}
+						const current = existing[0];
+						const goalRows = yield* sql<{ session_id: number }>`
+							SELECT session_id FROM tdd_session_goals WHERE id = ${current.goal_id}
+						`.pipe(
+							Effect.mapError(
+								(e) =>
+									new DataStoreError({
+										operation: "read",
+										table: "tdd_session_goals",
+										reason: extractSqlReason(e),
+									}),
+							),
+						);
+						if (goalRows.length === 0) {
+							return yield* Effect.fail(
+								new DataStoreError({
+									operation: "read",
+									table: "tdd_session_goals",
+									reason: `FK integrity violation: behavior ${input.id} references missing tdd_session_goals row ${current.goal_id}`,
+								}),
+							);
+						}
+						yield* ensureTddSessionOpen(goalRows[0].session_id).pipe(
+							Effect.catchTag("TddSessionNotFoundError", (e) =>
+								Effect.fail(
+									new DataStoreError({
+										operation: "read",
+										table: "tdd_sessions",
+										reason: `FK integrity violation: goal ${current.goal_id} references missing tdd_sessions row ${e.id}`,
+									}),
+								),
+							),
+						);
+						const fromStatus = current.status as BehaviorStatus;
+						if (input.status !== undefined && !isLegalLifecycleTransition(fromStatus, input.status)) {
+							return yield* Effect.fail(
+								new IllegalStatusTransitionError({
+									entity: "behavior",
+									id: input.id,
+									from: fromStatus,
+									to: input.status,
+									reason: "transition forbidden by behavior lifecycle rules",
+								}),
+							);
+						}
+						const newBehaviorText = input.behavior ?? current.behavior;
+						const newStatus = input.status ?? fromStatus;
+						const newSuggested =
+							input.suggestedTestName === undefined ? current.suggested_test_name : input.suggestedTestName;
+						yield* sql`
+							UPDATE tdd_session_behaviors
+							SET behavior = ${newBehaviorText},
+							    suggested_test_name = ${newSuggested},
+							    status = ${newStatus}
+							WHERE id = ${input.id}
+						`.pipe(
+							Effect.mapError(
+								(e) =>
+									new DataStoreError({
+										operation: "write",
+										table: "tdd_session_behaviors",
+										reason: extractSqlReason(e),
+									}),
+							),
+						);
+						if (input.dependsOnBehaviorIds !== undefined) {
+							yield* sql`DELETE FROM tdd_behavior_dependencies WHERE behavior_id = ${input.id}`.pipe(
+								Effect.mapError(
+									(e) =>
+										new DataStoreError({
+											operation: "write",
+											table: "tdd_behavior_dependencies",
+											reason: extractSqlReason(e),
+										}),
+								),
+							);
+							if (input.dependsOnBehaviorIds.length > 0) {
+								yield* writeBehaviorDependencies(input.id, current.goal_id, input.dependsOnBehaviorIds);
+							}
+						}
+						return {
+							id: current.id,
+							goalId: current.goal_id,
+							ordinal: current.ordinal,
+							behavior: newBehaviorText,
+							suggestedTestName: newSuggested,
+							status: newStatus,
+							createdAt: current.created_at,
+						};
+					}),
+				)
+				.pipe(
+					Effect.annotateLogs("service", "DataStore"),
+					Effect.mapError((e) =>
+						e instanceof DataStoreError ||
+						e instanceof BehaviorNotFoundError ||
+						e instanceof TddSessionAlreadyEndedError ||
+						e instanceof IllegalStatusTransitionError
+							? e
+							: new DataStoreError({
+									operation: "write",
+									table: "tdd_session_behaviors",
+									reason: extractSqlReason(e),
+								}),
+					),
+				);
+
+		const deleteBehavior = (id: number): Effect.Effect<void, DataStoreError | BehaviorNotFoundError> =>
+			Effect.gen(function* () {
+				yield* Effect.logDebug("deleteBehavior").pipe(Effect.annotateLogs({ id }));
+				const existing = yield* sql<{ id: number }>`SELECT id FROM tdd_session_behaviors WHERE id = ${id}`.pipe(
+					Effect.mapError(
+						(e) =>
+							new DataStoreError({ operation: "read", table: "tdd_session_behaviors", reason: extractSqlReason(e) }),
+					),
+				);
+				if (existing.length === 0) {
+					return yield* Effect.fail(
+						new BehaviorNotFoundError({ id, reason: "no tdd_session_behaviors row for that id" }),
+					);
+				}
+				yield* sql`DELETE FROM tdd_session_behaviors WHERE id = ${id}`.pipe(
+					Effect.mapError(
+						(e) =>
+							new DataStoreError({ operation: "write", table: "tdd_session_behaviors", reason: extractSqlReason(e) }),
+					),
+				);
+			}).pipe(Effect.annotateLogs("service", "DataStore"));
+
+		const ensureGoalExists = (goalId: number): Effect.Effect<void, DataStoreError | GoalNotFoundError> =>
+			Effect.gen(function* () {
+				const rows = yield* sql<{ id: number }>`SELECT id FROM tdd_session_goals WHERE id = ${goalId}`.pipe(
+					Effect.mapError(
+						(e) => new DataStoreError({ operation: "read", table: "tdd_session_goals", reason: extractSqlReason(e) }),
+					),
+				);
+				if (rows.length === 0) {
+					return yield* Effect.fail(new GoalNotFoundError({ id: goalId, reason: "no tdd_session_goals row" }));
+				}
+			});
+
+		const listBehaviorsByGoal = (
+			goalId: number,
+		): Effect.Effect<ReadonlyArray<BehaviorRow>, DataStoreError | GoalNotFoundError> =>
+			Effect.gen(function* () {
+				yield* ensureGoalExists(goalId);
+				const rows = yield* sql<{
+					id: number;
+					goal_id: number;
+					ordinal: number;
+					behavior: string;
+					suggested_test_name: string | null;
+					status: string;
+					created_at: string;
+				}>`
+					SELECT id, goal_id, ordinal, behavior, suggested_test_name, status, created_at
+					FROM tdd_session_behaviors
+					WHERE goal_id = ${goalId}
+					ORDER BY ordinal
+				`.pipe(
+					Effect.mapError(
+						(e) =>
+							new DataStoreError({ operation: "read", table: "tdd_session_behaviors", reason: extractSqlReason(e) }),
+					),
+				);
+				return rows.map(behaviorRowFromDb);
+			}).pipe(Effect.annotateLogs("service", "DataStore"));
+
+		const listBehaviorsBySession = (
+			sessionId: number,
+		): Effect.Effect<ReadonlyArray<BehaviorRow>, DataStoreError | TddSessionNotFoundError> =>
+			Effect.gen(function* () {
+				yield* ensureTddSessionExists(sessionId);
+				const rows = yield* sql<{
+					id: number;
+					goal_id: number;
+					ordinal: number;
+					behavior: string;
+					suggested_test_name: string | null;
+					status: string;
+					created_at: string;
+				}>`
+					SELECT b.id, b.goal_id, b.ordinal, b.behavior, b.suggested_test_name, b.status, b.created_at
+					FROM tdd_session_behaviors b
+					JOIN tdd_session_goals g ON g.id = b.goal_id
+					WHERE g.session_id = ${sessionId}
+					ORDER BY g.ordinal, b.ordinal
+				`.pipe(
+					Effect.mapError(
+						(e) =>
+							new DataStoreError({ operation: "read", table: "tdd_session_behaviors", reason: extractSqlReason(e) }),
+					),
+				);
+				return rows.map(behaviorRowFromDb);
+			}).pipe(Effect.annotateLogs("service", "DataStore"));
 
 		const writeTddArtifact = (input: WriteTddArtifactInput): Effect.Effect<number, DataStoreError> =>
 			Effect.gen(function* () {
@@ -960,7 +1600,17 @@ export const DataStoreLive: Layer.Layer<DataStore, never, SqlClient> = Layer.eff
 			validateHypothesis,
 			writeTddSession,
 			endTddSession,
-			writeTddSessionBehaviors,
+			createGoal,
+			getGoal,
+			updateGoal,
+			deleteGoal,
+			listGoalsBySession,
+			createBehavior,
+			getBehavior,
+			updateBehavior,
+			deleteBehavior,
+			listBehaviorsByGoal,
+			listBehaviorsBySession,
 			writeTddPhase,
 			writeTddArtifact,
 			writeCommit,

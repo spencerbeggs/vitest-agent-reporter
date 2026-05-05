@@ -31,6 +31,7 @@
  */
 export function truncate(str: string, maxLen: number): string {
 	if (str.length <= maxLen) return str;
+	if (maxLen < 4) return str.slice(0, maxLen);
 	return `${str.slice(0, maxLen - 3)}...`;
 }
 
@@ -44,7 +45,7 @@ export function truncate(str: string, maxLen: number): string {
  * edge cases are intentionally untested.
  */
 export function slugify(str: string): string {
-	return str.toLowerCase().replace(/ /g, "-");
+	return str.toLowerCase().replace(/\s+/g, "-");
 }
 
 /**
@@ -65,7 +66,7 @@ export function capitalize(str: string): string {
  */
 export function countWords(str: string): number {
 	if (str.trim() === "") return 0;
-	return str.split(" ").length;
+	return str.trim().split(/\s+/).length;
 }
 
 /**

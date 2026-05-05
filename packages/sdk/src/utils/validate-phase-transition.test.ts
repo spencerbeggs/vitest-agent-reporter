@@ -38,14 +38,40 @@ describe("validatePhaseTransition", () => {
 		}
 	});
 
-	it("accepts free (evidence-free) transitions unconditionally", () => {
+	it("accepts spike→red unconditionally (entry point for every TDD cycle)", () => {
 		// spike→red is the entry point for every TDD cycle; it has no
-		// required artifact. Other free pairs (e.g. refactor→green,
-		// red.triangulate→red) follow the same rule.
+		// required artifact and is always accepted.
 		expect(validatePhaseTransition(baseCtx({ current_phase: "spike", requested_phase: "red" })).accepted).toBe(true);
-		expect(validatePhaseTransition(baseCtx({ current_phase: "refactor", requested_phase: "green" })).accepted).toBe(
-			true,
-		);
+	});
+
+	it("should deny spike→green with wrong_source_phase and require red as intermediate phase", () => {
+		// Given: the orchestrator is in spike phase and tries to jump directly to green
+		// without first transitioning through red. The spike→green path skips the named
+		// red phase entirely — meaning the tdd_phases table never has a row with
+		// phase="red", so acceptance_metrics phase-evidence integrity is always 0%.
+		const result = validatePhaseTransition(baseCtx({ current_phase: "spike", requested_phase: "green" }));
+
+		// Then: the transition should be denied — spike must transition to red first,
+		// and only then can red→green proceed with a test_failed_run artifact.
+		expect(result.accepted).toBe(false);
+		if (!result.accepted) {
+			expect(result.denialReason).toBe("wrong_source_phase");
+		}
+	});
+
+	it("should deny refactor→green with wrong_source_phase and require red as intermediate phase", () => {
+		// Given: the orchestrator is in refactor phase and tries to jump directly to green
+		// without transitioning through red first. This would allow a new behavior cycle
+		// to start in green without any test_failed_run artifact, violating D11.
+		const result = validatePhaseTransition(baseCtx({ current_phase: "refactor", requested_phase: "green" }));
+
+		// Then: the transition should be denied — refactor must go to red first,
+		// forcing the orchestrator to write a new failing test for the next behavior
+		// before making any production code change.
+		expect(result.accepted).toBe(false);
+		if (!result.accepted) {
+			expect(result.denialReason).toBe("wrong_source_phase");
+		}
 	});
 
 	it("rejects red→green with missing_artifact_evidence when cited artifact has no test_case_id", () => {

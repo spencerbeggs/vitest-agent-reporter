@@ -5,7 +5,6 @@ import { commitChanges } from "./tools/commit-changes.js";
 import { configure } from "./tools/configure.js";
 import { testCoverage } from "./tools/coverage.js";
 import { getCurrentSessionId, setCurrentSessionId } from "./tools/current-session-id.js";
-import { decomposeGoal } from "./tools/decompose-goal.js";
 import { testErrors } from "./tools/errors.js";
 import { failureSignatureGet } from "./tools/failure-signature-get.js";
 import { fileCoverage } from "./tools/file-coverage.js";
@@ -24,6 +23,16 @@ import { sessionList } from "./tools/session-list.js";
 import { settingsList } from "./tools/settings-list.js";
 import { testStatus } from "./tools/status.js";
 import { suiteList } from "./tools/suite-list.js";
+import { tddBehaviorCreate } from "./tools/tdd-behavior-create.js";
+import { tddBehaviorDelete } from "./tools/tdd-behavior-delete.js";
+import { tddBehaviorGet } from "./tools/tdd-behavior-get.js";
+import { tddBehaviorList } from "./tools/tdd-behavior-list.js";
+import { tddBehaviorUpdate } from "./tools/tdd-behavior-update.js";
+import { tddGoalCreate } from "./tools/tdd-goal-create.js";
+import { tddGoalDelete } from "./tools/tdd-goal-delete.js";
+import { tddGoalGet } from "./tools/tdd-goal-get.js";
+import { tddGoalList } from "./tools/tdd-goal-list.js";
+import { tddGoalUpdate } from "./tools/tdd-goal-update.js";
 import { tddPhaseTransitionRequest } from "./tools/tdd-phase-transition-request.js";
 import { tddSessionEnd } from "./tools/tdd-session-end.js";
 import { tddSessionGet } from "./tools/tdd-session-get.js";
@@ -71,7 +80,16 @@ export const appRouter = router({
 	tdd_session_end: tddSessionEnd,
 	tdd_session_resume: tddSessionResume,
 	tdd_phase_transition_request: tddPhaseTransitionRequest,
-	decompose_goal_into_behaviors: decomposeGoal,
+	tdd_goal_create: tddGoalCreate,
+	tdd_goal_get: tddGoalGet,
+	tdd_goal_update: tddGoalUpdate,
+	tdd_goal_delete: tddGoalDelete,
+	tdd_goal_list: tddGoalList,
+	tdd_behavior_create: tddBehaviorCreate,
+	tdd_behavior_get: tddBehaviorGet,
+	tdd_behavior_update: tddBehaviorUpdate,
+	tdd_behavior_delete: tddBehaviorDelete,
+	tdd_behavior_list: tddBehaviorList,
 	hypothesis_list: hypothesisList,
 	hypothesis_record: hypothesisRecord,
 	hypothesis_validate: hypothesisValidate,

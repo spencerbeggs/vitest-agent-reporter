@@ -6,6 +6,7 @@ import type { CoverageBaselines } from "../schemas/Baselines.js";
 import type { CacheManifest } from "../schemas/CacheManifest.js";
 import type { CoverageReport, FileCoverageReport } from "../schemas/Coverage.js";
 import type { HistoryRecord } from "../schemas/History.js";
+import type { BehaviorDetail, BehaviorRow, GoalDetail } from "../schemas/Tdd.js";
 import type { TrendRecord } from "../schemas/Trends.js";
 import type { CitedArtifact } from "../utils/validate-phase-transition.js";
 import type { ChangeKind, Phase } from "./DataStore.js";
@@ -191,6 +192,7 @@ export interface TddSessionDetail {
 	readonly startedAt: string;
 	readonly endedAt: string | null;
 	readonly outcome: string | null;
+	readonly goals: ReadonlyArray<GoalDetail>;
 	readonly phases: ReadonlyArray<TddPhaseDetail>;
 	readonly artifacts: ReadonlyArray<TddArtifactDetail>;
 }
@@ -318,6 +320,13 @@ export class DataReader extends Context.Tag("vitest-agent/DataReader")<
 			hash: string,
 		) => Effect.Effect<Option.Option<FailureSignatureDetail>, DataStoreError>;
 		readonly getTddSessionById: (id: number) => Effect.Effect<Option.Option<TddSessionDetail>, DataStoreError>;
+		readonly getGoalById: (id: number) => Effect.Effect<Option.Option<GoalDetail>, DataStoreError>;
+		readonly getGoalsBySession: (sessionId: number) => Effect.Effect<ReadonlyArray<GoalDetail>, DataStoreError>;
+		readonly getBehaviorById: (id: number) => Effect.Effect<Option.Option<BehaviorDetail>, DataStoreError>;
+		readonly getBehaviorsByGoal: (goalId: number) => Effect.Effect<ReadonlyArray<BehaviorRow>, DataStoreError>;
+		readonly getBehaviorsBySession: (sessionId: number) => Effect.Effect<ReadonlyArray<BehaviorRow>, DataStoreError>;
+		readonly getBehaviorDependencies: (behaviorId: number) => Effect.Effect<ReadonlyArray<BehaviorRow>, DataStoreError>;
+		readonly resolveGoalIdForBehavior: (behaviorId: number) => Effect.Effect<Option.Option<number>, DataStoreError>;
 		readonly getCurrentTddPhase: (
 			tddSessionId: number,
 		) => Effect.Effect<Option.Option<CurrentTddPhase>, DataStoreError>;

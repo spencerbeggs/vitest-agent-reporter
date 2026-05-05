@@ -1,9 +1,56 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { Effect, Option, Schema } from "effect";
+import { ChannelEvent, DataReader } from "vitest-agent-sdk";
 import { z } from "zod";
 import type { McpContext } from "./context.js";
 import { createCallerFactory } from "./context.js";
 import { appRouter } from "./router.js";
+
+/**
+ * For behavior-scoped events, resolve goalId/sessionId server-side from
+ * behaviorId so a stale orchestrator context cannot push the wrong tree
+ * coordinates. Goal-scoped events get sessionId resolved from goalId.
+ * Returns the enriched event object or the original on resolution failure.
+ */
+async function resolveChannelEvent(ctx: McpContext, raw: unknown): Promise<unknown> {
+	const decoded = Schema.decodeUnknownEither(ChannelEvent)(raw);
+	if (decoded._tag === "Left") {
+		// Pass through invalid payloads — channel push is best-effort and
+		// we don't want to break the orchestrator if a future event type
+		// has not been added to the schema yet. The receiving main agent
+		// will still parse the JSON and apply its own handler.
+		return raw;
+	}
+	const event = decoded.right;
+	return ctx.runtime.runPromise(
+		Effect.gen(function* () {
+			const reader = yield* DataReader;
+			switch (event.type) {
+				case "behavior_started":
+				case "phase_transition":
+				case "behavior_completed":
+				case "behavior_abandoned":
+				case "blocked": {
+					const goalIdOpt = yield* reader.resolveGoalIdForBehavior(event.behaviorId);
+					if (Option.isNone(goalIdOpt)) return event;
+					const goalDetailOpt = yield* reader.getGoalById(goalIdOpt.value);
+					if (Option.isNone(goalDetailOpt)) return event;
+					return { ...event, goalId: goalIdOpt.value, sessionId: goalDetailOpt.value.sessionId };
+				}
+				case "goal_started":
+				case "goal_completed":
+				case "goal_abandoned": {
+					const goalDetailOpt = yield* reader.getGoalById(event.goalId);
+					if (Option.isNone(goalDetailOpt)) return event;
+					return { ...event, sessionId: goalDetailOpt.value.sessionId };
+				}
+				default:
+					return event;
+			}
+		}),
+	);
+}
 
 function textResult(text: string) {
 	return { content: [{ type: "text" as const, text }] };
@@ -110,7 +157,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 			inputSchema: {
 				project: z.string().describe("Project name (required)"),
 				subProject: z.optional(z.string()).describe("Sub-project name"),
-				limit: z.optional(z.number()).describe("Max number of trend entries to return"),
+				limit: z.optional(z.coerce.number()).describe("Max number of trend entries to return"),
 			},
 		},
 		async (args) =>
@@ -244,7 +291,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 				subProject: z.optional(z.string()).describe("Sub-project name"),
 				state: z.optional(z.enum(["passed", "failed", "skipped", "pending"])).describe("Filter by test state"),
 				module: z.optional(z.string()).describe("Filter by module file path"),
-				limit: z.optional(z.number()).describe("Max number of results"),
+				limit: z.optional(z.coerce.number()).describe("Max number of results"),
 			},
 		},
 		async (args) =>
@@ -314,7 +361,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 			inputSchema: {
 				files: z.optional(z.array(z.string())).describe("Test file paths to run"),
 				project: z.optional(z.string()).describe("Project name to filter"),
-				timeout: z.optional(z.number()).describe("Timeout in seconds (default: 120)"),
+				timeout: z.optional(z.coerce.number()).describe("Timeout in seconds (default: 120)"),
 				format: z
 					.optional(z.enum(["markdown", "json"]))
 					.describe("Output format (default: markdown). 'json' returns the raw AgentReport for machine consumption."),
@@ -345,7 +392,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 				subProject: z.optional(z.string()).describe("Sub-project name"),
 				testFullName: z.optional(z.string()).describe("Full test name (for test scope)"),
 				modulePath: z.optional(z.string()).describe("Module file path (for module scope)"),
-				parentNoteId: z.optional(z.number()).describe("Parent note ID for threading"),
+				parentNoteId: z.optional(z.coerce.number()).describe("Parent note ID for threading"),
 				createdBy: z.optional(z.string()).describe("Creator identifier"),
 				expiresAt: z.optional(z.string()).describe("ISO 8601 expiration timestamp"),
 				pinned: z.optional(z.boolean()).describe("Pin the note"),
@@ -372,7 +419,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 		{
 			description: "Get a specific note by ID",
 			inputSchema: {
-				id: z.number().describe("Note ID"),
+				id: z.coerce.number().describe("Note ID"),
 			},
 		},
 		async (args) => jsonResult(await caller.note_get({ id: args.id })),
@@ -383,7 +430,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 		{
 			description: "Update an existing note's title, content, pin state, or expiration",
 			inputSchema: {
-				id: z.number().describe("Note ID to update"),
+				id: z.coerce.number().describe("Note ID to update"),
 				title: z.optional(z.string()).describe("New title"),
 				content: z.optional(z.string()).describe("New content"),
 				pinned: z.optional(z.boolean()).describe("Pin or unpin"),
@@ -398,7 +445,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 		{
 			description: "Delete a note by ID",
 			inputSchema: {
-				id: z.number().describe("Note ID to delete"),
+				id: z.coerce.number().describe("Note ID to delete"),
 			},
 		},
 		async (args) => jsonResult(await caller.note_delete({ id: args.id })),
@@ -424,7 +471,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 			inputSchema: {
 				project: z.optional(z.string()).describe("Filter to a specific project"),
 				agentKind: z.optional(z.enum(["main", "subagent"])).describe("Filter by agent kind"),
-				limit: z.optional(z.number()).describe("Max sessions to return (default 50)"),
+				limit: z.optional(z.coerce.number()).describe("Max sessions to return (default 50)"),
 			},
 		},
 		async (args) =>
@@ -442,7 +489,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 		{
 			description: "Get details for a single Claude Code session by integer id",
 			inputSchema: {
-				id: z.number().describe("Session integer id"),
+				id: z.coerce.number().describe("Session integer id"),
 			},
 		},
 		async (args) => textResult(await caller.session_get({ id: args.id })),
@@ -453,12 +500,12 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 		{
 			description: "Search turn logs across sessions with optional filters",
 			inputSchema: {
-				sessionId: z.optional(z.number()).describe("Filter to a specific session id"),
+				sessionId: z.optional(z.coerce.number()).describe("Filter to a specific session id"),
 				since: z.optional(z.string()).describe("ISO 8601 cutoff — return turns after this timestamp"),
 				type: z
 					.optional(z.enum(["user_prompt", "tool_call", "tool_result", "file_edit", "hook_fire", "note", "hypothesis"]))
 					.describe("Filter by turn type"),
-				limit: z.optional(z.number()).describe("Max turns to return (default 100)"),
+				limit: z.optional(z.coerce.number()).describe("Max turns to return (default 100)"),
 			},
 		},
 		async (args) =>
@@ -492,7 +539,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 		{
 			description: "Get details for a TDD session including phases and artifacts",
 			inputSchema: {
-				id: z.number().describe("TDD session id"),
+				id: z.coerce.number().describe("TDD session id"),
 			},
 		},
 		async (args) => textResult(await caller.tdd_session_get({ id: args.id })),
@@ -504,9 +551,9 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 			description: "Open a new TDD session for a goal. Idempotent on (sessionId, goal).",
 			inputSchema: {
 				goal: z.string().describe("The behavior or feature being implemented"),
-				sessionId: z.optional(z.number()).describe("sessions.id (integer); omit to use ccSessionId"),
+				sessionId: z.optional(z.coerce.number()).describe("sessions.id (integer); omit to use ccSessionId"),
 				ccSessionId: z.optional(z.string()).describe("Claude Code session id (alternative to sessionId)"),
-				parentTddSessionId: z.optional(z.number()).describe("Parent TDD session id when decomposing"),
+				parentTddSessionId: z.optional(z.coerce.number()).describe("Parent TDD session id when decomposing"),
 				startedAt: z.optional(z.string()).describe("ISO 8601 timestamp; defaults to now"),
 			},
 		},
@@ -527,9 +574,9 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 		{
 			description: "Close a TDD session with an outcome. Idempotent on (tddSessionId, outcome).",
 			inputSchema: {
-				tddSessionId: z.number().describe("tdd_sessions.id"),
+				tddSessionId: z.coerce.number().describe("tdd_sessions.id"),
 				outcome: z.enum(["succeeded", "blocked", "abandoned"]).describe("Final outcome"),
-				summaryNoteId: z.optional(z.number()).describe("Optional FK to a notes row carrying the full summary"),
+				summaryNoteId: z.optional(z.coerce.number()).describe("Optional FK to a notes row carrying the full summary"),
 			},
 		},
 		async (args) =>
@@ -543,30 +590,11 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 	);
 
 	server.registerTool(
-		"decompose_goal_into_behaviors",
-		{
-			description:
-				"Decompose a TDD goal into an ordered backlog of single-behavior goals. Idempotent on (tddSessionId, goal).",
-			inputSchema: {
-				tddSessionId: z.number().describe("Parent tdd_sessions.id"),
-				goal: z.string().describe("Goal text from /tdd <goal>"),
-			},
-		},
-		async (args) =>
-			jsonResult(
-				await caller.decompose_goal_into_behaviors({
-					tddSessionId: args.tddSessionId,
-					goal: args.goal,
-				}),
-			),
-	);
-
-	server.registerTool(
 		"tdd_session_resume",
 		{
 			description: "Markdown digest of a TDD session for resuming work — goal, current phase, artifact count.",
 			inputSchema: {
-				id: z.number().describe("tdd_sessions.id"),
+				id: z.coerce.number().describe("tdd_sessions.id"),
 			},
 		},
 		async (args) => textResult(await caller.tdd_session_resume({ id: args.id })),
@@ -576,9 +604,10 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 		"tdd_phase_transition_request",
 		{
 			description:
-				"Request a TDD phase transition. Validates artifact evidence per D2 binding rules; returns accept/deny.",
+				"Request a TDD phase transition. Validates goal status, behavior↔goal membership, and D2 artifact-evidence binding rules; returns accept/deny. On accept, auto-promotes a behavior 'pending' → 'in_progress' when behaviorId is supplied (callers do not need a separate tdd_behavior_update for the start-of-cycle transition).",
 			inputSchema: {
-				tddSessionId: z.number().describe("tdd_sessions.id"),
+				tddSessionId: z.coerce.number().describe("tdd_sessions.id"),
+				goalId: z.coerce.number().describe("tdd_session_goals.id (required; goal must be in_progress)"),
 				requestedPhase: z
 					.enum([
 						"spike",
@@ -591,8 +620,10 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 						"green-without-red",
 					])
 					.describe("Phase to transition to"),
-				citedArtifactId: z.number().describe("tdd_artifacts.id supplying the evidence"),
-				behaviorId: z.optional(z.number()).describe("tdd_session_behaviors.id when transitioning a specific behavior"),
+				citedArtifactId: z.coerce.number().describe("tdd_artifacts.id supplying the evidence"),
+				behaviorId: z
+					.optional(z.coerce.number())
+					.describe("tdd_session_behaviors.id when transitioning a specific behavior (must belong to goalId)"),
 				reason: z.optional(z.string()).describe("Free-text reason for the transition"),
 			},
 		},
@@ -600,6 +631,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 			jsonResult(
 				await caller.tdd_phase_transition_request({
 					tddSessionId: args.tddSessionId,
+					goalId: args.goalId,
 					requestedPhase: args.requestedPhase,
 					citedArtifactId: args.citedArtifactId,
 					behaviorId: args.behaviorId,
@@ -609,15 +641,194 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 	);
 
 	server.registerTool(
+		"tdd_goal_create",
+		{
+			description: "Create a goal under a TDD session. Idempotent on (sessionId, goal).",
+			inputSchema: {
+				sessionId: z.coerce.number().describe("tdd_sessions.id"),
+				goal: z.string().describe("Coherent slice of the objective testable as a unit"),
+			},
+		},
+		async (args) => jsonResult(await caller.tdd_goal_create({ sessionId: args.sessionId, goal: args.goal })),
+	);
+
+	server.registerTool(
+		"tdd_goal_get",
+		{
+			description: "Read one goal with its nested behaviors.",
+			inputSchema: {
+				id: z.coerce.number().describe("tdd_session_goals.id"),
+			},
+		},
+		async (args) => jsonResult(await caller.tdd_goal_get({ id: args.id })),
+	);
+
+	server.registerTool(
+		"tdd_goal_update",
+		{
+			description: "Update a goal's text and/or status. Lifecycle: pending → in_progress → done | abandoned.",
+			inputSchema: {
+				id: z.coerce.number().describe("tdd_session_goals.id"),
+				goal: z.optional(z.string()).describe("New goal text"),
+				status: z
+					.optional(z.enum(["pending", "in_progress", "done", "abandoned"]))
+					.describe("Lifecycle status (use 'abandoned' to drop work; do not delete unless created by mistake)"),
+			},
+		},
+		async (args) =>
+			jsonResult(
+				await caller.tdd_goal_update({
+					id: args.id,
+					goal: args.goal,
+					status: args.status,
+				}),
+			),
+	);
+
+	server.registerTool(
+		"tdd_goal_delete",
+		{
+			description:
+				"Hard-delete a goal (cascades to behaviors). Reserved for cleanup of mistakes; prefer status:'abandoned'.",
+			inputSchema: {
+				id: z.coerce.number().describe("tdd_session_goals.id"),
+			},
+		},
+		async (args) => jsonResult(await caller.tdd_goal_delete({ id: args.id })),
+	);
+
+	server.registerTool(
+		"tdd_goal_list",
+		{
+			description: "List goals for a TDD session with nested behaviors, ordered by ordinal.",
+			inputSchema: {
+				sessionId: z.coerce.number().describe("tdd_sessions.id"),
+			},
+		},
+		async (args) => jsonResult(await caller.tdd_goal_list({ sessionId: args.sessionId })),
+	);
+
+	server.registerTool(
+		"tdd_behavior_create",
+		{
+			description:
+				"Create a behavior under a goal. Idempotent on (goalId, behavior). Optionally writes dependsOnBehaviorIds in the same transaction.",
+			inputSchema: {
+				goalId: z.coerce.number().describe("tdd_session_goals.id"),
+				behavior: z.string().describe("Atomic behavior (one red-green-refactor cycle)"),
+				suggestedTestName: z.optional(z.string()).describe("Optional suggested test name"),
+				dependsOnBehaviorIds: z
+					.optional(z.array(z.coerce.number()))
+					.describe("Optional list of behavior ids in the same goal that this behavior depends on"),
+			},
+		},
+		async (args) =>
+			jsonResult(
+				await caller.tdd_behavior_create({
+					goalId: args.goalId,
+					behavior: args.behavior,
+					suggestedTestName: args.suggestedTestName,
+					dependsOnBehaviorIds: args.dependsOnBehaviorIds,
+				}),
+			),
+	);
+
+	server.registerTool(
+		"tdd_behavior_get",
+		{
+			description: "Read one behavior with its parent goal summary and dependency list.",
+			inputSchema: {
+				id: z.coerce.number().describe("tdd_session_behaviors.id"),
+			},
+		},
+		async (args) => jsonResult(await caller.tdd_behavior_get({ id: args.id })),
+	);
+
+	server.registerTool(
+		"tdd_behavior_update",
+		{
+			description:
+				"Update a behavior's text, suggestedTestName, status, and/or dependencies. Updating dependsOnBehaviorIds replaces the junction-table set in one transaction. Note: tdd_phase_transition_request auto-promotes a behavior pending → in_progress on accept; the orchestrator only needs to call this for the final → done transition.",
+			inputSchema: {
+				id: z.coerce.number().describe("tdd_session_behaviors.id"),
+				behavior: z.optional(z.string()).describe("New behavior text"),
+				suggestedTestName: z.optional(z.string().nullable()).describe("New suggested test name (null clears it)"),
+				status: z.optional(z.enum(["pending", "in_progress", "done", "abandoned"])).describe("Lifecycle status"),
+				dependsOnBehaviorIds: z
+					.optional(z.array(z.coerce.number()))
+					.describe("Replacement dependency set (empty array clears all dependencies)"),
+			},
+		},
+		async (args) =>
+			jsonResult(
+				await caller.tdd_behavior_update({
+					id: args.id,
+					behavior: args.behavior,
+					suggestedTestName: args.suggestedTestName,
+					status: args.status,
+					dependsOnBehaviorIds: args.dependsOnBehaviorIds,
+				}),
+			),
+	);
+
+	server.registerTool(
+		"tdd_behavior_delete",
+		{
+			description: "Hard-delete a behavior. Reserved for cleanup of mistakes; prefer status:'abandoned'.",
+			inputSchema: {
+				id: z.coerce.number().describe("tdd_session_behaviors.id"),
+			},
+		},
+		async (args) => jsonResult(await caller.tdd_behavior_delete({ id: args.id })),
+	);
+
+	server.registerTool(
+		"tdd_behavior_list",
+		{
+			description:
+				"List behaviors. Use scope='goal' with goalId to list one goal's behaviors; scope='session' with sessionId to list every behavior across all goals.",
+			inputSchema: {
+				scope: z.enum(["goal", "session"]).describe("Scope discriminator"),
+				goalId: z.optional(z.coerce.number()).describe("tdd_session_goals.id (when scope='goal')"),
+				sessionId: z.optional(z.coerce.number()).describe("tdd_sessions.id (when scope='session')"),
+			},
+		},
+		async (args) => {
+			if (args.scope === "goal") {
+				if (args.goalId === undefined) {
+					return jsonResult({
+						ok: false,
+						error: {
+							_tag: "ValidationError",
+							reason: "scope='goal' requires goalId",
+						},
+					});
+				}
+				return jsonResult(await caller.tdd_behavior_list({ scope: "goal", goalId: args.goalId }));
+			}
+			if (args.sessionId === undefined) {
+				return jsonResult({
+					ok: false,
+					error: {
+						_tag: "ValidationError",
+						reason: "scope='session' requires sessionId",
+					},
+				});
+			}
+			return jsonResult(await caller.tdd_behavior_list({ scope: "session", sessionId: args.sessionId }));
+		},
+	);
+
+	server.registerTool(
 		"hypothesis_list",
 		{
 			description: "List agent hypotheses with optional filtering by session or validation outcome",
 			inputSchema: {
-				sessionId: z.optional(z.number()).describe("Filter to a specific session id"),
+				sessionId: z.optional(z.coerce.number()).describe("Filter to a specific session id"),
 				outcome: z
 					.optional(z.enum(["confirmed", "refuted", "abandoned", "open"]))
 					.describe("Filter by validation outcome (open = not yet validated)"),
-				limit: z.optional(z.number()).describe("Max hypotheses to return (default 50)"),
+				limit: z.optional(z.coerce.number()).describe("Max hypotheses to return (default 50)"),
 			},
 		},
 		async (args) =>
@@ -637,11 +848,11 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 		{
 			description: "Record an agent hypothesis about a test failure or code behavior",
 			inputSchema: {
-				sessionId: z.number().describe("Session id the hypothesis belongs to"),
+				sessionId: z.coerce.number().describe("Session id the hypothesis belongs to"),
 				content: z.string().describe("Hypothesis content"),
-				createdTurnId: z.optional(z.number()).describe("Turn id when the hypothesis was created"),
-				citedTestErrorId: z.optional(z.number()).describe("Test error id cited as evidence"),
-				citedStackFrameId: z.optional(z.number()).describe("Stack frame id cited as evidence"),
+				createdTurnId: z.optional(z.coerce.number()).describe("Turn id when the hypothesis was created"),
+				citedTestErrorId: z.optional(z.coerce.number()).describe("Test error id cited as evidence"),
+				citedStackFrameId: z.optional(z.coerce.number()).describe("Stack frame id cited as evidence"),
 			},
 		},
 		async (args) =>
@@ -661,9 +872,9 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 		{
 			description: "Record a validation outcome (confirmed / refuted / abandoned) for an existing hypothesis",
 			inputSchema: {
-				id: z.number().describe("Hypothesis id to validate"),
+				id: z.coerce.number().describe("Hypothesis id to validate"),
 				outcome: z.enum(["confirmed", "refuted", "abandoned"]).describe("Validation outcome"),
-				validatedTurnId: z.optional(z.number()).describe("Turn id when the validation was recorded"),
+				validatedTurnId: z.optional(z.coerce.number()).describe("Turn id when the validation was recorded"),
 				validatedAt: z.string().describe("ISO 8601 timestamp of validation"),
 			},
 		},
@@ -676,6 +887,41 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 					validatedAt: args.validatedAt,
 				}),
 			),
+	);
+
+	// ── TDD progress push ──────────────────────────────────────────────
+
+	server.registerTool(
+		"tdd_progress_push",
+		{
+			description:
+				"Push a TDD progress event to the main agent via Claude Code channels. The MCP server validates the payload against the ChannelEvent union and resolves goalId/sessionId server-side from behaviorId for behavior-scoped events (so a stale orchestrator context cannot push the wrong tree coordinates). Best-effort — returns { ok: true } regardless of whether channels are active.",
+			inputSchema: {
+				payload: z
+					.string()
+					.describe("Pre-stringified ChannelEvent JSON (see schemas/ChannelEvent in vitest-agent-sdk)"),
+			},
+		},
+		async (args) => {
+			let resolvedPayload = args.payload;
+			try {
+				const raw = JSON.parse(args.payload);
+				const enriched = await resolveChannelEvent(ctx, raw);
+				resolvedPayload = JSON.stringify(enriched);
+			} catch {
+				// Malformed JSON or DB read failure — fall through with the
+				// original payload. Channel push is best-effort.
+			}
+			try {
+				await server.server.notification({
+					method: "notifications/claude/channel",
+					params: { content: resolvedPayload },
+				});
+			} catch {
+				// Channels not active — swallow silently
+			}
+			return jsonResult({ ok: true });
+		},
 	);
 
 	// ── Acceptance metrics ──────────────────────────────────────────────
@@ -697,7 +943,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 			description: "Orientation triage brief: failing tests, flaky tests, open TDD sessions, suggested next actions",
 			inputSchema: {
 				project: z.optional(z.string()).describe("Filter to a specific project (or project:subProject)"),
-				maxLines: z.optional(z.number()).describe("Soft cap on rendered output lines"),
+				maxLines: z.optional(z.coerce.number()).describe("Soft cap on rendered output lines"),
 			},
 		},
 		async (args) =>
@@ -717,7 +963,7 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 			description:
 				"Tailored wrap-up prompt for a session (Stop / SessionEnd / PreCompact / TDD handoff / UserPromptSubmit nudge variants)",
 			inputSchema: {
-				sessionId: z.optional(z.number()).describe("sessions.id (integer); omit to use ccSessionId"),
+				sessionId: z.optional(z.coerce.number()).describe("sessions.id (integer); omit to use ccSessionId"),
 				ccSessionId: z.optional(z.string()).describe("Claude Code session id (alternative to sessionId)"),
 				kind: z
 					.optional(z.enum(["stop", "session_end", "pre_compact", "tdd_handoff", "user_prompt_nudge"]))

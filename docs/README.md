@@ -48,3 +48,4 @@ environment.
 | [MCP Server](mcp.md) | MCP tools reference, notes system, manual server usage |
 | [Failure History](history.md) | Test classification and failure tracking across runs |
 | [Claude Code Plugin](../plugin/README.md) | Plugin installation, hooks, skills, and commands |
+| [Dogfooding](dogfooding.md) | Contributor guide to testing the vitest-agent system on its own playground |

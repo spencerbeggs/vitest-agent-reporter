@@ -324,7 +324,56 @@ describe("0002_comprehensive migration", () => {
 		).rejects.toThrow();
 	});
 
-	it("creates tdd_session_behaviors with status CHECK", async () => {
+	it("creates tdd_session_goals with UNIQUE (session_id, ordinal)", async () => {
+		await expect(
+			run(
+				Effect.gen(function* () {
+					const sql = yield* SqlClient;
+					yield* sql`INSERT INTO sessions (cc_session_id, project, cwd, agent_kind, started_at) VALUES ('cc-goals-uniq', 'p', '/tmp/p', 'main', '2026-04-29T00:00:00Z')`;
+					const sid = (yield* sql<{ id: number }>`SELECT id FROM sessions WHERE cc_session_id = 'cc-goals-uniq'`)[0].id;
+					yield* sql`INSERT INTO tdd_sessions (session_id, goal, started_at) VALUES (${sid}, 'obj', '2026-04-29T00:00:00Z')`;
+					const tsid = (yield* sql<{ id: number }>`SELECT id FROM tdd_sessions WHERE session_id = ${sid}`)[0].id;
+					yield* sql`INSERT INTO tdd_session_goals (session_id, ordinal, goal) VALUES (${tsid}, 0, 'g1')`;
+					yield* sql`INSERT INTO tdd_session_goals (session_id, ordinal, goal) VALUES (${tsid}, 0, 'g2')`;
+				}),
+			),
+		).rejects.toThrow();
+	});
+
+	it("rejects invalid tdd_session_goals.status", async () => {
+		await expect(
+			run(
+				Effect.gen(function* () {
+					const sql = yield* SqlClient;
+					yield* sql`INSERT INTO sessions (cc_session_id, project, cwd, agent_kind, started_at) VALUES ('cc-goals-st', 'p', '/tmp/p', 'main', '2026-04-29T00:00:00Z')`;
+					const sid = (yield* sql<{ id: number }>`SELECT id FROM sessions WHERE cc_session_id = 'cc-goals-st'`)[0].id;
+					yield* sql`INSERT INTO tdd_sessions (session_id, goal, started_at) VALUES (${sid}, 'obj', '2026-04-29T00:00:00Z')`;
+					const tsid = (yield* sql<{ id: number }>`SELECT id FROM tdd_sessions WHERE session_id = ${sid}`)[0].id;
+					yield* sql`INSERT INTO tdd_session_goals (session_id, ordinal, goal, status) VALUES (${tsid}, 0, 'g', 'running')`;
+				}),
+			),
+		).rejects.toThrow();
+	});
+
+	it("cascades tdd_session_goals on tdd_sessions delete", async () => {
+		await run(
+			Effect.gen(function* () {
+				const sql = yield* SqlClient;
+				yield* sql`INSERT INTO sessions (cc_session_id, project, cwd, agent_kind, started_at) VALUES ('cc-goals-cas', 'p', '/tmp/p', 'main', '2026-04-29T00:00:00Z')`;
+				const sid = (yield* sql<{ id: number }>`SELECT id FROM sessions WHERE cc_session_id = 'cc-goals-cas'`)[0].id;
+				yield* sql`INSERT INTO tdd_sessions (session_id, goal, started_at) VALUES (${sid}, 'obj', '2026-04-29T00:00:00Z')`;
+				const tsid = (yield* sql<{ id: number }>`SELECT id FROM tdd_sessions WHERE session_id = ${sid}`)[0].id;
+				yield* sql`INSERT INTO tdd_session_goals (session_id, ordinal, goal) VALUES (${tsid}, 0, 'g1')`;
+				yield* sql`DELETE FROM tdd_sessions WHERE id = ${tsid}`;
+				const remaining = yield* sql<{
+					c: number;
+				}>`SELECT COUNT(*) AS c FROM tdd_session_goals WHERE session_id = ${tsid}`;
+				expect(remaining[0].c).toBe(0);
+			}),
+		);
+	});
+
+	it("creates tdd_session_behaviors with goal_id FK and status CHECK", async () => {
 		await expect(
 			run(
 				Effect.gen(function* () {
@@ -333,10 +382,144 @@ describe("0002_comprehensive migration", () => {
 					const sid = (yield* sql<{ id: number }>`SELECT id FROM sessions WHERE cc_session_id = 'cc-beh'`)[0].id;
 					yield* sql`INSERT INTO tdd_sessions (session_id, goal, started_at) VALUES (${sid}, 'g', '2026-04-29T00:00:00Z')`;
 					const tsid = (yield* sql<{ id: number }>`SELECT id FROM tdd_sessions WHERE session_id = ${sid}`)[0].id;
-					yield* sql`INSERT INTO tdd_session_behaviors (parent_tdd_session_id, ordinal, behavior, suggested_test_name, status) VALUES (${tsid}, 1, 'b1', 'should b1', 'invalid')`;
+					yield* sql`INSERT INTO tdd_session_goals (session_id, ordinal, goal) VALUES (${tsid}, 0, 'g1')`;
+					const gid = (yield* sql<{ id: number }>`SELECT id FROM tdd_session_goals WHERE session_id = ${tsid}`)[0].id;
+					yield* sql`INSERT INTO tdd_session_behaviors (goal_id, ordinal, behavior, status) VALUES (${gid}, 0, 'b1', 'invalid')`;
 				}),
 			),
 		).rejects.toThrow();
+	});
+
+	it("enforces UNIQUE (goal_id, ordinal) on tdd_session_behaviors", async () => {
+		await expect(
+			run(
+				Effect.gen(function* () {
+					const sql = yield* SqlClient;
+					yield* sql`INSERT INTO sessions (cc_session_id, project, cwd, agent_kind, started_at) VALUES ('cc-beh-uniq', 'p', '/tmp/p', 'main', '2026-04-29T00:00:00Z')`;
+					const sid = (yield* sql<{ id: number }>`SELECT id FROM sessions WHERE cc_session_id = 'cc-beh-uniq'`)[0].id;
+					yield* sql`INSERT INTO tdd_sessions (session_id, goal, started_at) VALUES (${sid}, 'g', '2026-04-29T00:00:00Z')`;
+					const tsid = (yield* sql<{ id: number }>`SELECT id FROM tdd_sessions WHERE session_id = ${sid}`)[0].id;
+					yield* sql`INSERT INTO tdd_session_goals (session_id, ordinal, goal) VALUES (${tsid}, 0, 'g1')`;
+					const gid = (yield* sql<{ id: number }>`SELECT id FROM tdd_session_goals WHERE session_id = ${tsid}`)[0].id;
+					yield* sql`INSERT INTO tdd_session_behaviors (goal_id, ordinal, behavior) VALUES (${gid}, 0, 'b1')`;
+					yield* sql`INSERT INTO tdd_session_behaviors (goal_id, ordinal, behavior) VALUES (${gid}, 0, 'b2')`;
+				}),
+			),
+		).rejects.toThrow();
+	});
+
+	it("cascades tdd_session_behaviors when parent goal is deleted", async () => {
+		await run(
+			Effect.gen(function* () {
+				const sql = yield* SqlClient;
+				yield* sql`INSERT INTO sessions (cc_session_id, project, cwd, agent_kind, started_at) VALUES ('cc-beh-cas', 'p', '/tmp/p', 'main', '2026-04-29T00:00:00Z')`;
+				const sid = (yield* sql<{ id: number }>`SELECT id FROM sessions WHERE cc_session_id = 'cc-beh-cas'`)[0].id;
+				yield* sql`INSERT INTO tdd_sessions (session_id, goal, started_at) VALUES (${sid}, 'g', '2026-04-29T00:00:00Z')`;
+				const tsid = (yield* sql<{ id: number }>`SELECT id FROM tdd_sessions WHERE session_id = ${sid}`)[0].id;
+				yield* sql`INSERT INTO tdd_session_goals (session_id, ordinal, goal) VALUES (${tsid}, 0, 'g1')`;
+				const gid = (yield* sql<{ id: number }>`SELECT id FROM tdd_session_goals WHERE session_id = ${tsid}`)[0].id;
+				yield* sql`INSERT INTO tdd_session_behaviors (goal_id, ordinal, behavior) VALUES (${gid}, 0, 'b1')`;
+				yield* sql`DELETE FROM tdd_session_goals WHERE id = ${gid}`;
+				const remaining = yield* sql<{
+					c: number;
+				}>`SELECT COUNT(*) AS c FROM tdd_session_behaviors WHERE goal_id = ${gid}`;
+				expect(remaining[0].c).toBe(0);
+			}),
+		);
+	});
+
+	it("creates tdd_behavior_dependencies junction with FK cascade and no self-deps", async () => {
+		await run(
+			Effect.gen(function* () {
+				const sql = yield* SqlClient;
+				yield* sql`INSERT INTO sessions (cc_session_id, project, cwd, agent_kind, started_at) VALUES ('cc-dep', 'p', '/tmp/p', 'main', '2026-04-29T00:00:00Z')`;
+				const sid = (yield* sql<{ id: number }>`SELECT id FROM sessions WHERE cc_session_id = 'cc-dep'`)[0].id;
+				yield* sql`INSERT INTO tdd_sessions (session_id, goal, started_at) VALUES (${sid}, 'g', '2026-04-29T00:00:00Z')`;
+				const tsid = (yield* sql<{ id: number }>`SELECT id FROM tdd_sessions WHERE session_id = ${sid}`)[0].id;
+				yield* sql`INSERT INTO tdd_session_goals (session_id, ordinal, goal) VALUES (${tsid}, 0, 'g1')`;
+				const gid = (yield* sql<{ id: number }>`SELECT id FROM tdd_session_goals WHERE session_id = ${tsid}`)[0].id;
+				yield* sql`INSERT INTO tdd_session_behaviors (goal_id, ordinal, behavior) VALUES (${gid}, 0, 'b1')`;
+				yield* sql`INSERT INTO tdd_session_behaviors (goal_id, ordinal, behavior) VALUES (${gid}, 1, 'b2')`;
+				const beh = yield* sql<{
+					id: number;
+				}>`SELECT id FROM tdd_session_behaviors WHERE goal_id = ${gid} ORDER BY ordinal`;
+				const b1 = beh[0].id;
+				const b2 = beh[1].id;
+				yield* sql`INSERT INTO tdd_behavior_dependencies (behavior_id, depends_on_id) VALUES (${b2}, ${b1})`;
+				const rows = yield* sql<{ c: number }>`SELECT COUNT(*) AS c FROM tdd_behavior_dependencies`;
+				expect(rows[0].c).toBe(1);
+				yield* sql`DELETE FROM tdd_session_behaviors WHERE id = ${b1}`;
+				const remaining = yield* sql<{ c: number }>`SELECT COUNT(*) AS c FROM tdd_behavior_dependencies`;
+				expect(remaining[0].c).toBe(0);
+			}),
+		);
+		await expect(
+			run(
+				Effect.gen(function* () {
+					const sql = yield* SqlClient;
+					yield* sql`INSERT INTO sessions (cc_session_id, project, cwd, agent_kind, started_at) VALUES ('cc-dep-self', 'p', '/tmp/p', 'main', '2026-04-29T00:00:00Z')`;
+					const sid = (yield* sql<{ id: number }>`SELECT id FROM sessions WHERE cc_session_id = 'cc-dep-self'`)[0].id;
+					yield* sql`INSERT INTO tdd_sessions (session_id, goal, started_at) VALUES (${sid}, 'g', '2026-04-29T00:00:00Z')`;
+					const tsid = (yield* sql<{ id: number }>`SELECT id FROM tdd_sessions WHERE session_id = ${sid}`)[0].id;
+					yield* sql`INSERT INTO tdd_session_goals (session_id, ordinal, goal) VALUES (${tsid}, 0, 'g1')`;
+					const gid = (yield* sql<{ id: number }>`SELECT id FROM tdd_session_goals WHERE session_id = ${tsid}`)[0].id;
+					yield* sql`INSERT INTO tdd_session_behaviors (goal_id, ordinal, behavior) VALUES (${gid}, 0, 'b1')`;
+					const b = (yield* sql<{ id: number }>`SELECT id FROM tdd_session_behaviors WHERE goal_id = ${gid}`)[0].id;
+					yield* sql`INSERT INTO tdd_behavior_dependencies (behavior_id, depends_on_id) VALUES (${b}, ${b})`;
+				}),
+			),
+		).rejects.toThrow();
+	});
+
+	it("cascades tdd_phases when behavior is deleted (behavior_id ON DELETE CASCADE)", async () => {
+		await run(
+			Effect.gen(function* () {
+				const sql = yield* SqlClient;
+				yield* sql`INSERT INTO sessions (cc_session_id, project, cwd, agent_kind, started_at) VALUES ('cc-phbeh', 'p', '/tmp/p', 'main', '2026-04-29T00:00:00Z')`;
+				const sid = (yield* sql<{ id: number }>`SELECT id FROM sessions WHERE cc_session_id = 'cc-phbeh'`)[0].id;
+				yield* sql`INSERT INTO tdd_sessions (session_id, goal, started_at) VALUES (${sid}, 'g', '2026-04-29T00:00:00Z')`;
+				const tsid = (yield* sql<{ id: number }>`SELECT id FROM tdd_sessions WHERE session_id = ${sid}`)[0].id;
+				yield* sql`INSERT INTO tdd_session_goals (session_id, ordinal, goal) VALUES (${tsid}, 0, 'g1')`;
+				const gid = (yield* sql<{ id: number }>`SELECT id FROM tdd_session_goals WHERE session_id = ${tsid}`)[0].id;
+				yield* sql`INSERT INTO tdd_session_behaviors (goal_id, ordinal, behavior) VALUES (${gid}, 0, 'b1')`;
+				const bid = (yield* sql<{ id: number }>`SELECT id FROM tdd_session_behaviors WHERE goal_id = ${gid}`)[0].id;
+				yield* sql`INSERT INTO tdd_phases (tdd_session_id, behavior_id, phase, started_at) VALUES (${tsid}, ${bid}, 'red', '2026-04-29T00:00:00Z')`;
+				yield* sql`DELETE FROM tdd_session_behaviors WHERE id = ${bid}`;
+				const phases = yield* sql<{ c: number }>`SELECT COUNT(*) AS c FROM tdd_phases WHERE behavior_id = ${bid}`;
+				expect(phases[0].c).toBe(0);
+			}),
+		);
+	});
+
+	it("creates tdd_artifacts with behavior_id FK that cascades", async () => {
+		const cols = await run(
+			Effect.gen(function* () {
+				const sql = yield* SqlClient;
+				const rows = yield* sql<{ name: string }>`PRAGMA table_info(tdd_artifacts)`;
+				return rows.map((r) => r.name);
+			}),
+		);
+		expect(cols).toContain("behavior_id");
+
+		await run(
+			Effect.gen(function* () {
+				const sql = yield* SqlClient;
+				yield* sql`INSERT INTO sessions (cc_session_id, project, cwd, agent_kind, started_at) VALUES ('cc-art-beh', 'p', '/tmp/p', 'main', '2026-04-29T00:00:00Z')`;
+				const sid = (yield* sql<{ id: number }>`SELECT id FROM sessions WHERE cc_session_id = 'cc-art-beh'`)[0].id;
+				yield* sql`INSERT INTO tdd_sessions (session_id, goal, started_at) VALUES (${sid}, 'g', '2026-04-29T00:00:00Z')`;
+				const tsid = (yield* sql<{ id: number }>`SELECT id FROM tdd_sessions WHERE session_id = ${sid}`)[0].id;
+				yield* sql`INSERT INTO tdd_session_goals (session_id, ordinal, goal) VALUES (${tsid}, 0, 'g1')`;
+				const gid = (yield* sql<{ id: number }>`SELECT id FROM tdd_session_goals WHERE session_id = ${tsid}`)[0].id;
+				yield* sql`INSERT INTO tdd_session_behaviors (goal_id, ordinal, behavior) VALUES (${gid}, 0, 'b1')`;
+				const bid = (yield* sql<{ id: number }>`SELECT id FROM tdd_session_behaviors WHERE goal_id = ${gid}`)[0].id;
+				yield* sql`INSERT INTO tdd_phases (tdd_session_id, behavior_id, phase, started_at) VALUES (${tsid}, ${bid}, 'red', '2026-04-29T00:00:00Z')`;
+				const phid = (yield* sql<{ id: number }>`SELECT id FROM tdd_phases WHERE tdd_session_id = ${tsid}`)[0].id;
+				yield* sql`INSERT INTO tdd_artifacts (phase_id, behavior_id, artifact_kind, recorded_at) VALUES (${phid}, ${bid}, 'test_written', '2026-04-29T00:00:00Z')`;
+				yield* sql`DELETE FROM tdd_session_behaviors WHERE id = ${bid}`;
+				const remaining = yield* sql<{ c: number }>`SELECT COUNT(*) AS c FROM tdd_artifacts`;
+				expect(remaining[0].c).toBe(0);
+			}),
+		);
 	});
 
 	it("creates tdd_phases with 8-value phase CHECK", async () => {

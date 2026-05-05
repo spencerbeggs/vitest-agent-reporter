@@ -6,16 +6,6 @@
  * This file exists so the vitest-agent TDD orchestrator has a hard-throw
  * path to surface and fix. See `playground/CLAUDE.md`.
  *
- * Hard-throw path:
- * `getEntry(index)` and `slugEntry(index)` do **not** bounds-check `index`.
- * Calling either with an out-of-range value throws at runtime:
- * ```
- * TypeError: Cannot read properties of undefined (reading 'toUpperCase')
- * TypeError: Cannot read properties of undefined (reading 'toLowerCase')
- * ```
- * The fix is a `RangeError` guard with a descriptive message, covered by a
- * new test. See the per-method remarks for details.
- *
  * Additional gaps (inherited from the other modules):
  * - `averageWordCount()` returns `NaN` when the notebook is empty.
  * - `preview()` delegates to `truncate`, which has its own `maxLen < 4` gap.
@@ -62,30 +52,20 @@ export class Notebook {
 	/**
 	 * Returns the entry at `index` converted to upper-case.
 	 *
-	 * @remarks
-	 * **Hard-throw path:** `this.entries[index]` evaluates to `undefined`
-	 * when `index` is out of range. The subsequent `.toUpperCase()` call
-	 * then throws:
-	 * ```
-	 * TypeError: Cannot read properties of undefined (reading 'toUpperCase')
-	 * ```
-	 * Tests only exercise valid indices. The agent should add a bounds check
-	 * and replace the implicit crash with a descriptive `RangeError`.
+	 * @throws {RangeError} When `index` is negative or >= the notebook size.
 	 */
 	getEntry(index: number): string {
+		this.checkBounds(index);
 		return this.entries[index].toUpperCase();
 	}
 
 	/**
 	 * Returns the URL slug for the entry at `index`.
 	 *
-	 * @remarks
-	 * Same out-of-range crash as {@link getEntry} — `this.entries[index]`
-	 * is `undefined` for invalid indices, and `slugify(undefined)` throws
-	 * inside the string utility. Also intentionally untested for the error
-	 * path.
+	 * @throws {RangeError} When `index` is negative or >= the notebook size.
 	 */
 	slugEntry(index: number): string {
+		this.checkBounds(index);
 		return slugify(this.entries[index]);
 	}
 
@@ -114,5 +94,14 @@ export class Notebook {
 		const result = truncate(this.entries.join("\n"), maxLen);
 		this.cache.set(key, result);
 		return result;
+	}
+
+	/**
+	 * Throws a `RangeError` if `index` is out of bounds for `this.entries`.
+	 */
+	private checkBounds(index: number): void {
+		if (index < 0 || index >= this.entries.length) {
+			throw new RangeError(`Index ${index} is out of bounds`);
+		}
 	}
 }

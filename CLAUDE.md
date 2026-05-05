@@ -47,7 +47,7 @@ to all workspaces. To scope commands to a specific package, use
 - `vitest-agent-cli` -- imports from `-sdk`. Owns the
   `@effect/cli` commands and `CliLive`.
 - `vitest-agent-mcp` -- imports from `-sdk`. Owns the MCP
-  server, tRPC router, 41 tools, and `McpLive`.
+  server, tRPC router, 50 tools, and `McpLive`.
 
 The five packages release in lockstep; plugin, reporter, cli, and mcp
 pin `-sdk` at `workspace:*` and plugin pins reporter/cli/mcp at
@@ -78,10 +78,16 @@ server family for LLM coding agents. Six primary capabilities:
 5. **Coverage thresholds, baselines, and trends** -- Vitest-native
    `coverageThresholds` format, aspirational `coverageTargets`, and
    auto-ratcheting baselines with per-project trend tracking.
-6. **MCP server & Claude Code plugin** -- 24 MCP tools via tRPC router
-   (shipped by `vitest-agent-mcp`), plus a file-based Claude
-   Code plugin at `plugin/` with a `PreToolUse` hook that auto-allows
-   all 24 MCP tools without per-call permission prompts.
+6. **MCP server & Claude Code plugin** -- 50 MCP tools via tRPC router
+   (shipped by `vitest-agent-mcp`), including the three-tier
+   Objective→Goal→Behavior CRUD surface (10 tools) added in 2.0,
+   plus a file-based Claude Code plugin at `plugin/` with a
+   `PreToolUse` hook that auto-allows the non-destructive MCP tools
+   without per-call permission prompts. The two `tdd_*_delete` tools
+   are intentionally omitted from the auto-allow list (main-agent
+   deletes prompt for user confirmation), and a separate
+   `pre-tool-use-tdd-restricted.sh` hook denies them outright when
+   the TDD orchestrator subagent calls them.
 
 Effect service architecture: I/O encapsulated in Effect services
 (DataStore, DataReader, EnvironmentDetector, ExecutorResolver,
@@ -164,17 +170,29 @@ plus `node_modules` walk approach.
 
 `packages/sdk/src/` -- `services/` (Effect tags), `layers/` (live +
 test, including `LoggerLive`, `ConfigLive`, `PathResolutionLive`,
-`OutputPipelineLive`), `schemas/` (Effect Schema definitions; `schemas/turns/`
-holds the seven `TurnPayload` discriminated-union payloads),
+`OutputPipelineLive`), `schemas/` (Effect Schema definitions;
+`schemas/turns/` holds the seven `TurnPayload` discriminated-union
+payloads; `schemas/Tdd.ts` and `schemas/ChannelEvent.ts` carry the
+2.0 goal/behavior shapes and the 13-variant progress event union),
 `contracts/reporter.ts` (public `ReporterKit` / `VitestAgentReporterFactory`
 contract types), `utils/` (pure functions, including `resolve-data-path`,
 `resolve-workspace-key`, `normalize-workspace-key`, `ensure-migrated`,
 `function-boundary` (acorn AST walk),
 `failure-signature` (deterministic 16-char sha256 hash), and
-`validate-phase-transition` (TDD evidence-binding rules)),
-`errors/` (tagged errors), `formatters/` (markdown, gfm, json, silent,
-ci-annotations), `migrations/` (5 migrations; `0002_comprehensive` is
-the last drop-and-recreate, 41 tables total), `sql/` (row types + assemblers).
+`validate-phase-transition` (TDD evidence-binding rules; the
+`DenialReason` union was extended in 2.0 with `wrong_source_phase`
+(blocks `spike→green` and `refactor→green` — the red phase must be
+entered explicitly first) and the four `tdd_phase_transition_request`
+goal/behavior pre-check literals (`goal_not_found`,
+`goal_not_in_progress`, `behavior_not_found`, `behavior_not_in_goal`))),
+`errors/` (tagged errors, including `TddErrors.ts` with
+`GoalNotFoundError`, `BehaviorNotFoundError`,
+`TddSessionNotFoundError`, `TddSessionAlreadyEndedError`,
+`IllegalStatusTransitionError`), `formatters/` (markdown, gfm, json,
+silent, ci-annotations), `migrations/` (5 migrations; `0002_comprehensive`
+is the last drop-and-recreate, modified in place for 2.0 to add the
+goal/behavior hierarchy; 43 tables total), `sql/` (row types +
+assemblers).
 
 `packages/plugin/src/` -- `plugin.ts` (`AgentPlugin`),
 `reporter.ts` (internal `AgentReporter` Vitest-API class),
@@ -194,14 +212,22 @@ the last drop-and-recreate, 41 tables total), `sql/` (row types + assemblers).
 `lib/` (testable formatting logic), `layers/CliLive.ts`.
 
 `packages/mcp/src/` -- `bin.ts` (entry), `index.ts`, `server.ts`,
-`router.ts`, `context.ts`, `tools/` (41 tool implementations),
+`router.ts`, `context.ts`, `tools/` (50 tool implementations,
+including the 10 new `tdd_goal_*` / `tdd_behavior_*` CRUD tools and
+the private `_tdd-error-envelope.ts` helper that surfaces tagged
+TDD errors as success-shape responses; the 1.x
+`decompose_goal_into_behaviors` tool was removed in 2.0),
 `middleware/idempotency.ts`, `layers/McpLive.ts`.
 
 `plugin/` -- `.claude-plugin/plugin.json` (manifest with inline
 `mcpServers`), `bin/mcp-server.mjs` (PM-detect + spawn loader),
 `hooks/` (`session-start.sh`, `post-test-run.sh`,
-`pre-tool-use-mcp.sh`, `lib/safe-mcp-vitest-agent-ops.txt`),
-`skills/` (TDD, debugging, configuration, coverage-improvement),
+`pre-tool-use-mcp.sh`, `pre-tool-use-tdd-restricted.sh` (2.0;
+denies `tdd_goal_delete`, `tdd_behavior_delete`,
+`tdd_artifact_record` for the orchestrator subagent),
+`lib/safe-mcp-vitest-agent-ops.txt`),
+`skills/` (TDD, debugging, configuration, coverage-improvement;
+`tdd/SKILL.md` owns the 2.0 channel-event handler section),
 `commands/` (setup, configure).
 
 **Spec:** [GitHub Issue #1](https://github.com/spencerbeggs/vitest-agent/issues/1)

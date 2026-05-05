@@ -2,12 +2,12 @@
 
 MCP server bin for
 [vitest-agent-reporter](https://github.com/spencerbeggs/vitest-agent-reporter).
-Exposes 41 tools over stdio (via tRPC) that give LLM agents structured
+Exposes 50 tools over stdio (via tRPC) that give LLM agents structured
 access to test data, coverage, history, trends, errors, per-file
 coverage, individual test details, run-tests, cache health, settings,
 a notes CRUD/search system, Claude Code session and turn logs, TDD
-lifecycle state, hypotheses, failure signatures, and workspace commit
-history.
+lifecycle state with a three-tier Objective→Goal→Behavior hierarchy,
+hypotheses, failure signatures, and workspace commit history.
 
 This package is a required peer dependency of `vitest-agent-reporter`,
 so you usually don't install it directly — modern pnpm and npm pull it
@@ -45,7 +45,7 @@ populates data for both the CLI and MCP tools.
 ## Tool overview
 
 `help` returns the full tool catalog with parameter signatures. The
-41 tools cover read-only queries (`test_status`, `test_overview`,
+50 tools cover read-only queries (`test_status`, `test_overview`,
 `test_coverage`, `test_history`, `test_trends`, `test_errors`,
 `test_for_file`, `test_get`, `file_coverage`, `cache_health`,
 `configure`), discovery (`project_list`, `test_list`, `module_list`,
@@ -56,9 +56,22 @@ populates data for both the CLI and MCP tools.
 triage/wrapup reads (`triage_brief`, `wrapup_prompt`), hypothesis
 writes (`hypothesis_record`, `hypothesis_validate`, `hypothesis_list`),
 TDD lifecycle (`tdd_session_start`, `tdd_session_end`,
-`tdd_session_resume`, `tdd_session_get`, `decompose_goal_into_behaviors`,
-`tdd_phase_transition_request`), and workspace history
+`tdd_session_resume`, `tdd_session_get`, `tdd_phase_transition_request`),
+TDD goal CRUD (`tdd_goal_create`, `tdd_goal_get`, `tdd_goal_update`,
+`tdd_goal_delete`, `tdd_goal_list`), TDD behavior CRUD
+(`tdd_behavior_create`, `tdd_behavior_get`, `tdd_behavior_update`,
+`tdd_behavior_delete`, `tdd_behavior_list`), and workspace history
 (`commit_changes`).
+
+`tdd_session_get` returns a markdown digest of a TDD session that
+includes a Goals and Behaviors section when goal and behavior rows
+exist, listing each goal with its ordinal and status alongside its
+nested behaviors. `tdd_phase_transition_request` requires a `goalId`
+and auto-promotes a behavior from `pending` to `in_progress` when
+accepted with a `behaviorId`. It rejects transitions to `green`
+from any phase other than `red`, `red.triangulate`, or `green.fake-it`
+with a `wrong_source_phase` denial — the `red` phase must be entered
+explicitly first.
 
 ## Documentation
 

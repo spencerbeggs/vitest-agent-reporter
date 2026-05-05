@@ -2,9 +2,10 @@
 
 The `vitest-agent-mcp` binary provides an
 [MCP](https://modelcontextprotocol.io/) server over stdio transport,
-exposing 41 tools for querying test data, managing notes, running
-tests, and discovering project structure. LLM agent hosts like Claude
-Code can call these tools directly during a session.
+exposing 50 tools for querying test data, managing notes, running
+tests, discovering project structure, and managing TDD goals and
+behaviors. LLM agent hosts like Claude Code can call these tools
+directly during a session.
 
 ## How It Works
 
@@ -479,41 +480,150 @@ Get a markdown digest of an open TDD session.
 
 #### `tdd_session_get`
 
-Read a TDD session with all its phases and artifacts.
+Read a TDD session with all its phases, artifacts, and — when goal and
+behavior rows exist — a Goals and Behaviors section listing each goal
+with its ordinal and status alongside its nested behaviors.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `id` | `number` | Yes | TDD session ID |
 
-#### `decompose_goal_into_behaviors`
-
-Split a TDD goal into ordered atomic behaviors. Idempotent on
-`(tddSessionId, goal)`.
-
-| Parameter | Type | Required | Description |
-| --- | --- | --- | --- |
-| `tddSessionId` | `number` | Yes | TDD session ID |
-| `goal` | `string` | Yes | Goal text to decompose |
-
-Returns the ordered behavior list.
-
 #### `tdd_phase_transition_request`
 
-Request a TDD phase transition. Validates the cited evidence artifact
-against the three D2 binding rules before writing the new phase row.
-**Not** idempotent -- a retry after state change legitimately yields a
+Request a TDD phase transition. Pre-checks goal status and behavior
+membership, then validates the cited evidence artifact against the three
+D2 binding rules before writing the new phase row. When accepted with a
+`behaviorId`, auto-promotes that behavior from `pending` to
+`in_progress`. Transitions to `green` from any phase other than `red`,
+`red.triangulate`, or `green.fake-it` are rejected with
+`wrong_source_phase` — the `red` phase must be entered explicitly first.
+**Not** idempotent — a retry after state change legitimately yields a
 different result.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `tddSessionId` | `number` | Yes | TDD session ID |
+| `goalId` | `number` | Yes | Goal this transition is for |
 | `requestedPhase` | `string` | Yes | Target phase (`spike`, `red`, `red.triangulate`, `green`, `green.fake-it`, `refactor`, `extended-red`, `green-without-red`) |
 | `citedArtifactId` | `number` | No | Evidence artifact ID (required for `red→green` and `green→refactor`) |
-| `behaviorId` | `number` | No | Behavior this transition is for |
+| `behaviorId` | `number` | No | Behavior this transition is for; triggers `pending→in_progress` auto-promotion on accept |
 | `reason` | `string` | No | Free-text reason |
 
 Returns `{ accepted: true, phase }` or
 `{ accepted: false, denialReason, remediation }`.
+
+### TDD Goal Tools
+
+The three-tier Objective→Goal→Behavior hierarchy lets the TDD
+orchestrator decompose a session objective into goals and each goal into
+atomic behaviors. Goal and behavior CRUD tools are idempotent on creation
+and follow a closed status lifecycle: `pending → in_progress →
+done | abandoned`.
+
+#### `tdd_goal_create`
+
+Create a goal under a TDD session. Idempotent on `(sessionId, goal)`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `sessionId` | `number` | Yes | TDD session ID |
+| `goal` | `string` | Yes | Goal text |
+
+Returns the full `GoalRow`.
+
+#### `tdd_goal_get`
+
+Read a goal with nested behaviors.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `number` | Yes | Goal ID |
+
+#### `tdd_goal_update`
+
+Update a goal's text or status. Status must follow the closed lifecycle;
+illegal transitions return an error.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `number` | Yes | Goal ID |
+| `goal` | `string` | No | New goal text |
+| `status` | `string` | No | One of: `pending`, `in_progress`, `done`, `abandoned` |
+
+#### `tdd_goal_delete`
+
+Hard-delete a goal and cascade to its behaviors, phases, and artifacts.
+Reserved for the main agent under explicit user confirmation; denied to
+the TDD orchestrator subagent at the hook layer.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `number` | Yes | Goal ID |
+
+#### `tdd_goal_list`
+
+List goals for a session with nested behaviors, ordered by ordinal.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `sessionId` | `number` | Yes | TDD session ID |
+
+### TDD Behavior Tools
+
+#### `tdd_behavior_create`
+
+Create a behavior under a goal. Idempotent on `(goalId, behavior)`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `goalId` | `number` | Yes | Parent goal ID |
+| `behavior` | `string` | Yes | Behavior text |
+| `suggestedTestName` | `string` | No | Suggested test name |
+| `dependsOnBehaviorIds` | `number[]` | No | IDs of behaviors this one depends on (must belong to the same goal) |
+
+Returns the full `BehaviorRow`.
+
+#### `tdd_behavior_get`
+
+Read a behavior with its parent goal summary and resolved dependencies.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `number` | Yes | Behavior ID |
+
+#### `tdd_behavior_update`
+
+Update a behavior's text, suggested test name, status, or dependencies.
+Replacing `dependsOnBehaviorIds` swaps the full dependency set in one
+transaction.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `number` | Yes | Behavior ID |
+| `behavior` | `string` | No | New behavior text |
+| `suggestedTestName` | `string` | No | New suggested test name |
+| `status` | `string` | No | One of: `pending`, `in_progress`, `done`, `abandoned` |
+| `dependsOnBehaviorIds` | `number[]` | No | Replacement dependency set |
+
+#### `tdd_behavior_delete`
+
+Hard-delete a behavior and cascade to its phases and artifacts. Reserved
+for the main agent under explicit user confirmation; denied to the TDD
+orchestrator subagent at the hook layer.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | `number` | Yes | Behavior ID |
+
+#### `tdd_behavior_list`
+
+List behaviors by goal or session.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `scope` | `string` | Yes | One of: `goal`, `session` |
+| `goalId` | `number` | No | Required when `scope` is `"goal"` |
+| `sessionId` | `number` | No | Required when `scope` is `"session"` |
 
 ### Workspace History Tools
 

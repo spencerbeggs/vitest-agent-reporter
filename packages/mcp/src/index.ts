@@ -18,3 +18,4 @@ export { createCallerFactory, createCurrentSessionIdRef } from "./context.js";
 export { McpLive } from "./layers/McpLive.js";
 export { appRouter } from "./router.js";
 export { startMcpServer } from "./server.js";
+export type { Remediation, TddErrorEnvelope } from "./tools/_tdd-error-envelope.js";

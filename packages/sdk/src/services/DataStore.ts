@@ -1,11 +1,45 @@
-import type { Effect } from "effect";
+import type { Effect, Option } from "effect";
 import { Context } from "effect";
 import type { DataStoreError } from "../errors/DataStoreError.js";
+import type {
+	BehaviorNotFoundError,
+	GoalNotFoundError,
+	IllegalStatusTransitionError,
+	TddSessionAlreadyEndedError,
+	TddSessionNotFoundError,
+} from "../errors/TddErrors.js";
 import type { CoverageBaselines } from "../schemas/Baselines.js";
+import type { BehaviorRow, BehaviorStatus, GoalRow, GoalStatus } from "../schemas/Tdd.js";
 import type { TrendEntry } from "../schemas/Trends.js";
 import type { ArtifactKind, Phase } from "../utils/validate-phase-transition.js";
 
 export type { ArtifactKind, Phase };
+
+export interface CreateGoalInput {
+	readonly sessionId: number;
+	readonly goal: string;
+}
+
+export interface UpdateGoalInput {
+	readonly id: number;
+	readonly goal?: string;
+	readonly status?: GoalStatus;
+}
+
+export interface CreateBehaviorInput {
+	readonly goalId: number;
+	readonly behavior: string;
+	readonly suggestedTestName?: string;
+	readonly dependsOnBehaviorIds?: ReadonlyArray<number>;
+}
+
+export interface UpdateBehaviorInput {
+	readonly id: number;
+	readonly behavior?: string;
+	readonly suggestedTestName?: string | null;
+	readonly status?: BehaviorStatus;
+	readonly dependsOnBehaviorIds?: ReadonlyArray<number>;
+}
 
 export interface SettingsInput {
 	readonly vitest_version: string;
@@ -233,24 +267,6 @@ export interface EndTddSessionInput {
 	readonly summaryNoteId?: number;
 }
 
-export interface TddBehaviorInput {
-	readonly behavior: string;
-	readonly suggestedTestName: string;
-	readonly dependsOnBehaviorIds?: ReadonlyArray<number>;
-}
-
-export interface WriteTddBehaviorsInput {
-	readonly parentTddSessionId: number;
-	readonly behaviors: ReadonlyArray<TddBehaviorInput>;
-}
-
-export interface TddBehaviorOutput {
-	readonly id: number;
-	readonly ordinal: number;
-	readonly behavior: string;
-	readonly suggestedTestName: string;
-}
-
 export interface WriteTddPhaseInput {
 	readonly tddSessionId: number;
 	readonly behaviorId?: number;
@@ -373,9 +389,44 @@ export class DataStore extends Context.Tag("vitest-agent/DataStore")<
 		readonly validateHypothesis: (input: ValidateHypothesisInput) => Effect.Effect<void, DataStoreError>;
 		readonly writeTddSession: (input: TddSessionInput) => Effect.Effect<number, DataStoreError>;
 		readonly endTddSession: (input: EndTddSessionInput) => Effect.Effect<void, DataStoreError>;
-		readonly writeTddSessionBehaviors: (
-			input: WriteTddBehaviorsInput,
-		) => Effect.Effect<ReadonlyArray<TddBehaviorOutput>, DataStoreError>;
+		readonly createGoal: (
+			input: CreateGoalInput,
+		) => Effect.Effect<GoalRow, DataStoreError | TddSessionNotFoundError | TddSessionAlreadyEndedError>;
+		readonly getGoal: (id: number) => Effect.Effect<Option.Option<GoalRow>, DataStoreError>;
+		readonly updateGoal: (
+			input: UpdateGoalInput,
+		) => Effect.Effect<
+			GoalRow,
+			DataStoreError | GoalNotFoundError | TddSessionAlreadyEndedError | IllegalStatusTransitionError
+		>;
+		readonly deleteGoal: (id: number) => Effect.Effect<void, DataStoreError | GoalNotFoundError>;
+		readonly listGoalsBySession: (
+			sessionId: number,
+		) => Effect.Effect<ReadonlyArray<GoalRow>, DataStoreError | TddSessionNotFoundError>;
+		readonly createBehavior: (
+			input: CreateBehaviorInput,
+		) => Effect.Effect<
+			BehaviorRow,
+			| DataStoreError
+			| GoalNotFoundError
+			| BehaviorNotFoundError
+			| TddSessionAlreadyEndedError
+			| IllegalStatusTransitionError
+		>;
+		readonly getBehavior: (id: number) => Effect.Effect<Option.Option<BehaviorRow>, DataStoreError>;
+		readonly updateBehavior: (
+			input: UpdateBehaviorInput,
+		) => Effect.Effect<
+			BehaviorRow,
+			DataStoreError | BehaviorNotFoundError | TddSessionAlreadyEndedError | IllegalStatusTransitionError
+		>;
+		readonly deleteBehavior: (id: number) => Effect.Effect<void, DataStoreError | BehaviorNotFoundError>;
+		readonly listBehaviorsByGoal: (
+			goalId: number,
+		) => Effect.Effect<ReadonlyArray<BehaviorRow>, DataStoreError | GoalNotFoundError>;
+		readonly listBehaviorsBySession: (
+			sessionId: number,
+		) => Effect.Effect<ReadonlyArray<BehaviorRow>, DataStoreError | TddSessionNotFoundError>;
 		readonly writeTddPhase: (input: WriteTddPhaseInput) => Effect.Effect<WriteTddPhaseOutput, DataStoreError>;
 		readonly writeTddArtifact: (input: WriteTddArtifactInput) => Effect.Effect<number, DataStoreError>;
 		readonly writeCommit: (input: WriteCommitInput) => Effect.Effect<void, DataStoreError>;

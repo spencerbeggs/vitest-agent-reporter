@@ -11,8 +11,8 @@
 	"license": "MIT",
 	"mcpServers": {
 		"mcp": {
-			"command": "node",
-			"args": ["${CLAUDE_PLUGIN_ROOT}/bin/mcp-server.mjs"]
+			"command": "bash",
+			"args": ["${CLAUDE_PLUGIN_ROOT}/bin/start-mcp.sh"]
 		}
 	}
 }

@@ -38,6 +38,19 @@ export const tddSessionGet = publicProcedure
 						);
 					}
 				}
+				if (s.goals.length > 0) {
+					lines.push("", "## Goals and Behaviors", "");
+					for (const g of s.goals) {
+						lines.push(`### Goal ${g.ordinal + 1}: ${g.goal} [${g.status}]`);
+						if (g.behaviors.length > 0) {
+							lines.push("");
+							for (const b of g.behaviors) {
+								lines.push(`- **${b.behavior}** [${b.status}]`);
+							}
+						}
+						lines.push("");
+					}
+				}
 				return lines.join("\n");
 			}),
 		);

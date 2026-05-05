@@ -3,8 +3,8 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-05-04
-last-synced: 2026-05-04
+updated: 2026-05-05
+last-synced: 2026-05-05
 completeness: 100
 related:
   - ./architecture.md
@@ -661,6 +661,40 @@ Tagged error types for Effect service failure channels.
   underlying `WorkspaceRootNotFoundError` from `workspaces-effect`;
   this error is reserved for path-resolution failures that don't
   already have a more-specific tagged error
+- **TddErrors** (`TddErrors.ts`) -- five `Data.TaggedError` types
+  introduced in 2.0 for the goal/behavior CRUD surface. Each
+  constructor sets a derived `message` via `Object.defineProperty`
+  (matching the DataStoreError convention) so `Cause.pretty()`
+  surfaces entity/id/reason instead of the default "An error has
+  occurred":
+  - `GoalNotFoundError({ id, reason })` — message `[goal not_found
+    id=N] reason`. Raised by `getGoal`, `updateGoal`, `deleteGoal`,
+    `listGoalsBySession`, and `tdd_phase_transition_request`'s new
+    `goalId` pre-check
+  - `BehaviorNotFoundError({ id, reason })` — raised by behavior
+    CRUD and by `createBehavior` when a `dependsOnBehaviorIds`
+    entry doesn't belong to the same goal
+  - `TddSessionNotFoundError({ id, reason })` — raised by goal
+    CRUD when the parent session id is unknown
+  - `TddSessionAlreadyEndedError({ id, endedAt, outcome })` —
+    raised when goal/behavior creation is attempted under a closed
+    session. `outcome` is one of `"succeeded" | "blocked" |
+    "abandoned"`
+  - `IllegalStatusTransitionError({ entity, id, from, to,
+    reason })` — closed-lifecycle violations on
+    `pending → in_progress → done|abandoned`. `entity` is one of
+    `"goal" | "behavior" | "session"`; the discriminator lets the
+    MCP envelope's remediation hint point at the right recovery
+    tool. Validation lives at the DataStore boundary (not in SQL
+    triggers, which would surface as raw `SqlError`)
+
+  All five errors are caught at the MCP boundary by the private
+  `_tdd-error-envelope.ts` helper and surface as success-shape
+  `{ ok: false, error: { _tag, ..., remediation: { suggestedTool,
+  suggestedArgs, humanHint } } }` responses — matching the existing
+  `tdd_phase_transition_request` `{ accepted: false, denialReason,
+  remediation }` precedent. tRPC `TRPCError` envelopes are reserved
+  for transport-level failures
 
 ### Schemas
 
@@ -682,6 +716,8 @@ definitions with `typeof Schema.Type` for TypeScript types and
 | `Options.ts` | `AgentReporterOptions`, `AgentPluginOptions`, `CoverageOptions`, `FormatterOptions` schemas |
 | `History.ts` | `TestRun`, `TestHistory`, `HistoryRecord` schemas |
 | `Config.ts` | `VitestAgentConfig` schema for the optional `vitest-agent.config.toml`. Both fields (`cacheDir?: string`, `projectKey?: string`) are optional. When absent, `resolveDataPath` falls back to deriving the path from the workspace's `package.json` `name` under the XDG data directory |
+| `Tdd.ts` (2.0) | Application-level shapes for the three-tier hierarchy: `GoalStatus`/`BehaviorStatus` (`pending` \| `in_progress` \| `done` \| `abandoned`), `GoalRow`, `BehaviorRow`, `GoalDetail` (goal + nested behaviors), `BehaviorDetail` (behavior + parentGoal summary + dependencies). SQL row shapes (snake_case) live in `sql/rows.ts`; these are the camelCase API shapes |
+| `ChannelEvent.ts` (2.0) | Discriminated union over the 13 progress events the orchestrator pushes to the main agent: `goals_ready`, `goal_added`, `goal_started`, `goal_completed` (with `behaviorIds[]`), `goal_abandoned`, `behaviors_ready`, `behavior_added`, `behavior_started`, `phase_transition`, `behavior_completed`, `behavior_abandoned`, `blocked`, `session_complete` (with `goalIds[]`). Also exports `BehaviorScopedEventTypes` — the subset whose `goalId`/`sessionId` the MCP server resolves server-side from `behaviorId` before forwarding the notification. `tdd_progress_push` validates payloads against this union |
 | `turns/` | Discriminated `TurnPayload` union over seven payload schemas (`UserPromptPayload`, `ToolCallPayload`, `ToolResultPayload`, `FileEditPayload`, `HookFirePayload`, `NotePayload`, `HypothesisPayload`). Each is a `Schema.Struct` with a `type` literal discriminator. The `record` CLI validates the JSON-stringified payloads against this union before writing `turns.payload`. Re-exported from `index.ts` |
 
 Istanbul duck-type interfaces remain as TypeScript interfaces, not
@@ -723,7 +759,17 @@ database.
 | `pruneSessions(keepRecent: number)` | finds the cutoff at the `(keepRecent+1)`-th most recent session by `started_at` and deletes turn rows for older sessions. FK CASCADE handles `tool_invocations` and `file_edits`. Sessions rows themselves are retained (only the turn history is pruned). Returns `{ affectedSessions, prunedTurns }` — `affectedSessions` is the count of sessions whose turn-log was dropped, NOT sessions deleted. Called by the `cache prune --keep-recent` CLI subcommand |
 | `writeTddSession(input: TddSessionInput) -> number` | inserts a `tdd_sessions` row carrying the session's `goal`, `session_id` FK to `sessions(id)`, optional `parent_tdd_session_id` self-FK, and `started_at`. Returns the new id. Called by the `tdd_session_start` MCP tool. **Note:** the live column on `tdd_sessions` is `session_id` (not `agent_session_id`); the corresponding `TddSessionInput` field is `agentSessionId` for callsite clarity but maps to the `session_id` column |
 | `endTddSession(input: EndTddSessionInput)` | closes a TDD session by updating `tdd_sessions.outcome` (one of `succeeded`/`blocked`/`abandoned`), `ended_at`, and optional `summary_note_id` FK. Called by the `tdd_session_end` MCP tool |
-| `writeTddSessionBehaviors(input: WriteTddBehaviorsInput) -> TddBehaviorOutput[]` | writes the ordered behavior backlog rows under a TDD session. The live `tdd_session_behaviors` columns are `behavior` (the behavior text), `suggested_test_name`, `ordinal` (1-based ordering position), `depends_on_behavior_ids` (nullable), and `status` (default `'pending'`). The `TddBehaviorInput` fields map: `behavior` → `behavior` column, `suggestedTestName` → `suggested_test_name` column, `ordinal` → `ordinal` column. Returns the inserted rows with their assigned ids. Called by `decompose_goal_into_behaviors` |
+| `createGoal(input: CreateGoalInput) -> GoalRow` | **2.0.** Inserts a `tdd_session_goals` row using single-statement ordinal allocation (`INSERT ... SELECT COALESCE(MAX(ordinal), -1) + 1 ... WHERE session_id = ?`) so concurrent inserts under one session never collide without `BEGIN IMMEDIATE`. Pre-validates session exists and is not ended (`TddSessionNotFoundError`, `TddSessionAlreadyEndedError`). Called by `tdd_goal_create` |
+| `getGoal(id) -> Option<GoalRow>` | **2.0.** Returns the goal row by id, or `Option.none()` |
+| `updateGoal(input: UpdateGoalInput) -> GoalRow` | **2.0.** Flat patch update on a goal. Validates status transitions against the closed lifecycle `pending → in_progress → done\|abandoned` (terminal states cannot transition further) at the DataStore boundary, surfacing `IllegalStatusTransitionError` (entity: `"goal"`) on illegal transitions and `GoalNotFoundError` on missing id. Validation lives in `DataStoreLive`, not in SQL triggers — triggers would surface as raw `SqlError` and defeat the typed-error contract |
+| `deleteGoal(id)` | **2.0.** Hard delete. Cascades to `tdd_session_behaviors`, `tdd_phases.behavior_id` (`ON DELETE CASCADE`), `tdd_artifacts.behavior_id`, and the junction-table dependency rows. The orchestrator is denied this tool by `pre-tool-use-tdd-restricted.sh`; main-agent calls fall through to the standard permission prompt |
+| `listGoalsBySession(sessionId) -> GoalRow[]` | **2.0.** Returns all goals for a session, ordered by `ordinal`. Pre-validates session exists |
+| `createBehavior(input: CreateBehaviorInput) -> BehaviorRow` | **2.0.** Inserts a `tdd_session_behaviors` row under a goal using the same single-statement ordinal allocation pattern. When `dependsOnBehaviorIds` is supplied, writes the matching rows into the `tdd_behavior_dependencies` junction table inside the same `sql.withTransaction`, with each id pre-validated to belong to the same goal (`BehaviorNotFoundError` otherwise). Pre-validates goal exists, goal status is not closed, and parent session is not ended. Called by `tdd_behavior_create` |
+| `getBehavior(id) -> Option<BehaviorRow>` | **2.0.** Returns the behavior row by id, or `Option.none()` |
+| `updateBehavior(input: UpdateBehaviorInput) -> BehaviorRow` | **2.0.** Flat patch update on a behavior. When `dependsOnBehaviorIds` is supplied, replaces the junction-table set for the behavior in one transaction. Status transitions validated against the same closed lifecycle (entity: `"behavior"`) |
+| `deleteBehavior(id)` | **2.0.** Hard delete. Cascades to `tdd_phases.behavior_id`, `tdd_artifacts.behavior_id`, and dependency rows on both endpoints of the junction table. Orchestrator-denied via the restricted-tools hook |
+| `listBehaviorsByGoal(goalId) -> BehaviorRow[]` | **2.0.** Behaviors for a goal, ordered by `ordinal`. Pre-validates goal exists |
+| `listBehaviorsBySession(sessionId) -> BehaviorRow[]` | **2.0.** All behaviors across all goals for a session, joined via `tdd_session_goals` |
 | `writeTddPhase(input: WriteTddPhaseInput) -> WriteTddPhaseOutput` | opens a new `tdd_phases` row (one of the 8 phase enum values per Decision D11) and **closes the prior open phase in the same SQL transaction** so the per-session phase ledger is always consistent. Called by `tdd_phase_transition_request` after the pure `validatePhaseTransition` validator accepts |
 | `writeTddArtifact(input: WriteTddArtifactInput) -> number` | records an evidence artifact (`test_written` / `test_failed_run` / `code_written` / `test_passed_run` / `refactor` / `test_weakened`) under a `tdd_phases` row, with optional FKs into `test_cases`, `test_runs`, and `test_errors`. The live column on `tdd_artifacts` is `phase_id` (not `tdd_phase_id`); the `WriteTddArtifactInput` field is named `tddPhaseId` for callsite clarity but maps to the `phase_id` column. Returns the new id. Per Decision D7, called only by hooks (`record tdd-artifact` CLI subcommand), never by the agent |
 | `writeCommit(input: WriteCommitInput)` | idempotent insert into `commits` (`ON CONFLICT(sha) DO NOTHING`) carrying sha / parent_sha / message / author / committed_at / branch. Called by the `record run-workspace-changes` CLI subcommand, which the `post-tool-use-git-commit.sh` hook drives on every successful `git commit` / `git push` |
@@ -741,17 +787,21 @@ database.
 **`ValidateHypothesisInput`**,
 **`TddSessionInput`**,
 **`EndTddSessionInput`**,
-**`TddBehaviorInput`** + **`WriteTddBehaviorsInput`** + **`TddBehaviorOutput`**,
+**`CreateGoalInput`** + **`UpdateGoalInput`**,
+**`CreateBehaviorInput`** + **`UpdateBehaviorInput`** (2.0 — replace
+the removed `TddBehaviorInput` / `WriteTddBehaviorsInput` /
+`TddBehaviorOutput` triple alongside the deleted
+`writeTddSessionBehaviors` method),
 **`WriteTddPhaseInput`** + **`WriteTddPhaseOutput`**,
 **`WriteTddArtifactInput`**,
 **`WriteCommitInput`**,
 **`RunChangedFile`** + **`WriteRunChangedFilesInput`**
 -- all defined in `DataStore.ts`. Also re-exports **`Phase`**, **`ArtifactKind`**,
-and **`ChangeKind`** literal types so callers (CLI subcommands, MCP tools) can
-reference them without dipping into `schemas/` directly. `SettingsInput` is
-owned by DataStore (rather than by `utils/capture-settings.ts` in the plugin
-package, which produces values matching this shape) to avoid a circular import
-path between plugin and sdk.
+**`ChangeKind`**, **`GoalStatus`**, and **`BehaviorStatus`** literal types so
+callers (CLI subcommands, MCP tools) can reference them without dipping into
+`schemas/` directly. `SettingsInput` is owned by DataStore (rather than by
+`utils/capture-settings.ts` in the plugin package, which produces values
+matching this shape) to avoid a circular import path between plugin and sdk.
 
 **`StackFrameInput`** -- shape attached to `TestErrorInput.frames` carrying
 `function_name`, `file_path`, `raw_line`, `raw_column`, optional
@@ -832,7 +882,14 @@ database. Shared between reporter, CLI, and MCP.
 | `getSessionByCcId(ccSessionId)` | `Option<SessionDetail>` looked up by Claude Code session ID. Used by the `record turn` CLI to resolve the session before writing a turn |
 | `listSessions(options: { project?, agentKind?, limit? })` | `SessionSummary[]` filtered by project and `agent_kind` (`"main"`/`"subagent"`). Default limit 50, ordered by `started_at DESC`. Backs the `session_list` MCP tool |
 | `getFailureSignatureByHash(hash)` | `Option<FailureSignatureDetail>` -- the `failure_signatures` row (now including `lastSeenAt: string \| null` from migration `0005`) plus the up-to-10 most recent `test_errors` rows joined via `signature_hash`. Backs the `failure_signature_get` MCP tool |
-| `getTddSessionById(id)` | `Option<TddSessionDetail>` -- the `tdd_sessions` row plus its `tdd_phases` (with nested `tdd_artifacts` per phase). Pre-rolls the joins so the `tdd_session_get` MCP tool returns one tree |
+| `getTddSessionById(id)` | `Option<TddSessionDetail>` -- the `tdd_sessions` row plus its `goals: GoalDetail[]` (each with nested `behaviors: BehaviorRow[]`) and `tdd_phases` (with nested `tdd_artifacts` per phase). Goals are materialized via a single batched IN-clause join from `tdd_session_goals` to `tdd_session_behaviors`. Pre-rolls every join so `tdd_session_get` returns the entire three-tier tree in one round-trip |
+| `getGoalById(id)` | **2.0.** `Option<GoalDetail>` — the goal row + nested behaviors. Backs `tdd_goal_get` |
+| `getGoalsBySession(sessionId)` | **2.0.** `GoalDetail[]` ordered by `ordinal` — every goal under the session, each with its behaviors. Backs `tdd_goal_list` |
+| `getBehaviorById(id)` | **2.0.** `Option<BehaviorDetail>` — the behavior row + `parentGoal` summary + `dependencies: BehaviorRow[]` resolved via the `tdd_behavior_dependencies` junction table. Backs `tdd_behavior_get` |
+| `getBehaviorsByGoal(goalId)` | **2.0.** `BehaviorRow[]` ordered by `ordinal`. Backs `tdd_behavior_list` (`scope: "goal"`) |
+| `getBehaviorsBySession(sessionId)` | **2.0.** `BehaviorRow[]` joined across all goals for the session. Backs `tdd_behavior_list` (`scope: "session"`) |
+| `getBehaviorDependencies(behaviorId)` | **2.0.** `BehaviorRow[]` — direct dependencies of a behavior (one-hop junction-table read; recursive walks are the caller's responsibility via SQL CTE) |
+| `resolveGoalIdForBehavior(behaviorId)` | **2.0.** `Option<number>` — used by `tdd_progress_push` to resolve `goalId` (and transitively `sessionId` via the goals→sessions FK) server-side from a `behaviorId` for behavior-scoped channel events. Best-effort; returns `Option.none()` when the behavior has been deleted or never existed |
 | `listHypotheses(options: { sessionId?, outcome?, limit? })` | `HypothesisSummary[]` filtered by `sessionId` and validation outcome. `outcome="open"` matches `validation_outcome IS NULL`; other values match the literal CHECK enum (`confirmed`/`refuted`/`abandoned`). Default limit 50 |
 | `findIdempotentResponse(procedurePath, key)` | `Option<string>` -- the cached `result_json` for a given MCP procedure invocation, or `Option.none()` when no entry exists. Backs the tRPC idempotency middleware's cache check. The middleware's flow is `findIdempotentResponse -> next() -> recordIdempotentResponse` (see decisions.md) |
 | `getCurrentTddPhase(tddSessionId)` | `Option<CurrentTddPhase>` -- the most-recent **open** `tdd_phases` row for a TDD session (the row whose `ended_at` is NULL). Used by `tdd_phase_transition_request` to identify the source phase for the validator and by `writeTddPhase` to know which prior phase to close in the same transaction |
@@ -860,7 +917,10 @@ per-file rows; in that case the query falls back to
 `SuiteListEntry`, `SettingsListEntry`, `SessionDetail`,
 `TurnSummary`, `TurnSearchOptions`,
 `AcceptanceMetrics`, `SessionSummary`,
-`FailureSignatureDetail`, `TddSessionDetail`,
+`FailureSignatureDetail`, `TddSessionDetail`
+(now extended with `goals: ReadonlyArray<GoalDetail>`),
+`GoalDetail`, `BehaviorDetail` (the schemas live in
+`packages/sdk/src/schemas/Tdd.ts`),
 `TddPhaseDetail`, `TddArtifactDetail`,
 `HypothesisSummary`, `HypothesisDetail`,
 `CurrentTddPhase`, `CitedArtifactRow`,
@@ -1201,11 +1261,17 @@ function _resetMigrationCacheForTesting(): void; // @internal
 which feeds them to `@effect/sql-sqlite-node` `SqliteMigrator` (WAL
 journal mode, foreign keys enabled). Fresh databases run both
 `0001_initial` (creates 1.x tables) and `0002_comprehensive`
-(drops them and recreates the full 41-table layout) in order; the
+(drops them and recreates the full 42-table layout) in order; the
 first migration's tables exist only momentarily before the second
-drops them.
+drops them. **2.0 note:** `0002_comprehensive` was modified in place
+(rather than added as `0006`) to introduce the goal/behavior
+hierarchy. The migration ledger has no content hash, so this edit
+does not auto-replay on existing dev DBs — pre-2.0 dev databases
+must be wiped on first pull (acceptable since the 2.0 XDG path
+differs from 1.x and v2.0 has no production users yet). See
+Decision D9 for the broader rationale.
 
-**Tables (41 total + `notes_fts` FTS5 virtual table):**
+**Tables (43 total + `notes_fts` FTS5 virtual table):**
 
 The 25 1.x tables are recreated under `0002_comprehensive` with new
 columns:
@@ -1215,10 +1281,11 @@ columns:
 - `stack_frames` adds `source_mapped_line INTEGER` and
   `function_boundary_line INTEGER`
 
-The 15 new tables are: `sessions`, `turns`, `tool_invocations`,
+The 17 new tables are: `sessions`, `turns`, `tool_invocations`,
 `file_edits`, `hypotheses`, `commits`, `run_changed_files`,
 `run_triggers`, `build_artifacts`, `tdd_sessions`,
-`tdd_session_behaviors`, `tdd_phases`, `tdd_artifacts`,
+`tdd_session_goals` (2.0), `tdd_session_behaviors` (reshaped in 2.0),
+`tdd_behavior_dependencies` (2.0), `tdd_phases`, `tdd_artifacts`,
 `failure_signatures`, `hook_executions`. Highlights:
 
 - **`sessions`** -- Claude Code conversations; `cc_session_id`
@@ -1241,13 +1308,22 @@ The 15 new tables are: `sessions`, `turns`, `tool_invocations`,
   `('cli', 'ide', 'ci', 'agent', 'pre-commit', 'watch')`
 - **`build_artifacts`** -- captured `tsc`/`biome`/`eslint` output
   per run
-- **`tdd_sessions`**, **`tdd_session_behaviors`**, **`tdd_phases`**,
-  **`tdd_artifacts`** -- TDD session state. `tdd_phases.phase` has
-  an 8-value CHECK (`spike`, `red`, `red.triangulate`, `green`,
+- **`tdd_sessions`**, **`tdd_session_goals`** (2.0),
+  **`tdd_session_behaviors`** (reshaped in 2.0),
+  **`tdd_behavior_dependencies`** (2.0 junction table),
+  **`tdd_phases`**, **`tdd_artifacts`** -- TDD session state in the
+  three-tier Objective→Goal→Behavior hierarchy. `tdd_phases.phase`
+  has an 8-value CHECK (`spike`, `red`, `red.triangulate`, `green`,
   `green.fake-it`, `refactor`, `extended-red`,
   `green-without-red`). `tdd_artifacts.artifact_kind` CHECK in
   `('test_written', 'test_failed_run', 'code_written',
-  'test_passed_run', 'refactor', 'test_weakened')`
+  'test_passed_run', 'refactor', 'test_weakened')`. Both
+  `tdd_session_goals.status` and `tdd_session_behaviors.status`
+  CHECK in `('pending', 'in_progress', 'done', 'abandoned')`. In 2.0,
+  `tdd_phases.behavior_id` cascade was changed from `SET NULL` to
+  `CASCADE` (delete = "this never existed"; abandon-via-status
+  preserves evidence), and `tdd_artifacts` gained a `behavior_id`
+  FK + index for behavior-scoped artifact queries
 - **`failure_signatures`** -- PK is the 16-char hash from
   `computeFailureSignature`; tracks `first_seen_run_id`,
   `first_seen_at`, `occurrence_count`
@@ -1270,10 +1346,16 @@ for the canonical DDL.
 every table including the new ones (`SessionRow`, `TurnRow`,
 `ToolInvocationRow`, `FileEditRow`, `HypothesisRow`, `CommitRow`,
 `RunChangedFileRow`, `RunTriggerRow`, `BuildArtifactRow`,
-`TddSessionRow`, `TddSessionBehaviorRow`, `TddPhaseRow`,
-`TddArtifactRow`, `FailureSignatureRow`, `HookExecutionRow`).
-Assemblers join data from multiple tables to build `AgentReport`,
-`CoverageReport`, and other composite types.
+`TddSessionRow`, `TddSessionGoalRow` (2.0),
+`TddSessionBehaviorRow` (reshaped in 2.0),
+`TddBehaviorDependencyRow` (2.0), `TddPhaseRow`,
+`TddArtifactRow`, `FailureSignatureRow`, `HookExecutionRow`). The
+application-level shapes (camelCase: `GoalRow`, `BehaviorRow`,
+`GoalDetail`, `BehaviorDetail`) live in
+`packages/sdk/src/schemas/Tdd.ts`; the SQL row shapes are
+snake-case Schema.Struct rows. Assemblers join data from multiple
+tables to build `AgentReport`, `CoverageReport`, and other
+composite types.
 
 ### Output Pipeline
 
@@ -1424,7 +1506,7 @@ Pure utility functions that don't warrant Effect service wrapping.
 | `resolve-data-path.ts` | The `resolveDataPath` orchestrator (see XDG Path Resolution) |
 | `function-boundary.ts` | `findFunctionBoundary(source, line)` returns `FunctionBoundary` or `null`. Parses via `acorn` extended with the `acorn-typescript` plugin (`Parser.extend(tsPlugin())`), `ecmaVersion: "latest"`, `sourceType: "module"`, `locations: true` -- so TS sources with type annotations, generics, decorators, and `as` casts now parse without throwing. Walks the AST for `FunctionDeclaration`, `FunctionExpression`, and `ArrowFunctionExpression` nodes whose `loc` range contains `line`, returning the **smallest** enclosing function's `{ line: start.line, name }`. Anonymous functions on a `VariableDeclarator` init borrow the declarator's name; otherwise the literal string `<anonymous>`. Returns `null` on parse error. The function-boundary coordinate is stable for TS projects |
 | `failure-signature.ts` | `computeFailureSignature(input)` returns a 16-char `sha256` of `error_name`, normalized assertion shape, top-frame function name, and line coord (joined by a pipe character). `normalizeAssertionShape` strips assertion literals to angle-bracketed type tags (`number`, `string`, `boolean`, `null`, `undefined`, `object`, `expr` — each wrapped in `<` and `>`) so unrelated literal changes don't perturb the signature. The line coord prefers `fb:` followed by the function-boundary line; falls back to `raw:` followed by `floor(line/10)*10` (10-line bucket) when the boundary is unknown, then `raw:?` if no raw line is supplied either |
-| `validate-phase-transition.ts` | Pure `validatePhaseTransition(ctx) => PhaseTransitionResult` encoding the three D2 evidence-binding rules: (1) **scoped to `test_failed_run` artifact kind only** -- cited test was authored in the current phase window AND in the current session (authoring-window check does not apply to `test_passed_run` or other kinds, preventing spurious `evidence_not_in_phase_window` denials on green→refactor transitions), (2) the cited artifact's `behavior_id` matches the requested behavior when one is specified, (3) for `red→green` transitions, the cited test wasn't already failing on main (`test_first_failure_run_id === test_run_id`). Enforces the required artifact kind per transition (`red→green` needs `test_failed_run`; `green→refactor` and `refactor→red` need `test_passed_run`); all other transitions are evidence-free and accepted unconditionally (including `spike→red`, the entry point for every TDD cycle). Returns a discriminated union with either `{ accepted: true, phase }` or `{ accepted: false, phase, denialReason, remediation: { suggestedTool, suggestedArgs, humanHint } }`. `DenialReason` is one of `missing_artifact_evidence`, `wrong_source_phase`, `unknown_session`, `session_already_ended`, `goal_not_started`, `refactor_without_passing_run`, `evidence_not_in_phase_window`, `evidence_not_for_behavior`, `evidence_test_was_already_failing` |
+| `validate-phase-transition.ts` | Pure `validatePhaseTransition(ctx) => PhaseTransitionResult` encoding a source-phase guard plus the three D2 evidence-binding rules. **Source-phase guard (checked first):** requesting `green` from any phase other than `red`, `red.triangulate`, or `green.fake-it` returns `{ accepted: false, denialReason: "wrong_source_phase" }` with a remediation pointing at the missing `→red` step — e.g. `spike→green` and `refactor→green` are denied unconditionally; the orchestrator must enter `red` explicitly first. **Artifact-kind preconditions:** `red→green` requires `test_failed_run`; `green→refactor` and `refactor→red` require `test_passed_run`. **D2 binding rules (applied to evidence-bearing transitions only):** (1) **scoped to `test_failed_run` kind only** -- cited test was authored in the current phase window AND in the current session (authoring-window check does not apply to `test_passed_run` or other kinds, preventing spurious `evidence_not_in_phase_window` denials on `green→refactor` transitions), (2) the cited artifact's `behavior_id` matches the requested behavior when one is specified, (3) for `red→green` transitions, the cited test wasn't already failing on main (`test_first_failure_run_id === test_run_id`). All remaining transitions (e.g. `spike→red`, `red.triangulate→red`, `green.fake-it→refactor`, `refactor→red`) are evidence-free and return `{ accepted: true }` immediately. Returns a discriminated union with either `{ accepted: true, phase }` or `{ accepted: false, phase, denialReason, remediation: { suggestedTool, suggestedArgs, humanHint } }`. `DenialReason` is one of `missing_artifact_evidence`, `wrong_source_phase`, `unknown_session`, `session_already_ended`, `goal_not_started`, `refactor_without_passing_run`, `evidence_not_in_phase_window`, `evidence_not_for_behavior`, `evidence_test_was_already_failing` |
 | `hyperlink.ts` | `osc8(url, label, { enabled })` returns a labeled OSC-8 escape sequence (`\x1b]8;;<url>\x1b\\<label>\x1b]8;;\x1b\\`) when enabled, plain text otherwise. Wired into `formatters/markdown.ts` via a regex post-processor that wraps test-file paths in failing-test header lines, gated on `target === "stdout"` AND `!ctx.noColor`. The MCP `triage_brief` and `wrapup_prompt` tools call the `format-triage` / `format-wrapup` shared lib generators directly (not the markdown formatter), so MCP responses never receive OSC-8 codes -- terminal hyperlinks are a CLI-and-stdout-only concern per W4 spec |
 
 **Package manager detection:** The canonical detector lives at
@@ -1648,12 +1730,13 @@ Used by the CLI bin via `NodeRuntime.runMain`.
 
 ## MCP package (vitest-agent-mcp)
 
-Model Context Protocol server providing 41 tools for agent
+Model Context Protocol server providing 50 tools for agent
 integration via tRPC router. Tools cover read-only queries,
 discovery, note CRUD, session/turn/TDD reads, hypothesis writes
-(via idempotency middleware), TDD lifecycle reads/writes, and
-workspace history. Uses `@modelcontextprotocol/sdk` with stdio
-transport and tRPC for routing.
+(via idempotency middleware), TDD lifecycle reads/writes, the 10
+goal/behavior CRUD tools introduced in 2.0, and workspace history.
+Uses `@modelcontextprotocol/sdk` with stdio transport and tRPC for
+routing.
 
 **npm name:** `vitest-agent-mcp`
 **bin:** `vitest-agent-mcp`
@@ -1691,7 +1774,7 @@ coordination without bundling the dependency tree.
   services. Exports the underlying `t` instance (`middleware`,
   `router`, `publicProcedure`) so the idempotency middleware can
   share it rather than constructing a parallel `t`
-- `router.ts` -- tRPC router aggregating all 41 tool procedures
+- `router.ts` -- tRPC router aggregating all 50 tool procedures
 - `server.ts` -- `startMcpServer()` registers all tools with the MCP
   SDK using zod input schemas (the SDK side; tRPC inputs are also
   zod, kept in sync between the two registrations)
@@ -1709,18 +1792,24 @@ coordination without bundling the dependency tree.
   `plugin.json`, which spawns the bin through the user's package
   manager), and any MCP-compatible agent
 
-### tRPC Router & Tools (41 tools)
+### tRPC Router & Tools (50 tools)
 
 **Locations:**
 
 - `packages/mcp/src/router.ts`, `packages/mcp/src/context.ts`
 - `packages/mcp/src/tools/` -- one file per tool
+- `packages/mcp/src/tools/_tdd-error-envelope.ts` -- **2.0 helper**.
+  Catches the five tagged TDD errors at the MCP boundary and
+  surfaces them as success-shape `{ ok: false, error: { _tag, ...,
+  remediation } }` responses. tRPC `TRPCError` envelopes remain
+  reserved for transport-level failures
 - `packages/mcp/src/middleware/idempotency.ts` --
   see the **Idempotency middleware** subsection
 
-The tRPC router aggregates all 41 MCP tool procedures. The context carries a `ManagedRuntime` for
-Effect service access, allowing tRPC procedures to call Effect
-services via `ctx.runtime.runPromise(effect)`.
+The tRPC router aggregates all 50 MCP tool procedures. The context
+carries a `ManagedRuntime` for Effect service access, allowing tRPC
+procedures to call Effect services via
+`ctx.runtime.runPromise(effect)`.
 
 **Context interface:**
 
@@ -1763,8 +1852,12 @@ interface McpContext {
   `turn_search`, `failure_signature_get`, `tdd_session_get`,
   `hypothesis_list`, `acceptance_metrics`. Each procedure validates
   input with a zod schema, calls the matching `DataReader` method
-  via `ctx.runtime.runPromise`, and returns JSON. All seven are
-  read-only. Auto-allowed via
+  via `ctx.runtime.runPromise`, and returns markdown or JSON.
+  `tdd_session_get` returns markdown; when the session has
+  `tdd_session_goals` and `tdd_session_behaviors` rows it renders
+  a "Goals and Behaviors" section beneath Phases and Artifacts,
+  listing each goal (with ordinal and status) and its nested
+  behaviors. All seven are read-only. Auto-allowed via
   `plugin/hooks/lib/safe-mcp-vitest-agent-ops.txt`. The
   `help` tool (`tools/help.ts`) lists them under a
   "Sessions / Turns / TDD reads" section
@@ -1794,7 +1887,7 @@ interface McpContext {
   `${id}:${outcome}` (validate). Auto-allowed via the
   allowlist file. The `help` tool lists them under the
   "Hypothesis writes" section
-- **TDD lifecycle reads/writes** (JSON output) --
+- **TDD session lifecycle** (JSON output) --
   `tools/tdd-session-start.ts` ->
   `tdd_session_start({ goal, sessionId? | ccSessionId,
   parentTddSessionId?, startedAt? })` opens a TDD session
@@ -1804,25 +1897,82 @@ interface McpContext {
   closes one (idempotent on `(tddSessionId, outcome)`);
   `tools/tdd-session-resume.ts` -> `tdd_session_resume({ id })`
   is read-only and returns a markdown digest of an open TDD
-  session;
-  `tools/decompose-goal-into-behaviors.ts` ->
-  `decompose_goal_into_behaviors({ tddSessionId, goal })`
-  splits the goal into atomic behaviors via simple text
-  heuristics (idempotent on `(tddSessionId, goal)`);
+  session — now including the full goal+behavior tree;
   `tools/tdd-phase-transition-request.ts` ->
-  `tdd_phase_transition_request({ tddSessionId, requestedPhase,
-  citedArtifactId, behaviorId?, reason? })` is the headline
-  write -- it reads the current phase via
-  `DataReader.getCurrentTddPhase`, the cited artifact context
-  via `DataReader.getTddArtifactWithContext`, runs the pure
-  `validatePhaseTransition` validator, and on accept calls
-  `DataStore.writeTddPhase` (which closes the prior phase and
-  opens the new one in the same SQL transaction). On deny,
-  returns the `{ accepted: false, denialReason, remediation }`
-  shape verbatim. **Not** registered for idempotency replay --
-  see decisions.md (the accept/deny is a deterministic function
-  of artifact-log state at request time, so identical inputs at
-  different times can legitimately produce different results)
+  `tdd_phase_transition_request({ tddSessionId, goalId,
+  requestedPhase, citedArtifactId, behaviorId?, reason? })`
+  is the headline write. **2.0 changes:** `goalId` is now
+  **required**; the tool pre-checks goal status (rejects with
+  `goal_not_found` or `goal_not_in_progress`) and behavior
+  membership (rejects with `behavior_not_found` or
+  `behavior_not_in_goal`) before running the existing D2
+  binding-rule validator. On accept with a `behaviorId`, the
+  server **auto-promotes** the behavior `pending → in_progress`
+  in the same SQL transaction as `writeTddPhase` (so the phase
+  ledger and behavior status never desync); the orchestrator
+  is only responsible for the final `done` transition via
+  `tdd_behavior_update`. On deny, returns the
+  `{ accepted: false, denialReason, remediation }` shape
+  verbatim — the `DenialReason` union was extended with the
+  four new pre-check literals. **Not** registered for
+  idempotency replay (see decisions.md: the accept/deny is a
+  deterministic function of artifact-log state at request time,
+  so identical inputs at different times can legitimately
+  produce different results).
+  **Removed in 2.0:** `decompose_goal_into_behaviors` —
+  server-side goal-string-splitting is gone; orchestrators
+  decompose via LLM reasoning and create each goal/behavior
+  individually
+- **TDD goal CRUD** (JSON output, 2.0) -- five new tools:
+  - `tools/tdd-goal-create.ts` -> `tdd_goal_create({ sessionId,
+    goal })` — idempotent on `(sessionId, goal)`. Returns the
+    full row
+  - `tools/tdd-goal-get.ts` -> `tdd_goal_get({ id })` — returns
+    the goal with nested behaviors
+  - `tools/tdd-goal-update.ts` -> `tdd_goal_update({ id, goal?,
+    status? })` — flat patch
+  - `tools/tdd-goal-delete.ts` -> `tdd_goal_delete({ id })` —
+    hard delete (cascades to behaviors, phases, artifacts,
+    junction-table dependencies). **Not** in the auto-allow
+    list; main-agent calls require explicit user confirmation,
+    and the orchestrator is denied at the
+    `pre-tool-use-tdd-restricted.sh` hook
+  - `tools/tdd-goal-list.ts` -> `tdd_goal_list({ sessionId })` —
+    returns goals with nested behaviors, ordered by ordinal
+- **TDD behavior CRUD** (JSON output, 2.0) -- five new tools:
+  - `tools/tdd-behavior-create.ts` -> `tdd_behavior_create({
+    goalId, behavior, suggestedTestName?, dependsOnBehaviorIds?
+    })` — idempotent on `(goalId, behavior)`. Junction-table
+    dependency rows are written in the same transaction as the
+    behavior insert; each id is validated to belong to the same
+    goal
+  - `tools/tdd-behavior-get.ts` -> `tdd_behavior_get({ id })` —
+    returns the behavior + parent-goal summary + dependencies
+  - `tools/tdd-behavior-update.ts` -> `tdd_behavior_update({ id,
+    behavior?, suggestedTestName?, status?,
+    dependsOnBehaviorIds? })` — flat patch. Updating
+    `dependsOnBehaviorIds` replaces the junction-table set in
+    one transaction
+  - `tools/tdd-behavior-delete.ts` -> `tdd_behavior_delete({ id
+    })` — hard delete. Same auto-allow / hook denial story as
+    `tdd_goal_delete`
+  - `tools/tdd-behavior-list.ts` -> `tdd_behavior_list(...)` —
+    accepts a discriminated input
+    `{ scope: "goal"; goalId } | { scope: "session"; sessionId }`
+    (tRPC-friendly, no XOR refines)
+- **TDD progress push** (JSON output, 2.0) --
+  `tdd_progress_push({ payload })` is registered directly with
+  the MCP SDK (not via tRPC) because it forwards to a Claude Code
+  notification channel. The MCP server validates the payload
+  string as JSON against the `ChannelEvent` discriminated union
+  (`vitest-agent-sdk`), then resolves `goalId` and `sessionId`
+  **server-side** from `behaviorId` for behavior-scoped events
+  (via `DataReader.resolveGoalIdForBehavior` + the goals→sessions
+  FK) so a stale orchestrator context cannot push the wrong tree
+  coordinates. Resolution is best-effort; malformed JSON or DB
+  read failures fall through with the original payload.
+  Best-effort delivery — returns `{ ok: true }` regardless of
+  whether channels are active
 - **Workspace history reads** (JSON output) --
   `tools/commit-changes.ts` -> `commit_changes({ sha? })`
   returns commit metadata + `run_changed_files` joined view.
@@ -1833,10 +1983,15 @@ interface McpContext {
   `post-tool-use-git-commit.sh` plugin hook writes via the
   `record run-workspace-changes` CLI subcommand
 
-The idempotency-key registry has 5 entries: `hypothesis_record`,
-`hypothesis_validate`, `tdd_session_start`, `tdd_session_end`, and
-`decompose_goal_into_behaviors`. `tdd_phase_transition_request` is
-intentionally **not** in the registry -- see decisions.md.
+The idempotency-key registry has 6 entries (2.0 update):
+`hypothesis_record`, `hypothesis_validate`, `tdd_session_start`,
+`tdd_session_end`, `tdd_goal_create`, and `tdd_behavior_create`.
+`decompose_goal_into_behaviors` was **removed** alongside the tool.
+`tdd_phase_transition_request`, all `*_update` / `*_delete` /
+`*_get` / `*_list` tools are intentionally **not** in the registry
+-- see decisions.md (state-dependent reads, intentional state
+transitions, and destructive ops are not idempotent in the
+cache-replay sense).
 
 **Project handling in discovery tools:** `module_list`, `suite_list`,
 and `test_list` enumerate every project from
@@ -1881,20 +2036,22 @@ delivery) gets the cached result back instead of double-writing.
   instead of `publicProcedure`
 - `idempotencyKeys` -- a registry mapping procedure paths to
   per-procedure `derive(input) => string` functions. Currently
-  registers 5 entries:
+  registers 6 entries (2.0):
   `hypothesis_record` (key:
   `${input.sessionId}:${input.content}`),
   `hypothesis_validate` (key: `${input.id}:${input.outcome}`),
   `tdd_session_start` (key:
   `${input.sessionId}:${input.goal}`),
   `tdd_session_end` (key:
-  `${input.tddSessionId}:${input.outcome}`), and
-  `decompose_goal_into_behaviors` (key:
-  `${input.tddSessionId}:${input.goal}`).
-  `tdd_phase_transition_request` is intentionally **not**
-  registered -- see decisions.md.
-  Adding a new idempotent tool means registering a derive
-  function alongside the procedure
+  `${input.tddSessionId}:${input.outcome}`),
+  `tdd_goal_create` (key: `${input.sessionId}:${input.goal}`), and
+  `tdd_behavior_create` (key: `${input.goalId}:${input.behavior}`).
+  `decompose_goal_into_behaviors` was **removed** in 2.0
+  alongside the tool. `tdd_phase_transition_request`, every
+  `*_update` / `*_delete` / `*_get` / `*_list`, and
+  `tdd_progress_push` are intentionally **not** registered --
+  see decisions.md. Adding a new idempotent tool means
+  registering a derive function alongside the procedure
 - The middleware uses the **same** tRPC instance as
   `publicProcedure` rather than constructing a parallel `t`,
   via the new `middleware` export from `context.ts`. Sharing
@@ -2030,13 +2187,18 @@ PreCompact, SubagentStart, SubagentStop.
   `agent_type` clarification in the agent-definition
   subsection above
 - **Allowlist** -- `hooks/lib/safe-mcp-vitest-agent-ops.txt`
-  enumerates 41 auto-allow MCP tool entries (one operation suffix
-  per line, with `#` comments for category headings: meta `help`;
-  11 read-only queries; 5 discovery tools; `run_tests`; 6 note CRUD
-  ops; 7 session/turn/TDD/hypothesis/metrics reads; 4
-  triage/wrapup/hypothesis tools; 6 TDD lifecycle + commit_changes
-  tools). The script strips blank lines and comments before exact
-  matching
+  enumerates the auto-allow MCP tool entries (one operation suffix
+  per line, with `#` comments for category headings). 2.0 adds the
+  8 non-destructive goal/behavior tools (`tdd_goal_create`,
+  `tdd_goal_get`, `tdd_goal_update`, `tdd_goal_list`,
+  `tdd_behavior_create`, `tdd_behavior_get`,
+  `tdd_behavior_update`, `tdd_behavior_list`); removes
+  `decompose_goal_into_behaviors`; and **intentionally omits**
+  `tdd_goal_delete` and `tdd_behavior_delete` so main-agent
+  deletes fall through to the standard permission prompt before
+  any cascade (the file carries an explanatory comment to that
+  effect). The script strips blank lines and comments before
+  exact matching
 - **PostToolUse** -- `post-test-run.sh` runs on the Bash tool
   and detects test runs. After `record run-trigger`, it calls
   `record test-case-turns --cc-session-id <id>` best-effort
@@ -2089,6 +2251,23 @@ PreCompact, SubagentStart, SubagentStop.
   vitest config files. Returns `permissionDecision: "deny"`
   JSON on match. Pairs with the iron-law system prompt of the
   orchestrator agent definition
+- PreToolUse TDD restricted-tools (orchestrator-scoped, **2.0
+  new**) -- `pre-tool-use-tdd-restricted.sh`. Scoped via
+  `lib/match-tdd-agent.sh` (matcher targeting only the
+  destructive tool names so it doesn't fire on every tool
+  call). Matches `tool_name` against
+  `mcp__plugin_vitest-agent_mcp__tdd_goal_delete`,
+  `mcp__plugin_vitest-agent_mcp__tdd_behavior_delete`, plus
+  the legacy bare-prefix variants, and reaffirms denial of
+  `tdd_artifact_record` (never an MCP tool per Decision D7,
+  but defense-in-depth). Returns `permissionDecision: "deny"`
+  with `permissionDecisionReason: "Orchestrator must use
+  status:'abandoned' to drop work; deletes are reserved for
+  the main agent. To remove a duplicate created by mistake,
+  ask the user."`. This is the runtime gate on top of the
+  orchestrator's `tools[]` enumeration (which is documentation,
+  not enforcement). Registered in `hooks.json` for the
+  `PreToolUse` event type
 - PostToolUse TDD artifact (orchestrator-scoped) --
   `post-tool-use-tdd-artifact.sh`. Scoped to the orchestrator.
   Before writing any artifact, calls `record test-case-turns
@@ -2125,11 +2304,30 @@ PreCompact, SubagentStart, SubagentStop.
 - `tdd-orchestrator.md` -- the TDD orchestrator
   subagent definition. Carries the iron-law system prompt
   (mandatory test-first loop, no escape hatches), the
-  eight-state state machine matching
-  `tdd_phases.phase` enum, the ~15-tool `tools:` array
-  (read-only test-status MCP tools plus the TDD lifecycle
-  write tools), and the 9 sub-skill primitives embedded
-  inline (Decision D6). **Frontmatter `agent_type:` is
+  eight-state state machine matching `tdd_phases.phase` enum
+  (the state machine is **per-behavior**; goal-level iteration
+  is workflow code, not a state in `tdd_phases`), and the 9
+  sub-skill primitives embedded inline (Decision D6). **2.0
+  updates:** the `tools:` array adds the 8 non-destructive
+  goal/behavior CRUD tools (`tdd_goal_create`/`get`/`update`/
+  `list`, `tdd_behavior_create`/`get`/`update`/`list`) and
+  removes `decompose_goal_into_behaviors`; deletes are
+  intentionally excluded from `tools[]` AND enforced at runtime
+  by `pre-tool-use-tdd-restricted.sh`. New "Three-tier
+  hierarchy" section documents Objective→Goal→Behavior. The
+  workflow section is rewritten as a two-pass decomposition
+  (pass 1: create all goals; pass 2: per-goal, create all
+  behaviors then run the per-behavior 3a/b/c/d red-green-
+  refactor loop). New "Mid-session add / abandon" section
+  covers `tdd_goal_create` / `tdd_behavior_create` mid-session
+  followed by `*_added` channel events, and
+  `tdd_*_update({ status: "abandoned" })` followed by
+  `*_abandoned`. The `tdd_phase_transition_request` guidance
+  now documents the required `goalId`, the goal-status /
+  behavior-membership pre-checks, and the auto-promote on
+  accept. The `tdd_progress_push` payload table is expanded
+  with all 13 `ChannelEvent` variants; behavior-level events
+  carry `sessionId` + `goalId` + `behaviorId`. **Frontmatter `agent_type:` is
   custom plugin metadata that Claude Code silently
   ignores** — Claude Code's plugin-subagent frontmatter
   schema only recognizes `name`, `description`, `tools`,
@@ -2158,7 +2356,16 @@ PreCompact, SubagentStart, SubagentStop.
 
 **Skills** -- `plugin/skills/`
 
-- `tdd/SKILL.md` -- TDD workflow skill
+- `tdd/SKILL.md` -- TDD workflow skill. **2.0 update:** takes
+  ownership of the channel-event handler section (moved out of
+  `commands/tdd.md`, which now keeps only spawn instructions).
+  Contains 11 event handlers covering all 13 `ChannelEvent`
+  variants and renders the goal+behavior hierarchy flat with
+  `[G<n>.B<m>]` label encoding (Claude Code's `TaskCreate`
+  doesn't nest cleanly past one parent). Goals appear as
+  marker tasks (`--- Goal N done ---`) inserted between
+  behavior groups. Persists across multiple `/tdd` invocations
+  and direct orchestrator dispatch
 - `debugging/SKILL.md` -- test debugging skill
 - `configuration/SKILL.md` -- Vitest configuration skill
 - `coverage-improvement/SKILL.md` -- coverage improvement
@@ -2175,7 +2382,11 @@ PreCompact, SubagentStart, SubagentStop.
   - `record-hypothesis-before-fix/SKILL.md`
   - `commit-cycle/SKILL.md`
   - `revert-on-extended-red/SKILL.md`
-  - `decompose-goal-into-behaviors/SKILL.md`
+  - `decompose-goal-into-behaviors/SKILL.md` -- **2.0:
+    rewritten** to describe LLM-driven decomposition (no
+    server tool involved). Covers what counts as one goal vs
+    one behavior, the `dependsOnBehaviorIds` junction-table
+    contract, and per-goal idempotency keys for safe retries
 
 ---
 

@@ -3,8 +3,8 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-05-03
-last-synced: 2026-05-03
+updated: 2026-05-05
+last-synced: 2026-05-05
 completeness: 100
 related:
   - ./architecture.md
@@ -907,6 +907,23 @@ export/import path on a major bump rather than dropping data.
   record. This is fine -- migrations are append-only and the drops are
   bounded in size
 
+**2.0 follow-up — modified `0002` in place rather than adding `0006`:**
+the goal/behavior hierarchy redesign (Decision D12) edits
+`0002_comprehensive` directly: adds `tdd_session_goals` and
+`tdd_behavior_dependencies`, reshapes `tdd_session_behaviors`,
+changes the `tdd_phases.behavior_id` cascade (Decision D15), and
+adds `tdd_artifacts.behavior_id` (Note N9). The migration ledger has
+no content hash, so `SqliteMigrator` does not auto-replay the edited
+migration on existing DBs — pre-2.0 dev databases must be wiped on
+first pull. This is a documented break, acceptable because the 2.0
+XDG path differs from 1.x and v2.0 has no production users yet. The
+"ALTER-only forever after" invariant still holds for *future*
+migrations; D9 is a constraint on what comes after the last
+drop-and-recreate, and 0002 *is* the last drop-and-recreate. The
+2.0 changeset (`tdd-goal-behavior-hierarchy.md`) carries the
+explicit "wipe `$XDG_DATA_HOME/vitest-agent/<key>/data.db` on first
+pull" instruction.
+
 ### Decision D10: Stable Failure Signatures via AST Function Boundary
 
 **Context:** Failures need a stable identity that lets us
@@ -1036,13 +1053,25 @@ denial with a typed reason and a remediation hint.
 Plus the artifact-kind precondition: `red → green` requires
 `test_failed_run`, `green → refactor` requires `test_passed_run`,
 `refactor → red` requires `test_passed_run` (refactor must end
-with all tests still passing). All other transitions are
-**evidence-free** and accepted unconditionally — including
-`spike → red` (the entry point for every TDD cycle),
-`red.triangulate → red`, `green.fake-it → refactor`, and
-`extended-red → green`. The `wrong_source_phase` denial is
-reserved for future enumerated invalid edges; no transitions
-currently raise it.
+with all tests still passing).
+
+**Source-phase guard for `green`:** `validatePhaseTransition` also
+enforces that `green` may only be entered from `red`,
+`red.triangulate`, or `green.fake-it`. Requesting `green` from any
+other phase (e.g. `spike → green`, `refactor → green`,
+`extended-red → green`) returns `{ accepted: false, denialReason:
+"wrong_source_phase" }` with a remediation pointing at the missing
+`→ red` step. The rationale: skipping the named red phase entirely
+would leave the `tdd_phases` table without a `phase="red"` row,
+breaking the phase-evidence integrity metric and the D2
+binding-rule model.
+
+All remaining transitions are **evidence-free** and accepted
+unconditionally — including `spike → red` (the entry point for
+every TDD cycle), `red.triangulate → red`,
+`green.fake-it → refactor`, and `refactor → red`. Transitions that
+are neither evidence-bearing nor source-phase-guarded return
+`{ accepted: true }` immediately.
 
 **Why a pure function (vs Effect service):**
 
@@ -1160,42 +1189,58 @@ underlying procedure absorbs the cost gracefully.
 
 ### Note N2: `tdd_phase_transition_request` is NOT in the idempotency-key registry
 
-The five idempotency-registered mutation tools are `hypothesis_record`,
-`hypothesis_validate`, `tdd_session_start`, `tdd_session_end`, and
-`decompose_goal_into_behaviors`. `tdd_phase_transition_request` is
-intentionally excluded.
+The six idempotency-registered mutation tools (2.0 update) are
+`hypothesis_record`, `hypothesis_validate`, `tdd_session_start`,
+`tdd_session_end`, `tdd_goal_create`, and `tdd_behavior_create`.
+`decompose_goal_into_behaviors` was **removed** from the registry in
+2.0 alongside the tool itself (see Decision D12).
+`tdd_phase_transition_request` and every `*_update` / `*_delete` /
+`*_get` / `*_list` are intentionally excluded.
 
-**Why excluded:** The accept/deny is a deterministic function of
-artifact-log state at the moment of the request. Identical inputs at
-different times can legitimately produce different results (e.g., at T0 a
-transition is denied because the test was already failing on main; at T1
-the agent records a new failing test and the same transition is accepted).
-Caching the T0 deny would replay it against the changed state at T1 --
-which is wrong.
+**Why `tdd_phase_transition_request` is excluded:** The accept/deny
+is a deterministic function of artifact-log state at the moment of
+the request. Identical inputs at different times can legitimately
+produce different results (e.g., at T0 a transition is denied
+because the test was already failing on main; at T1 the agent
+records a new failing test and the same transition is accepted).
+Caching the T0 deny would replay it against the changed state at
+T1 -- which is wrong.
 
 The validator is itself the source of idempotency: it's a pure function of
 database state plus the cited artifact id. If the agent retries an
 identical call before any state change, the validator produces the same
 answer naturally without caching.
 
-**Why the other three mutations get cached:**
+**Why `*_update` / `*_delete` / `*_get` / `*_list` are excluded:**
+state-dependent reads (`*_get` / `*_list`) and intentional state
+transitions (`*_update`) cannot be cached without inverting the
+caller's expectation. Destructive ops (`*_delete`) are guarded at
+the hook + permission-prompt layer (Decision D13), not via cache
+replay.
+
+**Why the registered mutations get cached:**
 
 - `tdd_session_start` (key: `${sessionId}:${goal}`) -- opening the same
   session twice is a no-op
 - `tdd_session_end` (key: `${tddSessionId}:${outcome}`) -- closing the
   same session twice is a no-op
-- `decompose_goal_into_behaviors` (key: `${tddSessionId}:${goal}`) --
-  the heuristic is deterministic on the input string
+- `tdd_goal_create` (key: `${sessionId}:${goal}`) — creating the same
+  goal under the same session twice is a no-op (returns the existing
+  row)
+- `tdd_behavior_create` (key: `${goalId}:${behavior}`) — same shape,
+  scoped per-goal so identical behavior text under different goals
+  creates separate rows
 
 ### Note N3: D7 load-bearing constraint -- `tdd_artifact_record` is CLI-only
 
 TDD lifecycle write tools (`tdd_session_start`, `tdd_session_end`,
-`tdd_session_resume`, `decompose_goal_into_behaviors`,
-`tdd_phase_transition_request`) are accessible to the orchestrator via
-the MCP tool surface. Recording an artifact under a phase
-(`tdd_artifacts.artifact_kind`) is **deliberately not** an MCP tool. It
-is only writable through the `record tdd-artifact` CLI subcommand, driven
-by hooks (`post-tool-use-tdd-artifact.sh` and
+`tdd_session_resume`, `tdd_phase_transition_request`, plus the 8
+non-destructive `tdd_goal_*` / `tdd_behavior_*` CRUD tools added in
+2.0) are accessible to the orchestrator via the MCP tool surface.
+Recording an artifact under a phase (`tdd_artifacts.artifact_kind`)
+is **deliberately not** an MCP tool. It is only writable through the
+`record tdd-artifact` CLI subcommand, driven by hooks
+(`post-tool-use-tdd-artifact.sh` and
 `post-tool-use-test-quality.sh`).
 
 This is Decision D7: hooks observe what the agent did so the agent never
@@ -1208,6 +1253,17 @@ and the metric collapses. The evidence-binding validator depends on
 artifacts being timestamped at the moment the side effect happened. The
 orchestrator's `tools:` array intentionally excludes any artifact-write
 tool; the subagent has no Bash tool in scope and there is no MCP wrapper.
+
+**Related precedent (Decision D13):** `tdd_goal_delete` and
+`tdd_behavior_delete` follow a similar but distinct pattern. The
+delete tools **do exist** on the MCP surface (the main agent needs
+them for cleanup of mistakes under explicit user confirmation), but
+they are denied to the orchestrator at the hook layer
+(`pre-tool-use-tdd-restricted.sh`) and intentionally omitted from
+the auto-allow list. Where D7 keeps `tdd_artifact_record` *entirely
+off* the MCP surface, D13 has the tool exist but be *gated by
+identity*. Both patterns are about preventing the agent from writing
+data the wider system will later treat as authoritative.
 
 ### Note N4: `writeTurn` fans out to `tool_invocations` and `file_edits`
 
@@ -1415,6 +1471,318 @@ and forces consumers to handle the legacy-data case explicitly. The field
 becomes non-null asymptotically as signatures recur after the migration.
 A backfill would need to traverse all `test_errors` rows -- more expensive
 than the ALTER+index D9 anticipated, and the runtime recovers naturally.
+
+### Decision D12: Three-Tier Objective→Goal→Behavior Hierarchy
+
+**Context:** The 1.x TDD orchestrator decomposed a session goal into
+behaviors via the `decompose_goal_into_behaviors` MCP tool, which
+ran a server-side `splitGoal()` regex over `\s+and\s+` and `;\s+`.
+Compound goals expressed any other way produced a **single DB row**
+that the orchestrator then imagined as multiple behaviors —
+fabricating sub-behaviors that all reused the one real DB id.
+`behaviors_ready` channel events carried duplicate ids, the main
+agent's task list rendered duplicates, and the binding-rule validator
+saw a `behavior_id` that did not match the orchestrator's mental model.
+Plus seven additional gaps surfaced during the round-1 dogfood:
+`status` column never written after insert, no read path for behavior
+rows, no append-single-behavior path, `child_tdd_session_id` dead
+code, `behaviorId` on `tdd_phase_transition_request` only validated
+by the FK, `TddSessionDetail` missing behaviors, behavior ids
+ephemeral.
+
+**Decision:** introduce a three-tier hierarchy with first-class
+storage and CRUD for goals and behaviors:
+
+```text
+Objective  (tdd_sessions.goal)
+  └── Goal 1  (tdd_session_goals — new table)
+        ├── Behavior 1.1  (tdd_session_behaviors — reshaped)
+        └── Behavior 1.2
+  └── Goal 2
+        └── Behavior 2.1
+```
+
+Each tier has its own row-level identity, status lifecycle (closed:
+`pending → in_progress → done|abandoned`), and CRUD surface. The
+orchestrator decomposes via LLM reasoning and creates each entity
+individually through `tdd_goal_create` / `tdd_behavior_create`. The
+server stores what it's told and validates referential integrity
+through tagged errors at the DataStore boundary; it does not
+linguistically interpret goal text.
+
+**Why server-side splitting is gone:**
+
+- The root cause was a regex that produced one DB row when the
+  orchestrator imagined two behaviors. No regex extension can
+  capture all the ways an LLM can phrase a compound goal; the right
+  abstraction layer for "what counts as one behavior" is the LLM
+  itself, not a string-splitter
+- LLM-driven decomposition has full access to context (goal text,
+  acceptance criteria, codebase patterns) the server does not
+- The server retains hard guarantees through schema constraints
+  (FKs, CHECK on status, junction-table validation): the LLM cannot
+  invent behavior ids, cannot create a behavior under a closed
+  goal, cannot depend on a behavior in a different goal
+
+**Why goals are first-class storage rather than text in
+`tdd_sessions.goal`:**
+
+- Goals are addressable in their own right: status transitions,
+  ordinal allocation, dependency junction-table reference, channel
+  events keyed on goal id, phase-transition pre-checks ("is the
+  cited behavior's parent goal `in_progress`?")
+- The `(session_id, id)` covering index on goals supports cheap
+  behavior→goal→session join paths so we don't denormalize
+  `session_id` onto behaviors
+- Goal-level lifecycle events (`goal_started`, `goal_completed`
+  with `behaviorIds[]` for reconciliation, `goal_abandoned`) need
+  a stable id to address; storing them as session metadata would
+  collide on duplicate goal text
+
+**Why `dependsOnBehaviorIds` is a junction table not JSON-in-TEXT:**
+see Decision D14 below.
+
+**Trade-offs:**
+
+- The migration is a hard break: `0002_comprehensive` modified in
+  place rather than added as `0006`. Acceptable because the 2.0
+  XDG path differs from 1.x and v2.0 has no production users yet.
+  See Decision D9
+- Two more tables (`tdd_session_goals`, `tdd_behavior_dependencies`)
+  bring the schema to 43 tables total. Index footprint is minimal
+  (covering index on goals, single composite-PK + reverse-lookup on
+  the junction)
+- The state machine remains per-behavior (8 phases). Goal-level
+  iteration is workflow code in the orchestrator, not a state in
+  `tdd_phases`. This keeps `tdd_phases` from doubling its CHECK
+  enum
+
+### Decision D13: MCP Permits, Agent Restricts (Capability vs Scoping)
+
+**Context:** The orchestrator subagent should not delete goals or
+behaviors — `abandoned` status preserves evidence; hard delete is
+reserved for cleanup of mistakes by the main agent under explicit
+user confirmation. But the MCP tool surface needs to expose
+`tdd_goal_delete` and `tdd_behavior_delete` so the main agent has
+a CRUD-complete API.
+
+**Decision:** capability lives on the MCP surface (the 10 CRUD
+tools always exist); scoping lives at the agent + hook layer:
+
+1. The orchestrator's `tools[]` frontmatter array enumerates only
+   the 8 non-destructive goal/behavior tools — `tdd_goal_delete`
+   and `tdd_behavior_delete` are absent (documentation, not
+   enforcement)
+2. `pre-tool-use-tdd-restricted.sh` is a `PreToolUse` hook scoped
+   to the orchestrator subagent (via `lib/match-tdd-agent.sh`)
+   that returns `permissionDecision: "deny"` with a remediation
+   hint pointing at `status: 'abandoned'` if the orchestrator
+   tries to call either delete tool. **This is the runtime gate.**
+   It also reaffirms denial of `tdd_artifact_record` (never an MCP
+   tool per Decision D7) for defense-in-depth
+3. The main-agent allowlist (`safe-mcp-vitest-agent-ops.txt`)
+   intentionally **omits** the two delete tools. Main-agent calls
+   to deletes fall through to Claude Code's standard permission
+   prompt, so the user sees a confirmation dialog before any
+   cascade
+
+**Why this split (vs adding the deletes as restricted tools on the
+MCP server itself):**
+
+- The MCP server has no agent-identity. It can't tell "main agent"
+  from "orchestrator subagent"; it sees stdio bytes. Identity
+  lives one layer up, in the Claude Code hook envelope's
+  `agent_type` field
+- Putting agent-scoping in the server would require shipping
+  agent-aware authentication into a tool-routing layer, which is
+  more surface than the problem warrants
+- Hooks are already the place where agent identity is enforced
+  (`subagent-start-tdd.sh`, `pre-tool-use-bash-tdd.sh`,
+  `post-tool-use-tdd-artifact.sh` all gate via
+  `lib/match-tdd-agent.sh`). Adding one more
+  `pre-tool-use-tdd-restricted.sh` extends the established
+  pattern
+
+**Why two layers of denial (tools[] + hook):**
+
+- `tools[]` is the documentation surface — it's how the
+  orchestrator system prompt knows what's available. Removing
+  delete tools from `tools[]` keeps the iron-law system prompt
+  honest
+- The hook is the runtime gate. If a future Claude Code update
+  starts ignoring `tools[]`, or if a misconfigured override
+  enables more tools, the hook still denies. Defense-in-depth
+
+**Relationship to Decision D7:** D7 keeps `tdd_artifact_record`
+*entirely off* the MCP surface — hooks observe what the agent did,
+the agent never writes evidence about itself. D13 is a related
+but distinct pattern: the delete tools **exist** on the MCP
+surface (for the main agent under user confirmation) but are
+denied to the orchestrator at the hook layer. The two patterns
+together describe the full "MCP permits, agent restricts" doctrine.
+
+**Trade-offs:**
+
+- A misconfigured orchestrator (e.g., a fork that adds delete
+  tools back to `tools[]` and disables the hook) could call
+  deletes. Acceptable because both gates would have to fail
+  simultaneously
+- The hook's `permissionDecisionReason` text is the only place
+  the orchestrator sees *why* a delete was denied. Worth keeping
+  it explicit and pointing at `status: 'abandoned'` so the
+  remediation is obvious
+
+### Decision D14: Junction Table for Behavior Dependencies
+
+**Context:** Behaviors can depend on each other ("B1.2 depends on
+B1.1's test fixture"). The 1.x schema stored these as a
+JSON-in-TEXT array in `tdd_session_behaviors.depends_on_behavior_ids`.
+This made queries painful (no FK enforcement, no recursive walks
+without parsing JSON in SQL), and let the orchestrator write ids
+that no longer existed.
+
+**Decision:** dependencies live in a dedicated `tdd_behavior_dependencies`
+junction table with composite PK `(behavior_id, depends_on_id)` and
+`ON DELETE CASCADE` on both endpoints. A `CHECK (behavior_id !=
+depends_on_id)` prevents self-dependencies. A reverse-lookup index
+on `depends_on_id` enables "what depends on X" queries.
+
+**Why a junction table over JSON-in-TEXT:**
+
+- **FK enforcement.** Both endpoints reference
+  `tdd_session_behaviors(id)`. The DB rejects orphan ids the
+  orchestrator might supply by mistake, surfacing as
+  `BehaviorNotFoundError` at the DataStore boundary instead of a
+  silent "id 99 doesn't exist anymore" data-integrity bug
+- **Recursive CTE walks.** Common-table-expression queries can
+  traverse the dependency graph (forward or backward via the
+  reverse-lookup index) without parsing JSON in SQL — that's a
+  feature SQLite's JSON functions support but at significant
+  performance and clarity cost
+- **CASCADE semantics.** Deleting a behavior cleanly removes both
+  sides of every dependency edge it participates in. With JSON,
+  deleting a behavior would orphan ids in other behaviors' arrays
+  with no FK to flag the inconsistency
+- **Same-goal validation.** `createBehavior` validates that every
+  `dependsOnBehaviorIds` entry resolves to a behavior under the
+  *same* goal (else `BehaviorNotFoundError`) — a relational query
+  with the junction table; messier with JSON
+
+**Why CHECK on `behavior_id != depends_on_id`:**
+
+- Self-dependencies are always logically wrong (a behavior
+  blocking itself can never resolve)
+- Cheaper to enforce in DDL than to discover later in the
+  recursive walker
+
+**Trade-offs:**
+
+- One more table in the schema. Trivial cost; the junction has
+  no row-level state beyond the FKs
+- Updates to dependencies replace the entire set in one
+  transaction (`updateBehavior` deletes old rows, inserts new).
+  Slightly more SQL than overwriting a JSON column, but bundled
+  in `sql.withTransaction` so it's atomic
+
+### Decision D15: `tdd_phases.behavior_id` Cascade Change (SET NULL → CASCADE)
+
+**Context:** In 1.x, deleting a behavior left `tdd_phases` rows
+with `behavior_id = NULL` (`ON DELETE SET NULL`). This was a
+holdover from the old "behaviors are loosely related to phases"
+shape. After the 2.0 hierarchy redesign — where every phase row
+under an active session is bound to a specific behavior — the
+SET NULL semantics produce ledger orphans: phases nobody can
+attribute, evidence with no owner.
+
+**Decision:** change `tdd_phases.behavior_id` FK action to
+`ON DELETE CASCADE`. Deleting a behavior erases its entire phase
+ledger and (transitively, via `tdd_artifacts.behavior_id` also
+`ON DELETE CASCADE`) its evidence. The delete-vs-abandon
+distinction becomes:
+
+- **Delete = "this never existed."** Used to clean up duplicates
+  the orchestrator created by mistake. Removes all evidence —
+  there is nothing to attribute
+- **Abandon (status = `abandoned`) = "we tried but didn't
+  finish, preserve evidence."** This is the orchestrator's only
+  way to drop work. Keeps the phase ledger and artifacts
+  available for downstream metrics (`acceptance_metrics`),
+  failure-signature recurrence tracking, and post-hoc analysis
+
+**Why CASCADE over SET NULL:**
+
+- `tdd_phases` rows without a `behavior_id` cannot be reasoned
+  about by the binding-rule validator, the channel-event
+  renderer, or the metrics computation. Keeping the rows around
+  with NULL `behavior_id` is data leak, not preservation
+- The orchestrator is denied delete tools by
+  `pre-tool-use-tdd-restricted.sh` (Decision D13), so cascade
+  delete only happens via main-agent calls under explicit user
+  confirmation. The user has consented to the cascade
+- Abandon-via-status preserves the rows when preservation is
+  semantically appropriate. "We have two ways to drop work" is
+  the right factoring; "we have one way that always preserves
+  rows" was over-conservative
+
+**Why this is a deliberate decision and not a routine schema
+change:** the cascade direction matters for the entire mental
+model of how the TDD ledger relates to the goal/behavior tree.
+Documented here so it's hard to miss in code review.
+
+### Note N8: Single-statement ordinal allocation
+
+**Context:** Goals and behaviors carry `ordinal` columns that need
+to be monotonically increasing under their parent (session for
+goals, goal for behaviors). Concurrent inserts under the same
+parent must not collide on `UNIQUE (parent_id, ordinal)`.
+
+**Decision:** allocate ordinals in a single SQL statement:
+
+```sql
+INSERT INTO tdd_session_goals (session_id, ordinal, goal)
+SELECT ?, COALESCE(MAX(ordinal), -1) + 1, ?
+FROM tdd_session_goals
+WHERE session_id = ?
+RETURNING id, session_id, ordinal, goal, status, created_at;
+```
+
+The same pattern is used for behaviors with `goal_id`. The
+single statement holds its lock for the duration of the
+read-and-insert, so two concurrent inserters serialize on the
+unique constraint without needing `BEGIN IMMEDIATE` or
+application-level retry.
+
+**Why not `BEGIN IMMEDIATE` + read-then-insert:** that would work
+but adds a round-trip. The single-statement form is simpler and
+the lock window is shorter.
+
+**Why ordinals start at 0 (not 1):** internal artifact;
+applications use them only for ordering. Starting at 0 keeps
+`COALESCE(MAX(ordinal), -1) + 1` symmetric (the empty-table case
+yields 0). Channel events and the orchestrator's `[G<n>.B<m>]`
+labels are 1-based for human readability — that's a
+presentation-layer concern, not the DB's.
+
+### Note N9: `tdd_artifacts.behavior_id` for behavior-scoped queries
+
+**Context:** Pre-2.0, behavior-scoped artifact queries had to
+join `tdd_artifacts → tdd_phases → behavior_id`. This was
+tolerable but made every "what tests/code did we write for
+behavior X" query a two-hop join.
+
+**Decision:** add `behavior_id INTEGER REFERENCES
+tdd_session_behaviors(id) ON DELETE CASCADE` to `tdd_artifacts`
+plus `idx_tdd_artifacts_behavior` on it. This denormalizes the
+behavior reference one level so behavior-scoped queries are
+single-hop.
+
+**Why now:** D9 makes ALTER on `tdd_artifacts` expensive
+post-2.0. Adding the column during the in-place edit of
+`0002_comprehensive` is free.
+
+**Why CASCADE:** consistent with Decision D15 — when a behavior
+is deleted (main-agent under user confirmation), all its
+evidence goes too.
 
 ---
 
