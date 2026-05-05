@@ -15,6 +15,7 @@ export * from "./contracts/reporter.js";
 export * from "./errors/DataStoreError.js";
 export * from "./errors/DiscoveryError.js";
 export * from "./errors/PathResolutionError.js";
+export * from "./errors/TddErrors.js";
 // Formatters
 export * from "./formatters/ci-annotations.js";
 export * from "./formatters/gfm.js";
@@ -56,11 +57,13 @@ export { default as migration0005 } from "./migrations/0005_failure_signatures_l
 export * from "./schemas/AgentReport.js";
 export * from "./schemas/Baselines.js";
 export * from "./schemas/CacheManifest.js";
+export * from "./schemas/ChannelEvent.js";
 export * from "./schemas/Common.js";
 export * from "./schemas/Config.js";
 export * from "./schemas/Coverage.js";
 export * from "./schemas/History.js";
 export * from "./schemas/Options.js";
+export * from "./schemas/Tdd.js";
 export * from "./schemas/Thresholds.js";
 export * from "./schemas/Trends.js";
 // 2.0 turn schemas

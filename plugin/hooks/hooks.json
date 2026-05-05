@@ -36,6 +36,16 @@
 				]
 			},
 			{
+				"matcher": "mcp__(plugin_vitest-agent_mcp|vitest-agent_mcp)__(tdd_goal_delete|tdd_behavior_delete|tdd_artifact_record)",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use-tdd-restricted.sh\"",
+						"timeout": 5
+					}
+				]
+			},
+			{
 				"hooks": [
 					{
 						"type": "command",

@@ -62,8 +62,22 @@ hypothesis_validate
 tdd_session_start
 tdd_session_end
 tdd_session_resume
-decompose_goal_into_behaviors
 tdd_phase_transition_request
+
+# === final: TDD goal/behavior CRUD (read + non-destructive writes auto-allowed) ===
+# Deletes intentionally omitted — require explicit user confirmation
+# (tdd_goal_delete, tdd_behavior_delete cascade-delete phase/artifact history).
+tdd_goal_create
+tdd_goal_get
+tdd_goal_update
+tdd_goal_list
+tdd_behavior_create
+tdd_behavior_get
+tdd_behavior_update
+tdd_behavior_list
+
+# === final: TDD background orchestrator progress push ===
+tdd_progress_push
 
 # === final: Workspace history (read-only) ===
 commit_changes

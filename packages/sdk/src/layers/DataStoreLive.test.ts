@@ -1416,13 +1416,274 @@ describe("DataStoreLive", () => {
 		});
 	});
 
-	describe("writeTddSessionBehaviors", () => {
-		it("inserts each behavior with sequential ordinals starting at 0", async () => {
+	describe("createGoal", () => {
+		const seedTdd = (ccSessionId: string, goal: string = "obj") =>
+			Effect.gen(function* () {
+				const ds = yield* DataStore;
+				const sessionId = yield* ds.writeSession({
+					cc_session_id: ccSessionId,
+					project: "demo",
+					cwd: "/tmp/demo",
+					agent_kind: "subagent",
+					started_at: "2026-04-29T00:00:00Z",
+				});
+				const tddId = yield* ds.writeTddSession({
+					sessionId,
+					goal,
+					startedAt: "2026-04-29T00:00:01Z",
+				});
+				return tddId;
+			});
+
+		it("returns the new goal row with auto-assigned ordinal 0", async () => {
+			const goal = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const tddId = yield* seedTdd("cc-create-goal-0");
+					return yield* ds.createGoal({ sessionId: tddId, goal: "Handle out-of-bounds" });
+				}),
+			);
+			expect(goal.id).toBeGreaterThan(0);
+			expect(goal.ordinal).toBe(0);
+			expect(goal.goal).toBe("Handle out-of-bounds");
+			expect(goal.status).toBe("pending");
+			expect(goal.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+		});
+
+		it("assigns sequential ordinals 0,1,2 within a session", async () => {
+			const ordinals = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const tddId = yield* seedTdd("cc-create-goal-seq");
+					const a = yield* ds.createGoal({ sessionId: tddId, goal: "g1" });
+					const b = yield* ds.createGoal({ sessionId: tddId, goal: "g2" });
+					const c = yield* ds.createGoal({ sessionId: tddId, goal: "g3" });
+					return [a.ordinal, b.ordinal, c.ordinal];
+				}),
+			);
+			expect(ordinals).toEqual([0, 1, 2]);
+		});
+
+		it("uses independent ordinal sequences across sessions", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const tddA = yield* seedTdd("cc-create-goal-iA");
+					const tddB = yield* seedTdd("cc-create-goal-iB");
+					const a0 = yield* ds.createGoal({ sessionId: tddA, goal: "x" });
+					const b0 = yield* ds.createGoal({ sessionId: tddB, goal: "y" });
+					const a1 = yield* ds.createGoal({ sessionId: tddA, goal: "z" });
+					return { a0: a0.ordinal, b0: b0.ordinal, a1: a1.ordinal };
+				}),
+			);
+			expect(result).toEqual({ a0: 0, b0: 0, a1: 1 });
+		});
+
+		it("fails with TddSessionNotFoundError for unknown session id", async () => {
+			const exit = await Effect.runPromiseExit(
+				Effect.provide(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						return yield* ds.createGoal({ sessionId: 99999, goal: "g" });
+					}),
+					TestLayer,
+				),
+			);
+			expect(exit._tag).toBe("Failure");
+			if (exit._tag === "Failure") {
+				const failure = exit.cause.toString();
+				expect(failure).toContain("TddSessionNotFoundError");
+			}
+		});
+
+		it("fails with TddSessionAlreadyEndedError when parent session is closed", async () => {
+			const exit = await Effect.runPromiseExit(
+				Effect.provide(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						const tddId = yield* seedTdd("cc-create-goal-ended");
+						yield* ds.endTddSession({
+							id: tddId,
+							endedAt: "2026-04-29T00:01:00Z",
+							outcome: "succeeded",
+						});
+						return yield* ds.createGoal({ sessionId: tddId, goal: "late goal" });
+					}),
+					TestLayer,
+				),
+			);
+			expect(exit._tag).toBe("Failure");
+			if (exit._tag === "Failure") {
+				const failure = exit.cause.toString();
+				expect(failure).toContain("TddSessionAlreadyEndedError");
+			}
+		});
+	});
+
+	describe("getGoal", () => {
+		it("returns Option.some for an existing goal id", async () => {
 			const result = await run(
 				Effect.gen(function* () {
 					const ds = yield* DataStore;
 					const sessionId = yield* ds.writeSession({
-						cc_session_id: "cc-decomp",
+						cc_session_id: "cc-get-goal",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({ sessionId, goal: "g", startedAt: "2026-04-29T00:00:01Z" });
+					const created = yield* ds.createGoal({ sessionId: tddId, goal: "the goal" });
+					return yield* ds.getGoal(created.id);
+				}),
+			);
+			expect(result._tag).toBe("Some");
+			if (result._tag === "Some") {
+				expect(result.value.goal).toBe("the goal");
+				expect(result.value.status).toBe("pending");
+			}
+		});
+
+		it("returns Option.none for an unknown id", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					return yield* ds.getGoal(99999);
+				}),
+			);
+			expect(result._tag).toBe("None");
+		});
+	});
+
+	describe("updateGoal", () => {
+		const seedGoal = (ccSessionId: string) =>
+			Effect.gen(function* () {
+				const ds = yield* DataStore;
+				const sessionId = yield* ds.writeSession({
+					cc_session_id: ccSessionId,
+					project: "demo",
+					cwd: "/tmp/demo",
+					agent_kind: "subagent",
+					started_at: "2026-04-29T00:00:00Z",
+				});
+				const tddId = yield* ds.writeTddSession({ sessionId, goal: "obj", startedAt: "2026-04-29T00:00:01Z" });
+				return yield* ds.createGoal({ sessionId: tddId, goal: "g" });
+			});
+
+		it("updates the goal text", async () => {
+			const updated = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const goal = yield* seedGoal("cc-up-goal-text");
+					return yield* ds.updateGoal({ id: goal.id, goal: "renamed" });
+				}),
+			);
+			expect(updated.goal).toBe("renamed");
+			expect(updated.status).toBe("pending");
+		});
+
+		it("transitions pending → in_progress", async () => {
+			const updated = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const goal = yield* seedGoal("cc-up-goal-ip");
+					return yield* ds.updateGoal({ id: goal.id, status: "in_progress" });
+				}),
+			);
+			expect(updated.status).toBe("in_progress");
+		});
+
+		it("transitions in_progress → done", async () => {
+			const updated = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const goal = yield* seedGoal("cc-up-goal-done");
+					yield* ds.updateGoal({ id: goal.id, status: "in_progress" });
+					return yield* ds.updateGoal({ id: goal.id, status: "done" });
+				}),
+			);
+			expect(updated.status).toBe("done");
+		});
+
+		it("allows pending → abandoned and in_progress → abandoned", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const a = yield* seedGoal("cc-up-goal-abp");
+					const b = yield* seedGoal("cc-up-goal-abi");
+					yield* ds.updateGoal({ id: b.id, status: "in_progress" });
+					const aA = yield* ds.updateGoal({ id: a.id, status: "abandoned" });
+					const bA = yield* ds.updateGoal({ id: b.id, status: "abandoned" });
+					return { a: aA.status, b: bA.status };
+				}),
+			);
+			expect(result).toEqual({ a: "abandoned", b: "abandoned" });
+		});
+
+		it("rejects done → pending with IllegalStatusTransitionError", async () => {
+			const exit = await Effect.runPromiseExit(
+				Effect.provide(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						const goal = yield* seedGoal("cc-up-goal-illegal");
+						yield* ds.updateGoal({ id: goal.id, status: "in_progress" });
+						yield* ds.updateGoal({ id: goal.id, status: "done" });
+						return yield* ds.updateGoal({ id: goal.id, status: "pending" });
+					}),
+					TestLayer,
+				),
+			);
+			expect(exit._tag).toBe("Failure");
+			if (exit._tag === "Failure") {
+				const failure = exit.cause.toString();
+				expect(failure).toContain("IllegalStatusTransitionError");
+			}
+		});
+
+		it("rejects abandoned → in_progress (terminal state)", async () => {
+			const exit = await Effect.runPromiseExit(
+				Effect.provide(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						const goal = yield* seedGoal("cc-up-goal-terminal");
+						yield* ds.updateGoal({ id: goal.id, status: "abandoned" });
+						return yield* ds.updateGoal({ id: goal.id, status: "in_progress" });
+					}),
+					TestLayer,
+				),
+			);
+			expect(exit._tag).toBe("Failure");
+			if (exit._tag === "Failure") {
+				const failure = exit.cause.toString();
+				expect(failure).toContain("IllegalStatusTransitionError");
+			}
+		});
+
+		it("fails with GoalNotFoundError for unknown id", async () => {
+			const exit = await Effect.runPromiseExit(
+				Effect.provide(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						return yield* ds.updateGoal({ id: 99999, status: "in_progress" });
+					}),
+					TestLayer,
+				),
+			);
+			expect(exit._tag).toBe("Failure");
+			if (exit._tag === "Failure") {
+				const failure = exit.cause.toString();
+				expect(failure).toContain("GoalNotFoundError");
+			}
+		});
+	});
+
+	describe("deleteGoal", () => {
+		it("removes the goal row", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-del-goal",
 						project: "demo",
 						cwd: "/tmp/demo",
 						agent_kind: "subagent",
@@ -1430,27 +1691,608 @@ describe("DataStoreLive", () => {
 					});
 					const tddId = yield* ds.writeTddSession({
 						sessionId,
-						goal: "add OAuth flow",
+						goal: "g",
 						startedAt: "2026-04-29T00:00:01Z",
 					});
+					const goal = yield* ds.createGoal({ sessionId: tddId, goal: "to be removed" });
+					yield* ds.deleteGoal(goal.id);
+					return yield* ds.getGoal(goal.id);
+				}),
+			);
+			expect(result._tag).toBe("None");
+		});
 
-					return yield* ds.writeTddSessionBehaviors({
-						parentTddSessionId: tddId,
-						behaviors: [
-							{ behavior: "rejects empty token", suggestedTestName: "rejects empty token" },
-							{
-								behavior: "accepts valid token",
-								suggestedTestName: "accepts valid token",
-								dependsOnBehaviorIds: [],
-							},
-						],
+		it("fails with GoalNotFoundError for unknown id", async () => {
+			const exit = await Effect.runPromiseExit(
+				Effect.provide(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						return yield* ds.deleteGoal(99999);
+					}),
+					TestLayer,
+				),
+			);
+			expect(exit._tag).toBe("Failure");
+			if (exit._tag === "Failure") {
+				const failure = exit.cause.toString();
+				expect(failure).toContain("GoalNotFoundError");
+			}
+		});
+	});
+
+	describe("listGoalsBySession", () => {
+		it("returns goals in ordinal order", async () => {
+			const goals = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-list-goals",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({
+						sessionId,
+						goal: "obj",
+						startedAt: "2026-04-29T00:00:01Z",
+					});
+					yield* ds.createGoal({ sessionId: tddId, goal: "first" });
+					yield* ds.createGoal({ sessionId: tddId, goal: "second" });
+					yield* ds.createGoal({ sessionId: tddId, goal: "third" });
+					return yield* ds.listGoalsBySession(tddId);
+				}),
+			);
+			expect(goals).toHaveLength(3);
+			expect(goals.map((g) => g.goal)).toEqual(["first", "second", "third"]);
+			expect(goals.map((g) => g.ordinal)).toEqual([0, 1, 2]);
+		});
+
+		it("returns an empty array when the session has no goals", async () => {
+			const goals = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-list-goals-empty",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({
+						sessionId,
+						goal: "obj",
+						startedAt: "2026-04-29T00:00:01Z",
+					});
+					return yield* ds.listGoalsBySession(tddId);
+				}),
+			);
+			expect(goals).toEqual([]);
+		});
+
+		it("fails with TddSessionNotFoundError for unknown session", async () => {
+			const exit = await Effect.runPromiseExit(
+				Effect.provide(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						return yield* ds.listGoalsBySession(99999);
+					}),
+					TestLayer,
+				),
+			);
+			expect(exit._tag).toBe("Failure");
+			if (exit._tag === "Failure") {
+				const failure = exit.cause.toString();
+				expect(failure).toContain("TddSessionNotFoundError");
+			}
+		});
+	});
+
+	describe("createBehavior", () => {
+		const seedGoal = (ccSessionId: string, opts?: { ended?: boolean; goalDone?: boolean }) =>
+			Effect.gen(function* () {
+				const ds = yield* DataStore;
+				const sessionId = yield* ds.writeSession({
+					cc_session_id: ccSessionId,
+					project: "demo",
+					cwd: "/tmp/demo",
+					agent_kind: "subagent",
+					started_at: "2026-04-29T00:00:00Z",
+				});
+				const tddId = yield* ds.writeTddSession({ sessionId, goal: "obj", startedAt: "2026-04-29T00:00:01Z" });
+				const goal = yield* ds.createGoal({ sessionId: tddId, goal: "g" });
+				if (opts?.goalDone) {
+					yield* ds.updateGoal({ id: goal.id, status: "in_progress" });
+					yield* ds.updateGoal({ id: goal.id, status: "done" });
+				}
+				if (opts?.ended) {
+					yield* ds.endTddSession({ id: tddId, endedAt: "2026-04-29T00:01:00Z", outcome: "succeeded" });
+				}
+				return { tddId, goalId: goal.id };
+			});
+
+		it("returns the new behavior row with auto-assigned ordinal 0", async () => {
+			const beh = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const { goalId } = yield* seedGoal("cc-create-beh-0");
+					return yield* ds.createBehavior({ goalId, behavior: "throws on negative" });
+				}),
+			);
+			expect(beh.ordinal).toBe(0);
+			expect(beh.behavior).toBe("throws on negative");
+			expect(beh.goalId).toBeGreaterThan(0);
+			expect(beh.status).toBe("pending");
+			expect(beh.suggestedTestName).toBeNull();
+		});
+
+		it("assigns sequential ordinals per goal", async () => {
+			const ordinals = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const { goalId } = yield* seedGoal("cc-create-beh-seq");
+					const a = yield* ds.createBehavior({ goalId, behavior: "b1" });
+					const b = yield* ds.createBehavior({ goalId, behavior: "b2" });
+					const c = yield* ds.createBehavior({ goalId, behavior: "b3" });
+					return [a.ordinal, b.ordinal, c.ordinal];
+				}),
+			);
+			expect(ordinals).toEqual([0, 1, 2]);
+		});
+
+		it("uses independent ordinal sequences across goals", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const { tddId, goalId: g1 } = yield* seedGoal("cc-create-beh-multi");
+					const g2 = yield* ds.createGoal({ sessionId: tddId, goal: "g2" });
+					const a = yield* ds.createBehavior({ goalId: g1, behavior: "x" });
+					const b = yield* ds.createBehavior({ goalId: g2.id, behavior: "y" });
+					const a2 = yield* ds.createBehavior({ goalId: g1, behavior: "x2" });
+					return { a: a.ordinal, b: b.ordinal, a2: a2.ordinal };
+				}),
+			);
+			expect(result).toEqual({ a: 0, b: 0, a2: 1 });
+		});
+
+		it("persists suggestedTestName when provided", async () => {
+			const beh = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const { goalId } = yield* seedGoal("cc-create-beh-stn");
+					return yield* ds.createBehavior({
+						goalId,
+						behavior: "throws on neg",
+						suggestedTestName: "should throw RangeError on negative",
 					});
 				}),
 			);
-			expect(result).toHaveLength(2);
-			expect(result[0].ordinal).toBe(0);
-			expect(result[1].ordinal).toBe(1);
-			expect(result[0].behavior).toBe("rejects empty token");
+			expect(beh.suggestedTestName).toBe("should throw RangeError on negative");
+		});
+
+		it("writes junction rows for dependsOnBehaviorIds", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sql = yield* SqlClient;
+					const { goalId } = yield* seedGoal("cc-create-beh-dep");
+					const first = yield* ds.createBehavior({ goalId, behavior: "first" });
+					const second = yield* ds.createBehavior({
+						goalId,
+						behavior: "second",
+						dependsOnBehaviorIds: [first.id],
+					});
+					const deps = yield* sql<{ behavior_id: number; depends_on_id: number }>`
+						SELECT behavior_id, depends_on_id FROM tdd_behavior_dependencies
+						WHERE behavior_id = ${second.id}
+					`;
+					return { firstId: first.id, secondId: second.id, deps };
+				}),
+			);
+			expect(result.deps).toHaveLength(1);
+			expect(result.deps[0].behavior_id).toBe(result.secondId);
+			expect(result.deps[0].depends_on_id).toBe(result.firstId);
+		});
+
+		it("fails with GoalNotFoundError for unknown goalId", async () => {
+			const exit = await Effect.runPromiseExit(
+				Effect.provide(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						return yield* ds.createBehavior({ goalId: 99999, behavior: "x" });
+					}),
+					TestLayer,
+				),
+			);
+			expect(exit._tag).toBe("Failure");
+			if (exit._tag === "Failure") {
+				expect(exit.cause.toString()).toContain("GoalNotFoundError");
+			}
+		});
+
+		it("fails with TddSessionAlreadyEndedError when parent session is closed", async () => {
+			const exit = await Effect.runPromiseExit(
+				Effect.provide(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						const { goalId } = yield* seedGoal("cc-create-beh-ended", { ended: true });
+						return yield* ds.createBehavior({ goalId, behavior: "x" });
+					}),
+					TestLayer,
+				),
+			);
+			expect(exit._tag).toBe("Failure");
+			if (exit._tag === "Failure") {
+				expect(exit.cause.toString()).toContain("TddSessionAlreadyEndedError");
+			}
+		});
+
+		it("fails with IllegalStatusTransitionError when goal is closed", async () => {
+			const exit = await Effect.runPromiseExit(
+				Effect.provide(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						const { goalId } = yield* seedGoal("cc-create-beh-goaldone", { goalDone: true });
+						return yield* ds.createBehavior({ goalId, behavior: "x" });
+					}),
+					TestLayer,
+				),
+			);
+			expect(exit._tag).toBe("Failure");
+			if (exit._tag === "Failure") {
+				expect(exit.cause.toString()).toContain("IllegalStatusTransitionError");
+			}
+		});
+
+		it("fails with BehaviorNotFoundError when a dependency id is unknown", async () => {
+			const exit = await Effect.runPromiseExit(
+				Effect.provide(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						const { goalId } = yield* seedGoal("cc-create-beh-deperr");
+						return yield* ds.createBehavior({
+							goalId,
+							behavior: "x",
+							dependsOnBehaviorIds: [99999],
+						});
+					}),
+					TestLayer,
+				),
+			);
+			expect(exit._tag).toBe("Failure");
+			if (exit._tag === "Failure") {
+				expect(exit.cause.toString()).toContain("BehaviorNotFoundError");
+			}
+		});
+
+		it("fails with BehaviorNotFoundError when a dependency is in a different goal", async () => {
+			const exit = await Effect.runPromiseExit(
+				Effect.provide(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						const { tddId, goalId: g1 } = yield* seedGoal("cc-create-beh-depgoal");
+						const g2 = yield* ds.createGoal({ sessionId: tddId, goal: "g2" });
+						const beh = yield* ds.createBehavior({ goalId: g1, behavior: "g1-behavior" });
+						return yield* ds.createBehavior({
+							goalId: g2.id,
+							behavior: "g2-behavior",
+							dependsOnBehaviorIds: [beh.id],
+						});
+					}),
+					TestLayer,
+				),
+			);
+			expect(exit._tag).toBe("Failure");
+			if (exit._tag === "Failure") {
+				expect(exit.cause.toString()).toContain("BehaviorNotFoundError");
+			}
+		});
+	});
+
+	describe("getBehavior", () => {
+		it("returns Option.some for an existing behavior", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-get-beh",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({ sessionId, goal: "obj", startedAt: "2026-04-29T00:00:01Z" });
+					const goal = yield* ds.createGoal({ sessionId: tddId, goal: "g" });
+					const beh = yield* ds.createBehavior({ goalId: goal.id, behavior: "b" });
+					return yield* ds.getBehavior(beh.id);
+				}),
+			);
+			expect(result._tag).toBe("Some");
+			if (result._tag === "Some") {
+				expect(result.value.behavior).toBe("b");
+			}
+		});
+
+		it("returns Option.none for an unknown id", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					return yield* ds.getBehavior(99999);
+				}),
+			);
+			expect(result._tag).toBe("None");
+		});
+	});
+
+	describe("updateBehavior", () => {
+		const seedBehavior = (ccSessionId: string) =>
+			Effect.gen(function* () {
+				const ds = yield* DataStore;
+				const sessionId = yield* ds.writeSession({
+					cc_session_id: ccSessionId,
+					project: "demo",
+					cwd: "/tmp/demo",
+					agent_kind: "subagent",
+					started_at: "2026-04-29T00:00:00Z",
+				});
+				const tddId = yield* ds.writeTddSession({ sessionId, goal: "obj", startedAt: "2026-04-29T00:00:01Z" });
+				const goal = yield* ds.createGoal({ sessionId: tddId, goal: "g" });
+				const beh = yield* ds.createBehavior({ goalId: goal.id, behavior: "b1" });
+				return { goalId: goal.id, behaviorId: beh.id };
+			});
+
+		it("updates the behavior text and suggestedTestName", async () => {
+			const updated = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const { behaviorId } = yield* seedBehavior("cc-up-beh-text");
+					return yield* ds.updateBehavior({
+						id: behaviorId,
+						behavior: "renamed",
+						suggestedTestName: "should renamed",
+					});
+				}),
+			);
+			expect(updated.behavior).toBe("renamed");
+			expect(updated.suggestedTestName).toBe("should renamed");
+		});
+
+		it("transitions through pending → in_progress → done", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const { behaviorId } = yield* seedBehavior("cc-up-beh-states");
+					const ip = yield* ds.updateBehavior({ id: behaviorId, status: "in_progress" });
+					const done = yield* ds.updateBehavior({ id: behaviorId, status: "done" });
+					return { ip: ip.status, done: done.status };
+				}),
+			);
+			expect(result).toEqual({ ip: "in_progress", done: "done" });
+		});
+
+		it("rejects done → pending with IllegalStatusTransitionError", async () => {
+			const exit = await Effect.runPromiseExit(
+				Effect.provide(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						const { behaviorId } = yield* seedBehavior("cc-up-beh-illegal");
+						yield* ds.updateBehavior({ id: behaviorId, status: "in_progress" });
+						yield* ds.updateBehavior({ id: behaviorId, status: "done" });
+						return yield* ds.updateBehavior({ id: behaviorId, status: "pending" });
+					}),
+					TestLayer,
+				),
+			);
+			expect(exit._tag).toBe("Failure");
+			if (exit._tag === "Failure") {
+				expect(exit.cause.toString()).toContain("IllegalStatusTransitionError");
+			}
+		});
+
+		it("fails with BehaviorNotFoundError for unknown id", async () => {
+			const exit = await Effect.runPromiseExit(
+				Effect.provide(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						return yield* ds.updateBehavior({ id: 99999, status: "in_progress" });
+					}),
+					TestLayer,
+				),
+			);
+			expect(exit._tag).toBe("Failure");
+			if (exit._tag === "Failure") {
+				expect(exit.cause.toString()).toContain("BehaviorNotFoundError");
+			}
+		});
+
+		it("replaces the dependency set when dependsOnBehaviorIds is provided", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sql = yield* SqlClient;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-up-beh-dep",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({ sessionId, goal: "obj", startedAt: "2026-04-29T00:00:01Z" });
+					const goal = yield* ds.createGoal({ sessionId: tddId, goal: "g" });
+					const a = yield* ds.createBehavior({ goalId: goal.id, behavior: "a" });
+					const b = yield* ds.createBehavior({ goalId: goal.id, behavior: "b" });
+					const target = yield* ds.createBehavior({
+						goalId: goal.id,
+						behavior: "target",
+						dependsOnBehaviorIds: [a.id],
+					});
+					yield* ds.updateBehavior({ id: target.id, dependsOnBehaviorIds: [b.id] });
+					const deps = yield* sql<{ depends_on_id: number }>`
+						SELECT depends_on_id FROM tdd_behavior_dependencies WHERE behavior_id = ${target.id}
+					`;
+					return { aId: a.id, bId: b.id, deps };
+				}),
+			);
+			expect(result.deps).toHaveLength(1);
+			expect(result.deps[0].depends_on_id).toBe(result.bId);
+		});
+
+		it("clears dependencies when dependsOnBehaviorIds is an empty array", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sql = yield* SqlClient;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-up-beh-deperase",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({ sessionId, goal: "obj", startedAt: "2026-04-29T00:00:01Z" });
+					const goal = yield* ds.createGoal({ sessionId: tddId, goal: "g" });
+					const dep = yield* ds.createBehavior({ goalId: goal.id, behavior: "dep" });
+					const target = yield* ds.createBehavior({
+						goalId: goal.id,
+						behavior: "target",
+						dependsOnBehaviorIds: [dep.id],
+					});
+					yield* ds.updateBehavior({ id: target.id, dependsOnBehaviorIds: [] });
+					return yield* sql<{ c: number }>`
+						SELECT COUNT(*) AS c FROM tdd_behavior_dependencies WHERE behavior_id = ${target.id}
+					`;
+				}),
+			);
+			expect(result[0].c).toBe(0);
+		});
+	});
+
+	describe("deleteBehavior", () => {
+		it("removes the behavior row and its dependency entries", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sql = yield* SqlClient;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-del-beh",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({ sessionId, goal: "obj", startedAt: "2026-04-29T00:00:01Z" });
+					const goal = yield* ds.createGoal({ sessionId: tddId, goal: "g" });
+					const a = yield* ds.createBehavior({ goalId: goal.id, behavior: "a" });
+					const b = yield* ds.createBehavior({
+						goalId: goal.id,
+						behavior: "b",
+						dependsOnBehaviorIds: [a.id],
+					});
+					yield* ds.deleteBehavior(b.id);
+					const remaining = yield* ds.getBehavior(b.id);
+					const deps = yield* sql<{ c: number }>`SELECT COUNT(*) AS c FROM tdd_behavior_dependencies`;
+					return { remaining, depsCount: deps[0].c };
+				}),
+			);
+			expect(result.remaining._tag).toBe("None");
+			expect(result.depsCount).toBe(0);
+		});
+
+		it("fails with BehaviorNotFoundError for unknown id", async () => {
+			const exit = await Effect.runPromiseExit(
+				Effect.provide(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						return yield* ds.deleteBehavior(99999);
+					}),
+					TestLayer,
+				),
+			);
+			expect(exit._tag).toBe("Failure");
+			if (exit._tag === "Failure") {
+				expect(exit.cause.toString()).toContain("BehaviorNotFoundError");
+			}
+		});
+	});
+
+	describe("listBehaviorsByGoal", () => {
+		it("returns behaviors in ordinal order", async () => {
+			const beh = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-list-beh-goal",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({ sessionId, goal: "obj", startedAt: "2026-04-29T00:00:01Z" });
+					const goal = yield* ds.createGoal({ sessionId: tddId, goal: "g" });
+					yield* ds.createBehavior({ goalId: goal.id, behavior: "x" });
+					yield* ds.createBehavior({ goalId: goal.id, behavior: "y" });
+					return yield* ds.listBehaviorsByGoal(goal.id);
+				}),
+			);
+			expect(beh.map((b) => b.behavior)).toEqual(["x", "y"]);
+		});
+
+		it("fails with GoalNotFoundError for unknown goal", async () => {
+			const exit = await Effect.runPromiseExit(
+				Effect.provide(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						return yield* ds.listBehaviorsByGoal(99999);
+					}),
+					TestLayer,
+				),
+			);
+			expect(exit._tag).toBe("Failure");
+			if (exit._tag === "Failure") {
+				expect(exit.cause.toString()).toContain("GoalNotFoundError");
+			}
+		});
+	});
+
+	describe("listBehaviorsBySession", () => {
+		it("returns all behaviors across goals in the session", async () => {
+			const beh = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-list-beh-session",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({ sessionId, goal: "obj", startedAt: "2026-04-29T00:00:01Z" });
+					const g1 = yield* ds.createGoal({ sessionId: tddId, goal: "g1" });
+					const g2 = yield* ds.createGoal({ sessionId: tddId, goal: "g2" });
+					yield* ds.createBehavior({ goalId: g1.id, behavior: "a" });
+					yield* ds.createBehavior({ goalId: g2.id, behavior: "b" });
+					yield* ds.createBehavior({ goalId: g1.id, behavior: "c" });
+					return yield* ds.listBehaviorsBySession(tddId);
+				}),
+			);
+			expect(beh).toHaveLength(3);
+			expect(beh.map((b) => b.behavior).sort()).toEqual(["a", "b", "c"]);
+		});
+
+		it("fails with TddSessionNotFoundError for unknown session", async () => {
+			const exit = await Effect.runPromiseExit(
+				Effect.provide(
+					Effect.gen(function* () {
+						const ds = yield* DataStore;
+						return yield* ds.listBehaviorsBySession(99999);
+					}),
+					TestLayer,
+				),
+			);
+			expect(exit._tag).toBe("Failure");
+			if (exit._tag === "Failure") {
+				expect(exit.cause.toString()).toContain("TddSessionNotFoundError");
+			}
 		});
 	});
 

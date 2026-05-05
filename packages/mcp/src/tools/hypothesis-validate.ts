@@ -1,14 +1,15 @@
 import { Effect, Schema } from "effect";
 import { DataStore } from "vitest-agent-sdk";
+import { CoercedNumber } from "../coerce-schema.js";
 import { idempotentProcedure } from "../middleware/idempotency.js";
 
 export const hypothesisValidate = idempotentProcedure
 	.input(
 		Schema.standardSchemaV1(
 			Schema.Struct({
-				id: Schema.Number,
+				id: CoercedNumber,
 				outcome: Schema.Literal("confirmed", "refuted", "abandoned"),
-				validatedTurnId: Schema.optional(Schema.Number),
+				validatedTurnId: Schema.optional(CoercedNumber),
 				validatedAt: Schema.String,
 			}),
 		),

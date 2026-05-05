@@ -14,21 +14,27 @@ I'll help you implement {{ goal }} using test-driven development.
 
 Before spawning the orchestrator, look up the current session id:
 
-1. Call `session_list({ agentKind: "main", limit: 1 })` to find the most recently started main session row.
-2. Note the `cc_session_id` from that row.
+1. Call `get_current_session_id({})` to retrieve the current Claude Code session ID.
+2. Note the returned `currentSessionId`.
 
-Then spawn the `tdd-orchestrator` subagent with a prompt that includes:
+Then spawn the `tdd-orchestrator` subagent **in the background** (`run_in_background: true`) with a prompt that includes:
 
 - The goal: `{{ goal }}`
 - The resolved `ccSessionId` from step 2
 
+After spawning:
+
+1. Create a parent task `TDD Session: {{ goal }}` with status `in_progress`.
+2. Tell the user behavior tasks will appear as the orchestrator decomposes the goal, then return control so they can continue working.
+
 The subagent will:
 
 1. Open a TDD session for this goal.
-2. Decompose the goal into single-behavior atoms if it's non-trivial.
-3. Drive red → green → refactor cycles with evidence-based phase transitions.
-4. Run with restricted Bash (no `--update`, `-u`, `--reporter=silent`, `--bail`, `-t`, `--testNamePattern`, no edits to `coverage.exclude` / `setupFiles` / `globalSetup` / `*.snap`).
+2. Decompose the objective into goals via `tdd_goal_create`, then decompose each goal into behaviors via `tdd_behavior_create`. Goals and behaviors are queryable via `tdd_goal_list` / `tdd_behavior_list`.
+3. Drive red → green → refactor cycles per behavior with evidence-based phase transitions.
+4. Run with restricted Bash and restricted MCP tools (deletes denied at the hook layer; orchestrator must use `status: 'abandoned'` to drop work).
+5. Push progress events via `tdd_progress_push` at each lifecycle point.
 
-When the subagent finishes, I'll receive a structured handoff message summarizing what was accomplished. You can resume an open TDD session anytime with `tdd_session_resume(id)` via the MCP tool.
+Channel-event handling (when Claude Code's channels are active) and the task-list rendering rules live in the `tdd` skill. If you are the main agent and channels are active, refer to `plugin/skills/tdd/SKILL.md` for the event handler table and the flat `[G<n>.B<m>]` label-encoding convention.
 
 Starting orchestrator now...

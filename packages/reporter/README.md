@@ -11,8 +11,8 @@ tools.
 
 - **SQLite persistence** -- normalized database replaces JSON files for
   richer queries and cross-run analysis
-- **MCP server** -- 41 tools over stdio for deep integration with LLM
-  agents (test data, notes, coverage, discovery, run tests)
+- **MCP server** -- 50 tools over stdio for deep integration with LLM
+  agents (test data, notes, coverage, discovery, TDD hierarchy, run tests)
 - **Claude Code plugin** -- auto-registers MCP tools, injects test
   context at session start, and provides teaching skills
 - **Zero-config agent detection** -- uses
@@ -24,6 +24,7 @@ tools.
   tiered console output (green/yellow/red)
 - **Failure history** -- per-test pass/fail tracking with classification:
   `stable`, `new-failure`, `persistent`, `flaky`, `recovered`
+- **TDD goal and behavior tracking** -- three-tier Objective→Goal→Behavior hierarchy with CRUD, status lifecycle, dependency tracking, and evidence-bound phase transitions
 - **Notes system** -- CRUD + full-text search for persisting debugging
   notes across sessions
 - **GitHub Actions GFM** -- writes structured summaries to
@@ -84,9 +85,9 @@ Install the Claude Code plugin for the full agent experience:
 ```
 
 That's it. The plugin detects whether an agent, CI, or human is running
-tests and adjusts output automatically. Agents get 41 MCP tools for
-querying test data, tracking coverage, and persisting notes -- with no
-manual MCP configuration.
+tests and adjusts output automatically. Agents get 50 MCP tools for
+querying test data, tracking coverage, managing TDD goals and behaviors,
+and persisting notes -- with no manual MCP configuration.
 
 ## What Agents See
 
@@ -175,7 +176,7 @@ plugin provides the full agent-native experience:
 
 The plugin provides:
 
-- **MCP auto-registration** -- all 41 tools available immediately with
+- **MCP auto-registration** -- all 50 tools available immediately with
   no manual `.mcp.json` configuration
 - **SessionStart hook** -- injects project status and available tools
   into Claude's context at the start of each session
@@ -198,7 +199,7 @@ npx vitest-agent-mcp
 ```
 
 <details>
-<summary>Full tool reference (41 tools)</summary>
+<summary>Full tool reference (50 tools)</summary>
 
 | Tool | Description |
 | --- | --- |
@@ -230,7 +231,7 @@ npx vitest-agent-mcp
 | `session_get` | Read a Claude Code session by ID |
 | `turn_search` | Search turn log entries by session, type, or timestamp |
 | `failure_signature_get` | Read a failure signature by hash, with recent matching errors |
-| `tdd_session_get` | Read a TDD session with its phases and artifacts |
+| `tdd_session_get` | Read a TDD session with phases, artifacts, and a Goals and Behaviors section |
 | `hypothesis_list` | List hypotheses with optional session and outcome filters |
 | `acceptance_metrics` | Compute phase-evidence integrity and compliance ratios |
 | `triage_brief` | Orientation summary: recent runs, failures, and triage context |
@@ -240,8 +241,17 @@ npx vitest-agent-mcp
 | `tdd_session_start` | Open a new TDD session with a goal |
 | `tdd_session_end` | Close a TDD session with an outcome |
 | `tdd_session_resume` | Get a markdown digest of an open TDD session |
-| `decompose_goal_into_behaviors` | Split a TDD goal into ordered atomic behaviors |
 | `tdd_phase_transition_request` | Request a TDD phase transition; validated against evidence artifacts |
+| `tdd_goal_create` | Create a goal under a TDD session (idempotent on session + goal text) |
+| `tdd_goal_get` | Read a goal with nested behaviors |
+| `tdd_goal_update` | Update a goal's text or status |
+| `tdd_goal_delete` | Hard-delete a goal and its behaviors, phases, and artifacts |
+| `tdd_goal_list` | List goals for a session with nested behaviors, ordered by ordinal |
+| `tdd_behavior_create` | Create a behavior under a goal (idempotent on goal + behavior text) |
+| `tdd_behavior_get` | Read a behavior with its parent goal and dependencies |
+| `tdd_behavior_update` | Update a behavior's text, suggested test name, status, or dependencies |
+| `tdd_behavior_delete` | Hard-delete a behavior and its phases and artifacts |
+| `tdd_behavior_list` | List behaviors by goal or session |
 | `commit_changes` | Workspace git commit history joined with per-run changed files |
 
 </details>

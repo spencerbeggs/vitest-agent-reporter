@@ -98,20 +98,21 @@ export const idempotencyKeys: ReadonlyArray<IdempotencyKeySpec> = [
 		},
 	},
 	{
-		procedurePath: "decompose_goal_into_behaviors",
+		procedurePath: "tdd_goal_create",
 		deriveKey: (input) => {
-			if (
-				input !== null &&
-				typeof input === "object" &&
-				"tddSessionId" in input &&
-				"goal" in input &&
-				typeof (input as Record<string, unknown>).tddSessionId === "number" &&
-				typeof (input as Record<string, unknown>).goal === "string"
-			) {
-				const i = input as { tddSessionId: number; goal: string };
-				return `${i.tddSessionId}:${i.goal}`;
-			}
-			return null;
+			if (input === null || typeof input !== "object") return null;
+			const i = input as Record<string, unknown>;
+			if (typeof i.sessionId !== "number" || typeof i.goal !== "string") return null;
+			return `${i.sessionId}:${i.goal}`;
+		},
+	},
+	{
+		procedurePath: "tdd_behavior_create",
+		deriveKey: (input) => {
+			if (input === null || typeof input !== "object") return null;
+			const i = input as Record<string, unknown>;
+			if (typeof i.goalId !== "number" || typeof i.behavior !== "string") return null;
+			return `${i.goalId}:${i.behavior}`;
 		},
 	},
 ];

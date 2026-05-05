@@ -6,6 +6,7 @@ import type { CoverageBaselines } from "../schemas/Baselines.js";
 import type { CacheManifest } from "../schemas/CacheManifest.js";
 import type { CoverageReport, FileCoverageReport } from "../schemas/Coverage.js";
 import type { HistoryRecord } from "../schemas/History.js";
+import type { BehaviorDetail, BehaviorRow, BehaviorStatus, GoalDetail, GoalStatus } from "../schemas/Tdd.js";
 import type { TrendRecord } from "../schemas/Trends.js";
 import type {
 	AcceptanceMetrics,
@@ -1658,6 +1659,222 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				),
 			);
 
+		interface RawGoalRow {
+			id: number;
+			session_id: number;
+			ordinal: number;
+			goal: string;
+			status: string;
+			created_at: string;
+		}
+
+		interface RawBehaviorRow {
+			id: number;
+			goal_id: number;
+			ordinal: number;
+			behavior: string;
+			suggested_test_name: string | null;
+			status: string;
+			created_at: string;
+		}
+
+		const goalRowFromDb = (row: RawGoalRow) => ({
+			id: row.id,
+			sessionId: row.session_id,
+			ordinal: row.ordinal,
+			goal: row.goal,
+			status: row.status as GoalStatus,
+			createdAt: row.created_at,
+		});
+
+		const behaviorRowFromDb = (row: RawBehaviorRow): BehaviorRow => ({
+			id: row.id,
+			goalId: row.goal_id,
+			ordinal: row.ordinal,
+			behavior: row.behavior,
+			suggestedTestName: row.suggested_test_name,
+			status: row.status as BehaviorStatus,
+			createdAt: row.created_at,
+		});
+
+		const fetchGoalsWithBehaviors = (sessionId: number) =>
+			Effect.gen(function* () {
+				const goals = yield* sql<RawGoalRow>`
+					SELECT id, session_id, ordinal, goal, status, created_at
+					FROM tdd_session_goals
+					WHERE session_id = ${sessionId}
+					ORDER BY ordinal
+				`;
+				if (goals.length === 0) return [] as ReadonlyArray<GoalDetail>;
+				const goalIds = goals.map((g) => g.id);
+				const behaviors = yield* sql<RawBehaviorRow>`
+					SELECT id, goal_id, ordinal, behavior, suggested_test_name, status, created_at
+					FROM tdd_session_behaviors
+					WHERE goal_id IN ${sql.in(goalIds)}
+					ORDER BY goal_id, ordinal
+				`;
+				const byGoal = new Map<number, BehaviorRow[]>();
+				for (const id of goalIds) byGoal.set(id, []);
+				for (const b of behaviors) {
+					const list = byGoal.get(b.goal_id);
+					if (list) list.push(behaviorRowFromDb(b));
+				}
+				return goals.map<GoalDetail>((g) => ({
+					...goalRowFromDb(g),
+					behaviors: byGoal.get(g.id) ?? [],
+				}));
+			});
+
+		const getGoalById = (id: number): Effect.Effect<Option.Option<GoalDetail>, DataStoreError> =>
+			Effect.gen(function* () {
+				const goalRows = yield* sql<RawGoalRow>`
+					SELECT id, session_id, ordinal, goal, status, created_at
+					FROM tdd_session_goals
+					WHERE id = ${id}
+				`;
+				if (goalRows.length === 0) return Option.none<GoalDetail>();
+				const beh = yield* sql<RawBehaviorRow>`
+					SELECT id, goal_id, ordinal, behavior, suggested_test_name, status, created_at
+					FROM tdd_session_behaviors
+					WHERE goal_id = ${id}
+					ORDER BY ordinal
+				`;
+				return Option.some<GoalDetail>({
+					...goalRowFromDb(goalRows[0]),
+					behaviors: beh.map(behaviorRowFromDb),
+				});
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "tdd_session_goals", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const getGoalsBySession = (sessionId: number): Effect.Effect<ReadonlyArray<GoalDetail>, DataStoreError> =>
+			fetchGoalsWithBehaviors(sessionId).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "tdd_session_goals", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const getBehaviorById = (id: number): Effect.Effect<Option.Option<BehaviorDetail>, DataStoreError> =>
+			Effect.gen(function* () {
+				const rows = yield* sql<{
+					b_id: number;
+					b_goal_id: number;
+					b_ordinal: number;
+					b_behavior: string;
+					b_suggested_test_name: string | null;
+					b_status: string;
+					b_created_at: string;
+					g_id: number;
+					g_goal: string;
+					g_status: string;
+				}>`
+					SELECT b.id AS b_id, b.goal_id AS b_goal_id, b.ordinal AS b_ordinal, b.behavior AS b_behavior,
+					       b.suggested_test_name AS b_suggested_test_name, b.status AS b_status,
+					       b.created_at AS b_created_at,
+					       g.id AS g_id, g.goal AS g_goal, g.status AS g_status
+					FROM tdd_session_behaviors b
+					JOIN tdd_session_goals g ON g.id = b.goal_id
+					WHERE b.id = ${id}
+				`;
+				if (rows.length === 0) return Option.none<BehaviorDetail>();
+				const r = rows[0];
+				const deps = yield* sql<RawBehaviorRow>`
+					SELECT b.id, b.goal_id, b.ordinal, b.behavior, b.suggested_test_name, b.status, b.created_at
+					FROM tdd_behavior_dependencies d
+					JOIN tdd_session_behaviors b ON b.id = d.depends_on_id
+					WHERE d.behavior_id = ${id}
+					ORDER BY b.ordinal
+				`;
+				return Option.some<BehaviorDetail>({
+					id: r.b_id,
+					goalId: r.b_goal_id,
+					ordinal: r.b_ordinal,
+					behavior: r.b_behavior,
+					suggestedTestName: r.b_suggested_test_name,
+					status: r.b_status as BehaviorStatus,
+					createdAt: r.b_created_at,
+					parentGoal: {
+						id: r.g_id,
+						goal: r.g_goal,
+						status: r.g_status as GoalStatus,
+					},
+					dependencies: deps.map(behaviorRowFromDb),
+				});
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "tdd_session_behaviors", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const getBehaviorsByGoal = (goalId: number): Effect.Effect<ReadonlyArray<BehaviorRow>, DataStoreError> =>
+			Effect.gen(function* () {
+				const rows = yield* sql<RawBehaviorRow>`
+					SELECT id, goal_id, ordinal, behavior, suggested_test_name, status, created_at
+					FROM tdd_session_behaviors
+					WHERE goal_id = ${goalId}
+					ORDER BY ordinal
+				`;
+				return rows.map(behaviorRowFromDb);
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "tdd_session_behaviors", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const getBehaviorsBySession = (sessionId: number): Effect.Effect<ReadonlyArray<BehaviorRow>, DataStoreError> =>
+			Effect.gen(function* () {
+				const rows = yield* sql<RawBehaviorRow>`
+					SELECT b.id, b.goal_id, b.ordinal, b.behavior, b.suggested_test_name, b.status, b.created_at
+					FROM tdd_session_behaviors b
+					JOIN tdd_session_goals g ON g.id = b.goal_id
+					WHERE g.session_id = ${sessionId}
+					ORDER BY g.ordinal, b.ordinal
+				`;
+				return rows.map(behaviorRowFromDb);
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "tdd_session_behaviors", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const getBehaviorDependencies = (behaviorId: number): Effect.Effect<ReadonlyArray<BehaviorRow>, DataStoreError> =>
+			Effect.gen(function* () {
+				const rows = yield* sql<RawBehaviorRow>`
+					SELECT b.id, b.goal_id, b.ordinal, b.behavior, b.suggested_test_name, b.status, b.created_at
+					FROM tdd_behavior_dependencies d
+					JOIN tdd_session_behaviors b ON b.id = d.depends_on_id
+					WHERE d.behavior_id = ${behaviorId}
+					ORDER BY b.ordinal
+				`;
+				return rows.map(behaviorRowFromDb);
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) =>
+						new DataStoreError({ operation: "read", table: "tdd_behavior_dependencies", reason: extractSqlReason(e) }),
+				),
+			);
+
+		const resolveGoalIdForBehavior = (behaviorId: number): Effect.Effect<Option.Option<number>, DataStoreError> =>
+			Effect.gen(function* () {
+				const rows = yield* sql<{ goal_id: number }>`
+					SELECT goal_id FROM tdd_session_behaviors WHERE id = ${behaviorId}
+				`;
+				return rows.length === 0 ? Option.none<number>() : Option.some(rows[0].goal_id);
+			}).pipe(
+				Effect.annotateLogs("service", "DataReader"),
+				Effect.mapError(
+					(e) => new DataStoreError({ operation: "read", table: "tdd_session_behaviors", reason: extractSqlReason(e) }),
+				),
+			);
+
 		const getTddSessionById = (id: number): Effect.Effect<Option.Option<TddSessionDetail>, DataStoreError> =>
 			Effect.gen(function* () {
 				yield* Effect.logDebug("getTddSessionById").pipe(Effect.annotateLogs({ id }));
@@ -1674,6 +1891,7 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 				`;
 				if (sessionRows.length === 0) return Option.none<TddSessionDetail>();
 				const tddSession = sessionRows[0];
+				const goals = yield* fetchGoalsWithBehaviors(id);
 				const phaseRows = yield* sql<{
 					id: number;
 					behavior_id: number | null;
@@ -1707,6 +1925,7 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 					startedAt: tddSession.started_at,
 					endedAt: tddSession.ended_at,
 					outcome: tddSession.outcome,
+					goals,
 					phases: phaseRows.map((p) => ({
 						id: p.id,
 						behaviorId: p.behavior_id,
@@ -2045,6 +2264,13 @@ export const DataReaderLive: Layer.Layer<DataReader, never, SqlClient> = Layer.e
 			computeAcceptanceMetrics,
 			getFailureSignatureByHash,
 			getTddSessionById,
+			getGoalById,
+			getGoalsBySession,
+			getBehaviorById,
+			getBehaviorsByGoal,
+			getBehaviorsBySession,
+			getBehaviorDependencies,
+			resolveGoalIdForBehavior,
 			getCurrentTddPhase,
 			getTddArtifactWithContext,
 			getCommitChanges,

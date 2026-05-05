@@ -61,7 +61,7 @@ npm. If the MCP bin is missing, the loader prints PM-specific
 install instructions and exits non-zero. See
 [Prerequisites](#prerequisites) below.
 
-The server exposes 41 tools. Use the `help` tool for the full list
+The server exposes 50 tools. Use the `help` tool for the full list
 with parameters, or see
 [docs/mcp.md](https://github.com/spencerbeggs/vitest-agent-reporter/blob/main/docs/mcp.md)
 for the complete reference.
@@ -75,7 +75,9 @@ for the complete reference.
 | Sessions / Turns | `session_list`, `session_get`, `turn_search`, `failure_signature_get`, `acceptance_metrics` |
 | Triage / Wrap-up | `triage_brief`, `wrapup_prompt` |
 | Hypotheses | `hypothesis_record`, `hypothesis_validate`, `hypothesis_list` |
-| TDD lifecycle | `tdd_session_start`, `tdd_session_end`, `tdd_session_resume`, `tdd_session_get`, `decompose_goal_into_behaviors`, `tdd_phase_transition_request` |
+| TDD lifecycle | `tdd_session_start`, `tdd_session_end`, `tdd_session_resume`, `tdd_session_get`, `tdd_phase_transition_request` |
+| TDD goal CRUD | `tdd_goal_create`, `tdd_goal_get`, `tdd_goal_update`, `tdd_goal_delete`, `tdd_goal_list` |
+| TDD behavior CRUD | `tdd_behavior_create`, `tdd_behavior_get`, `tdd_behavior_update`, `tdd_behavior_delete`, `tdd_behavior_list` |
 | Workspace history | `commit_changes` |
 | Meta | `help` |
 
@@ -84,7 +86,7 @@ for the complete reference.
 | Hook | Trigger | Behavior |
 | --- | --- | --- |
 | `SessionStart` | Claude session begins | Injects project test status and MCP tool reference into context |
-| `PreToolUse` (`mcp__vitest-agent-reporter__*` / `mcp__plugin_vitest-agent-reporter_vitest-reporter__*`) | Before any vitest-agent-reporter MCP tool call | Auto-allows the call without a permission prompt when the tool is on the bundled allowlist (all 41 current tools are listed) |
+| `PreToolUse` (`mcp__vitest-agent-reporter__*` / `mcp__plugin_vitest-agent-reporter_vitest-reporter__*`) | Before any vitest-agent-reporter MCP tool call | Auto-allows the call without a permission prompt when the tool is on the bundled allowlist (non-destructive tools; the two delete tools require explicit user confirmation) |
 | `PostToolUse` (Bash) | After any Bash tool call | Detects test runs; suggests MCP tools when tests fail |
 
 The `PreToolUse` allowlist lives at

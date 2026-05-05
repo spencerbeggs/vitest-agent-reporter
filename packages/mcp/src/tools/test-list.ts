@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect";
 import type { TestListEntry } from "vitest-agent-sdk";
 import { DataReader } from "vitest-agent-sdk";
+import { CoercedNumber } from "../coerce-schema.js";
 import { publicProcedure } from "../context.js";
 
 export const testList = publicProcedure
@@ -11,7 +12,7 @@ export const testList = publicProcedure
 				subProject: Schema.optional(Schema.String),
 				state: Schema.optional(Schema.String),
 				module: Schema.optional(Schema.String),
-				limit: Schema.optional(Schema.Number),
+				limit: Schema.optional(CoercedNumber),
 			}),
 		),
 	)

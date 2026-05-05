@@ -49,25 +49,39 @@ packages/
       layers/      -- *Live.ts and *Test.ts for each service, plus
                       OutputPipelineLive, LoggerLive, ConfigLive,
                       PathResolutionLive
-      errors/      -- DataStoreError, DiscoveryError, PathResolutionError
+      errors/      -- DataStoreError, DiscoveryError, PathResolutionError,
+                      TddErrors (GoalNotFoundError, BehaviorNotFoundError,
+                      TddSessionNotFoundError, TddSessionAlreadyEndedError,
+                      IllegalStatusTransitionError -- each carrying a
+                      derived `message` set via Object.defineProperty so
+                      Cause.pretty surfaces entity/id/reason)
       schemas/     -- Common, AgentReport, CacheManifest, Coverage,
                       Thresholds, Baselines, Trends, History, Options,
-                      Config, turns/ (UserPromptPayload, ToolCallPayload,
+                      Config, Tdd (GoalStatus / BehaviorStatus / GoalRow
+                      / BehaviorRow / GoalDetail / BehaviorDetail for
+                      the three-tier hierarchy), ChannelEvent
+                      (discriminated union over 13 progress event
+                      variants + BehaviorScopedEventTypes),
+                      turns/ (UserPromptPayload, ToolCallPayload,
                       ToolResultPayload, FileEditPayload, HookFirePayload,
                       NotePayload, HypothesisPayload + TurnPayload union)
       migrations/  -- 0001_initial.ts (1.x 25-table schema),
                       0002_comprehensive.ts (drop-and-recreate
-                      with 40 tables + notes_fts, WAL, FKs),
+                      with 42 tables + notes_fts, WAL, FKs --
+                      modified in place for 2.0 to add
+                      tdd_session_goals, tdd_behavior_dependencies,
+                      reshape tdd_session_behaviors, change
+                      tdd_phases.behavior_id cascade to CASCADE,
+                      add tdd_artifacts.behavior_id; pre-2.0 dev
+                      DBs must be wiped on first pull),
                       0003_idempotent_responses.ts (additive
-                      +1 table -> 41 total),
+                      +1 table -> 43 total),
                       0004_test_cases_created_turn_id.ts
                       (additive ALTER on test_cases adding
-                      created_turn_id column + index;
-                      tables count unchanged at 41),
+                      created_turn_id column + index),
                       0005_failure_signatures_last_seen_at.ts
                       (additive ALTER on failure_signatures
-                      adding last_seen_at column + index;
-                      tables count unchanged at 41)
+                      adding last_seen_at column + index)
       sql/         -- rows.ts (Schema.Struct row types), assemblers.ts
       utils/       -- compress-lines, safe-filename, ansi, detect-pm,
                       compute-trend, split-project, classify-test,
@@ -158,7 +172,7 @@ packages/
       middleware/  -- idempotency.ts (idempotentProcedure drop-in
                       for publicProcedure + idempotencyKeys
                       registry)
-      tools/       -- 41 tool implementations: help, status,
+      tools/       -- 50 tool implementations: help, status,
                       overview, coverage, history, trends,
                       errors, test-for-file, test-get, test-list,
                       file-coverage, run-tests, cache-health,
@@ -171,9 +185,21 @@ packages/
                       hypothesis-record, hypothesis-validate,
                       tdd-session-start, tdd-session-end,
                       tdd-session-resume,
-                      decompose-goal-into-behaviors,
-                      tdd-phase-transition-request,
-                      commit-changes
+                      tdd-phase-transition-request, commit-changes,
+                      tdd-goal-create, tdd-goal-get, tdd-goal-update,
+                      tdd-goal-delete, tdd-goal-list,
+                      tdd-behavior-create, tdd-behavior-get,
+                      tdd-behavior-update, tdd-behavior-delete,
+                      tdd-behavior-list (10 new for the 2.0
+                      goal/behavior hierarchy);
+                      _tdd-error-envelope.ts (private helper that
+                      catches tagged TDD errors at the MCP boundary
+                      and surfaces them as success-shape
+                      `{ ok: false, error: { _tag, ..., remediation } }`
+                      responses). Replaced: the 1.x
+                      decompose-goal-into-behaviors tool was
+                      deleted (server-side splitting is gone;
+                      decomposition is now LLM-driven)
 
 examples/
   basic/     -- minimal example app (5th Vitest project)
@@ -184,7 +210,7 @@ plugin/      -- file-based Claude Code plugin (NOT a pnpm workspace)
                                   Forwards projectDir via
                                   VITEST_AGENT_PROJECT_DIR
   hooks/       -- hooks.json + lib/match-tdd-agent.sh (shared
-                  helper sourced by all five orchestrator-scoped
+                  helper sourced by all orchestrator-scoped
                   hooks; matches `agent_type` against either
                   the agent's `name:` value `"TDD Orchestrator"`
                   or the legacy `"tdd-orchestrator"` slug — see
@@ -192,9 +218,19 @@ plugin/      -- file-based Claude Code plugin (NOT a pnpm workspace)
                   Plugin section for why the slug is also
                   accepted) + session-start.sh (calls triage
                   CLI + writes sessions row) +
-                  pre-tool-use-mcp.sh (auto-allows the 41 MCP
-                  tools enumerated in lib/safe-mcp-vitest-agent-
-                  ops.txt) + post-test-run.sh +
+                  pre-tool-use-mcp.sh (auto-allows the
+                  non-destructive MCP tools enumerated in
+                  lib/safe-mcp-vitest-agent-ops.txt; deletes
+                  intentionally omitted so they require explicit
+                  user confirmation) +
+                  pre-tool-use-tdd-restricted.sh (PreToolUse,
+                  scoped to the TDD orchestrator subagent via
+                  match-tdd-agent.sh; denies tdd_goal_delete,
+                  tdd_behavior_delete, and tdd_artifact_record
+                  with permissionDecision: deny + remediation
+                  hint pointing at status:'abandoned' — runtime
+                  defense-in-depth on top of the orchestrator's
+                  tools[] enumeration) + post-test-run.sh +
                   user-prompt-submit-record.sh,
                   pre-tool-use-record.sh, post-tool-use-record.sh,
                   session-end-record.sh, pre-compact-record.sh
@@ -357,26 +393,36 @@ only -- do not treat it as a column reference.
 
 **Migration sequence:**
 `0001_initial` (1.x 25-table schema) runs first; `0002_comprehensive`
-then drops every 1.x table and recreates the layout with 15 additional
+then drops every 1.x table and recreates the layout with 17 additional
 tables and column augmentations on `test_errors` and `stack_frames`.
 Per Decision D9 this is the **last drop-and-recreate** migration;
 subsequent migrations are ALTER-only. `0003_idempotent_responses` is
 a single `CREATE TABLE` (no DROP), keeping D9 intact.
 `0004_test_cases_created_turn_id` is a single `ALTER TABLE test_cases
 ADD COLUMN created_turn_id INTEGER REFERENCES turns(id) ON DELETE SET
-NULL` plus a supporting index. Tables count is unchanged at 41. The
-new column is required by D2 binding rule 1 (the
-`validatePhaseTransition` validator joins through it to resolve
-`test_case_created_turn_at` and `test_case_authored_in_session`).
-`0005_failure_signatures_last_seen_at` is a single `ALTER TABLE
-failure_signatures ADD COLUMN last_seen_at TEXT` (nullable) plus a
-supporting `idx_failure_signatures_last_seen ON
-failure_signatures(last_seen_at DESC)` index. The new column
+NULL` plus a supporting index. The new column is required by D2
+binding rule 1 (the `validatePhaseTransition` validator joins through
+it to resolve `test_case_created_turn_at` and
+`test_case_authored_in_session`). `0005_failure_signatures_last_seen_at`
+is a single `ALTER TABLE failure_signatures ADD COLUMN last_seen_at
+TEXT` (nullable) plus a supporting `idx_failure_signatures_last_seen
+ON failure_signatures(last_seen_at DESC)` index. The new column
 completes recurrence tracking: `DataStore.writeFailureSignature` sets
 `last_seen_at = firstSeenAt` on insert and bumps it via
 `ON CONFLICT(signature_hash) DO UPDATE` on recurrence alongside
-`occurrence_count`, so consumers can sort/filter by recency. Tables
-count unchanged at 41. D9 stays intact.
+`occurrence_count`, so consumers can sort/filter by recency. D9 stays
+intact across `0003`–`0005`. **For 2.0**, `0002_comprehensive` was
+modified in place (rather than added as `0006`) to add
+`tdd_session_goals` and `tdd_behavior_dependencies`, reshape
+`tdd_session_behaviors` (replace `parent_tdd_session_id` /
+`child_tdd_session_id` / `depends_on_behavior_ids` with `goal_id`),
+change `tdd_phases.behavior_id` cascade from `SET NULL` to `CASCADE`,
+and add `tdd_artifacts.behavior_id`. The migration ledger has no
+content hash, so editing `0002` in place does not auto-replay on
+existing dev DBs — pre-2.0 dev databases must be wiped on first pull
+(documented in the 2.0 changeset; see Decision D9 for the rationale).
+Total table count: **43** (41 in 0002 minus none + 2 new = 43; plus 1
+from `0003`).
 
 **Key relationships:** `test_runs` is the spine; each run owns one or
 more `test_modules`, which own `test_suites` and `test_cases`. Errors
@@ -387,7 +433,7 @@ files). `notes_fts` is an FTS5 virtual table over `notes` kept in
 sync via insert/update/delete triggers (see "FTS5 trigger pattern"
 below).
 
-**41 tables:**
+**43 tables:**
 
 | # | Table | Purpose |
 | - | ----- | ------- |
@@ -426,12 +472,14 @@ below).
 | 33 | `run_triggers` | 1:1 with `test_runs`; `trigger` CHECK in `(cli, ide, ci, agent, pre-commit, watch)`; `agent_session_id` FK to `sessions` |
 | 34 | `build_artifacts` | Captured tsc/biome/eslint output (tool_kind, exit_code, output, duration_ms) |
 | 35 | `tdd_sessions` | TDD session goal + outcome (`succeeded`/`blocked`/`abandoned`). FK to `sessions(id)` is named `session_id` (NOT `agent_session_id`); `parent_tdd_session_id` self-FK; `summary_note_id` FK |
-| 36 | `tdd_session_behaviors` | Ordered behaviors per TDD session. Live columns: `parent_tdd_session_id` FK, `ordinal` (1-based ordering position, NOT `position`), `behavior` (the behavior text, NOT `name`), `suggested_test_name` (NOT `description`), `depends_on_behavior_ids` (nullable text), `status` (`pending`/`in_progress`/`done`/`abandoned`), `child_tdd_session_id` for delegation |
-| 37 | `tdd_phases` | TDD phase transitions; 8-value `phase` CHECK (`spike`, `red`, `red.triangulate`, `green`, `green.fake-it`, `refactor`, `extended-red`, `green-without-red`); `parent_phase_id` self-FK |
-| 38 | `tdd_artifacts` | Evidence artifacts per phase; `artifact_kind` CHECK in `(test_written, test_failed_run, code_written, test_passed_run, refactor, test_weakened)`; `test_first_failure_run_id` for D2 binding rule 3. FK to `tdd_phases(id)` is named `phase_id` (NOT `tdd_phase_id`) |
+| 36 | `tdd_session_behaviors` | Atomic red-green-refactor units. **2.0 reshape:** `goal_id NOT NULL REFERENCES tdd_session_goals(id) ON DELETE CASCADE` replaces the old `parent_tdd_session_id`. Removed columns: `parent_tdd_session_id`, `child_tdd_session_id`, `depends_on_behavior_ids` (replaced by `tdd_behavior_dependencies` junction table). Live columns: `id`, `goal_id`, `ordinal` (per-goal, 0-based), `behavior` (the behavior text), `suggested_test_name` (now nullable), `status` (`pending`/`in_progress`/`done`/`abandoned`), `created_at` (`strftime('%Y-%m-%dT%H:%M:%fZ', 'now')` default for ms precision). `UNIQUE (goal_id, ordinal)`. Indexes on `(goal_id, id)` and `(goal_id, status)` |
+| 37 | `tdd_phases` | TDD phase transitions; 8-value `phase` CHECK (`spike`, `red`, `red.triangulate`, `green`, `green.fake-it`, `refactor`, `extended-red`, `green-without-red`); `parent_phase_id` self-FK. **2.0 cascade change:** `behavior_id` FK action is now `ON DELETE CASCADE` (was `ON DELETE SET NULL`) — deleting a behavior erases its phase ledger; `abandoned` status preserves the ledger |
+| 38 | `tdd_artifacts` | Evidence artifacts per phase; `artifact_kind` CHECK in `(test_written, test_failed_run, code_written, test_passed_run, refactor, test_weakened)`; `test_first_failure_run_id` for D2 binding rule 3. FK to `tdd_phases(id)` is named `phase_id` (NOT `tdd_phase_id`). **2.0 addition:** `behavior_id INTEGER REFERENCES tdd_session_behaviors(id) ON DELETE CASCADE` plus `idx_tdd_artifacts_behavior` enables behavior-scoped artifact queries without joining through phases |
 | 39 | `failure_signatures` | `signature_hash` PK (16-char sha256 from `computeFailureSignature`); `first_seen_run_id`, `first_seen_at`, `occurrence_count`, `last_seen_at` (nullable). On insert, `writeFailureSignature` sets `last_seen_at = first_seen_at` and `occurrence_count = 1`. On recurrence, the `ON CONFLICT(signature_hash) DO UPDATE` clause increments `occurrence_count` AND refreshes `last_seen_at` |
 | 40 | `hook_executions` | Vitest hook lifecycle; `hook_kind` CHECK in `(beforeAll, beforeEach, afterEach, afterAll)`; CHECK constraint ensures at most one of test_module_id / test_suite_id / test_case_id is set |
 | 41 | `mcp_idempotent_responses` | Cached MCP mutation results keyed by `(procedure_path, key)` composite PK. Carries `result_json` and `created_at`. Index on `(procedure_path, created_at DESC)` for future TTL pruning. Backed by `DataStore.recordIdempotentResponse` (`INSERT ... ON CONFLICT DO NOTHING`) and `DataReader.findIdempotentResponse`. Powers the tRPC idempotency middleware -- duplicate calls replay the cached response with `_idempotentReplay: true` |
+| 42 | `tdd_session_goals` | **2.0 new.** Coherent slices of an objective decomposed by the orchestrator. Live columns: `id`, `session_id INTEGER NOT NULL REFERENCES tdd_sessions(id) ON DELETE CASCADE`, `ordinal` (per-session, 0-based), `goal` (text), `status` (`pending`/`in_progress`/`done`/`abandoned` CHECK + default `'pending'`), `created_at` (`strftime('%Y-%m-%dT%H:%M:%fZ', 'now')` default for ms precision). `UNIQUE (session_id, ordinal)`. Indexes: `(session_id, id)` covering index for cheap behavior→goal→session join paths (eliminates the need to denormalize `session_id` onto behaviors), and `(session_id, status)` composite. Tier 2 of the Objective→Goal→Behavior hierarchy. Created via `DataStore.createGoal` and the `tdd_goal_create` MCP tool |
+| 43 | `tdd_behavior_dependencies` | **2.0 new.** Junction table for behavior ordering constraints (replaces the old `tdd_session_behaviors.depends_on_behavior_ids` JSON-in-TEXT column). Composite PK `(behavior_id, depends_on_id)` where both columns are `INTEGER NOT NULL REFERENCES tdd_session_behaviors(id) ON DELETE CASCADE`. `CHECK (behavior_id != depends_on_id)` prevents self-dependencies. Reverse-lookup index `idx_tdd_behavior_dependencies_depends_on` on `depends_on_id` enables "what depends on X" queries and supports recursive CTE walks across the dependency graph. Written by `DataStore.createBehavior` / `updateBehavior` in the same transaction as the parent behavior insert; both endpoints validated to belong to the same goal |
 
 **Plus:** `notes_fts` FTS5 virtual table with sync triggers for
 full-text search across note content.
@@ -640,16 +688,23 @@ Input and output types (`TestRunInput`, `ModuleInput`, `TestCaseInput`,
 optional `signatureHash` and `frames` fields on `TestErrorInput`
 (with `TurnInput.turnNo` auto-assigned when omitted),
 `IdempotentResponseInput`, `HypothesisInput`, `ValidateHypothesisInput`,
-`TddSessionInput`, `EndTddSessionInput`, `TddBehaviorInput`,
-`WriteTddBehaviorsInput`, `TddBehaviorOutput`, `WriteTddPhaseInput`,
-`WriteTddPhaseOutput`, `WriteTddArtifactInput`, `WriteCommitInput`,
-`RunChangedFile`, `WriteRunChangedFilesInput`, plus re-exported literal
-types `Phase`, `ArtifactKind`, and `ChangeKind` so callers don't dip
-into `schemas/` directly.
+`TddSessionInput`, `EndTddSessionInput`, `CreateGoalInput`,
+`UpdateGoalInput`, `CreateBehaviorInput`, `UpdateBehaviorInput`,
+`WriteTddPhaseInput`, `WriteTddPhaseOutput`, `WriteTddArtifactInput`,
+`WriteCommitInput`, `RunChangedFile`, `WriteRunChangedFilesInput`, plus
+re-exported literal types `Phase`, `ArtifactKind`, `ChangeKind`,
+`GoalStatus`, and `BehaviorStatus` so callers don't dip into
+`schemas/` directly. **Removed in 2.0:** `TddBehaviorInput`,
+`WriteTddBehaviorsInput`, and `TddBehaviorOutput` — the batch
+behavior-write path is gone alongside the `decompose_goal_into_behaviors`
+tool that drove it; callers use `createBehavior` per behavior instead.
 
 Also in DataReader: `SessionDetail`, `TurnSummary`, `TurnSearchOptions`,
 `AcceptanceMetrics`, `SessionSummary`, `FailureSignatureDetail`,
-`TddSessionDetail`, `TddPhaseDetail`, `TddArtifactDetail`,
+`TddSessionDetail` (now extended with `goals: ReadonlyArray<GoalDetail>`),
+`GoalDetail` (goal row + nested `behaviors: BehaviorRow[]`),
+`BehaviorDetail` (behavior row + `parentGoal: { id, goal, status }` +
+`dependencies: BehaviorRow[]`), `TddPhaseDetail`, `TddArtifactDetail`,
 `HypothesisSummary`, `HypothesisDetail`, `ListSessionsOptions`,
 `ListHypothesesOptions`, `CurrentTddPhase`, `CitedArtifactRow`,
 `CommitChangesEntry`, `TddSessionSummary`.
@@ -892,7 +947,12 @@ type DenialReason =
   | "unknown_session" | "session_already_ended" | "goal_not_started"
   | "refactor_without_passing_run" | "evidence_not_in_phase_window"
   | "evidence_not_for_behavior"
-  | "evidence_test_was_already_failing";
+  | "evidence_test_was_already_failing"
+  // 2.0 additions for the `tdd_phase_transition_request` pre-checks
+  // (now requires `goalId` and validates membership before running
+  // the D2 binding rules):
+  | "goal_not_found" | "goal_not_in_progress"
+  | "behavior_not_found" | "behavior_not_in_goal";
 
 type PhaseTransitionResult =
   | { accepted: true; phase: Phase }
@@ -900,6 +960,66 @@ type PhaseTransitionResult =
       remediation: { suggestedTool: string;
                      suggestedArgs: Record<string, unknown>;
                      humanHint: string } };
+```
+
+### Channel Event Schema
+
+`packages/sdk/src/schemas/ChannelEvent.ts` defines a discriminated
+union over the 13 progress events the TDD orchestrator pushes to
+the main agent via the `tdd_progress_push` MCP tool. Each variant
+carries a `type` literal discriminator. The MCP server validates
+inbound payloads against this union and **resolves `goalId` and
+`sessionId` server-side from `behaviorId`** for behavior-scoped
+events (via `DataReader.resolveGoalIdForBehavior`) so a stale
+orchestrator context cannot push the wrong tree coordinates.
+Resolution is best-effort; malformed JSON or DB read failures fall
+through with the original payload.
+
+```typescript
+type ChannelEvent =
+  // Goal lifecycle
+  | { type: "goals_ready"; sessionId: number;
+      goals: Array<{ id: number; ordinal: number; goal: string }> }
+  | { type: "goal_added"; sessionId: number;
+      goal: { id: number; ordinal: number; goal: string } }
+  | { type: "goal_started"; sessionId: number; goalId: number }
+  | { type: "goal_completed"; sessionId: number; goalId: number;
+      // Reconciliation array — lets the renderer handle dropped
+      // intermediate behavior_completed events:
+      behaviorIds: ReadonlyArray<number> }
+  | { type: "goal_abandoned"; sessionId: number; goalId: number;
+      reason: string }
+  // Behavior lifecycle (server-resolved goalId / sessionId)
+  | { type: "behaviors_ready"; sessionId: number; goalId: number;
+      behaviors: Array<{ id: number; ordinal: number;
+                          behavior: string }> }
+  | { type: "behavior_added"; sessionId: number; goalId: number;
+      behavior: { id: number; ordinal: number; behavior: string } }
+  | { type: "behavior_started"; sessionId: number;
+      goalId: number; behaviorId: number }
+  | { type: "phase_transition"; sessionId: number;
+      goalId: number; behaviorId: number;
+      from: Phase; to: Phase }
+  | { type: "behavior_completed"; sessionId: number;
+      goalId: number; behaviorId: number }
+  | { type: "behavior_abandoned"; sessionId: number;
+      goalId: number; behaviorId: number; reason: string }
+  // Existing
+  | { type: "blocked"; sessionId: number; goalId: number;
+      behaviorId: number; reason: string;
+      failureSignatureHash?: string }
+  | { type: "session_complete"; sessionId: number;
+      // Reconciliation array for order-independent rendering:
+      goalIds: ReadonlyArray<number>;
+      outcome: "succeeded" | "blocked" | "abandoned" };
+
+// Subset of variants whose goalId/sessionId the MCP server
+// rewrites server-side from behaviorId before forwarding the
+// notification.
+const BehaviorScopedEventTypes = [
+  "behavior_started", "phase_transition",
+  "behavior_completed", "behavior_abandoned", "blocked",
+] as const;
 ```
 
 ### Failure Signature Input
@@ -998,9 +1118,51 @@ interface FailureSignatureDetail {
   recent_errors: ReadonlyArray<TestError>; // up to 10 most recent
 }
 
+// 2.0 — TddSessionDetail now carries the full goal+behavior
+// tree alongside phases and artifacts. The goals are
+// materialized via a single batched IN-clause join from
+// tdd_session_goals to tdd_session_behaviors so a one-shot
+// resume returns the complete view.
 interface TddSessionDetail {
   // tdd_sessions row...
+  goals: ReadonlyArray<GoalDetail>;
   phases: ReadonlyArray<TddPhaseDetail>;
+}
+
+// Effect Schema source: `packages/sdk/src/schemas/Tdd.ts`.
+type GoalStatus =
+  | "pending" | "in_progress" | "done" | "abandoned";
+type BehaviorStatus = GoalStatus;
+
+interface GoalRow {
+  id: number;
+  sessionId: number;
+  ordinal: number;                 // per-session, 0-based
+  goal: string;
+  status: GoalStatus;
+  createdAt: string;               // ISO 8601 with ms precision
+}
+
+interface BehaviorRow {
+  id: number;
+  goalId: number;
+  ordinal: number;                 // per-goal, 0-based
+  behavior: string;
+  suggestedTestName: string | null;
+  status: BehaviorStatus;
+  createdAt: string;
+}
+
+interface GoalDetail extends GoalRow {
+  behaviors: ReadonlyArray<BehaviorRow>;
+}
+
+interface BehaviorDetail extends BehaviorRow {
+  parentGoal: { id: number; goal: string; status: GoalStatus };
+  dependencies: ReadonlyArray<BehaviorRow>;
+                                   // resolved via the
+                                   // tdd_behavior_dependencies
+                                   // junction table
 }
 
 interface TddPhaseDetail {
@@ -1009,7 +1171,8 @@ interface TddPhaseDetail {
 }
 
 interface TddArtifactDetail {
-  // tdd_artifacts row, with the FK columns flattened
+  // tdd_artifacts row, with the FK columns flattened.
+  // Now carries the optional `behavior_id` FK introduced in 2.0.
 }
 
 interface HypothesisSummary {
@@ -1139,29 +1302,53 @@ interface EndTddSessionInput {
   summaryNoteId?: number;
 }
 
-// Single behavior input under WriteTddBehaviorsInput.
-// Live `tdd_session_behaviors` columns are `behavior` (the
-// behavior text), `suggested_test_name`, `ordinal` (1-based
-// position), `depends_on_behavior_ids`, and `status`. The
-// input field names below map to those columns directly.
-interface TddBehaviorInput {
+// 2.0 — Goal CRUD (replaces the old batch-behavior-write path).
+// The status column is allocated at the DataStore boundary
+// (`pending` default); `ordinal` is auto-assigned by the
+// single-statement allocation pattern
+// (`INSERT ... SELECT COALESCE(MAX(ordinal), -1) + 1 ...`).
+
+interface CreateGoalInput {
+  sessionId: number;               // FK to tdd_sessions.id
+  goal: string;                    // -> tdd_session_goals.goal
+}
+
+// Flat patch — matches the existing `note_update` precedent.
+// Only the supplied fields are written. Status transitions are
+// validated against the closed lifecycle (pending → in_progress
+// → done|abandoned) at the DataStore boundary; illegal
+// transitions surface as `IllegalStatusTransitionError`
+// (entity: "goal").
+interface UpdateGoalInput {
+  id: number;                      // tdd_session_goals.id
+  goal?: string;
+  status?: GoalStatus;
+}
+
+// 2.0 — Behavior CRUD. Replaces the removed
+// TddBehaviorInput / WriteTddBehaviorsInput / TddBehaviorOutput
+// triple. The `dependsOnBehaviorIds` array writes rows into
+// the `tdd_behavior_dependencies` junction table in the same
+// `sql.withTransaction` as the parent insert, with each id
+// validated to belong to the same goal (else
+// `BehaviorNotFoundError`).
+interface CreateBehaviorInput {
+  goalId: number;                  // FK to tdd_session_goals.id
   behavior: string;                // -> tdd_session_behaviors.behavior
-  suggestedTestName: string;       // -> suggested_test_name
-  ordinal: number;                 // -> ordinal (1-based position)
-  dependsOnBehaviorIds?: string;   // -> depends_on_behavior_ids
+  suggestedTestName?: string;      // -> suggested_test_name (now nullable)
+  dependsOnBehaviorIds?: ReadonlyArray<number>;
+                                   // -> tdd_behavior_dependencies rows
 }
 
-// Backs DataStore.writeTddSessionBehaviors.
-interface WriteTddBehaviorsInput {
-  tddSessionId: number;            // -> parent_tdd_session_id
-  behaviors: ReadonlyArray<TddBehaviorInput>;
-}
-
-// Output for each row inserted by writeTddSessionBehaviors.
-interface TddBehaviorOutput {
-  id: number;
-  behavior: string;
-  ordinal: number;
+interface UpdateBehaviorInput {
+  id: number;                      // tdd_session_behaviors.id
+  behavior?: string;
+  suggestedTestName?: string;
+  status?: BehaviorStatus;         // pending → in_progress → done|abandoned
+  dependsOnBehaviorIds?: ReadonlyArray<number>;
+                                   // replaces the junction-table set
+                                   // for this behavior in one
+                                   // transaction
 }
 
 // Backs DataStore.writeTddPhase. Opens a new phase AND closes the
@@ -1716,14 +1903,19 @@ GFM content is appended (not overwritten) to support multiple steps.
 ### Integration 4: Consumer LLM Agents
 
 **MCP pattern (preferred):** Agents connect via MCP stdio transport and
-use the 41 tools for structured data access: read-only queries
+use the 50 tools for structured data access: read-only queries
 (`test_status`, `test_overview`, `test_coverage`, etc.), discovery tools,
 session/turn/TDD/hypothesis reads, triage and wrapup reads,
 hypothesis writes (`hypothesis_record`, `hypothesis_validate` -- via the
-tRPC idempotency middleware), TDD lifecycle reads/writes
+tRPC idempotency middleware), TDD session lifecycle
 (`tdd_session_start`, `tdd_session_end`, `tdd_session_resume`,
-`decompose_goal_into_behaviors`, `tdd_phase_transition_request`),
-and the workspace history tool (`commit_changes`).
+`tdd_phase_transition_request`), the 10 goal/behavior CRUD tools
+(`tdd_goal_create`/`get`/`update`/`delete`/`list`,
+`tdd_behavior_create`/`get`/`update`/`delete`/`list`) introduced for
+the 2.0 three-tier hierarchy, and the workspace history tool
+(`commit_changes`). The 1.x `decompose_goal_into_behaviors` tool is
+removed in 2.0; orchestrators decompose via LLM reasoning and create
+each goal/behavior individually.
 
 **CLI pattern:** Run `vitest-agent-reporter status` for quick overview,
 `vitest-agent-reporter overview` for test landscape, or
@@ -1812,10 +2004,12 @@ details.
   text-match logic for "is this a failure prompt?" lives in
   `format-wrapup`, not the hook
 - `PreToolUse` matching `mcp__vitest-agent-reporter__.*` ->
-  `hooks/pre-tool-use-mcp.sh` -- auto-allows 41 MCP tools whose
-  operation suffix is enumerated in
+  `hooks/pre-tool-use-mcp.sh` -- auto-allows the non-destructive
+  MCP tool operation suffixes enumerated in
   `hooks/lib/safe-mcp-vitest-agent-ops.txt`; unknown ops
-  fall through to the standard permission prompt. Parallel
+  (including the destructive `tdd_goal_delete` and
+  `tdd_behavior_delete`, intentionally omitted) fall through
+  to the standard permission prompt. Parallel
   `hooks/pre-tool-use-record.sh` invokes `record turn` with a
   `ToolCallPayload` (record-only; fires too often for prompt
   injection). `hooks/pre-tool-use-bash-tdd.sh` matches the `Bash`
@@ -1823,7 +2017,14 @@ details.
   blocks anti-pattern flags (`--update`, `-u`, `--reporter=silent`,
   `--bail`, `-t`, `--testNamePattern`, snapshot edits, edits to
   `coverage.exclude` / `setupFiles` / `globalSetup` in vitest
-  config); returns `permissionDecision: "deny"` JSON on match
+  config); returns `permissionDecision: "deny"` JSON on match.
+  `hooks/pre-tool-use-tdd-restricted.sh` is also scoped to the
+  orchestrator (via `lib/match-tdd-agent.sh`) and explicitly
+  denies `tdd_goal_delete`, `tdd_behavior_delete`, and
+  `tdd_artifact_record` with a remediation hint pointing at
+  `status: "abandoned"` — the runtime defense-in-depth on top
+  of the orchestrator's `tools[]` enumeration (which is
+  documentation, not a runtime gate)
 - `PostToolUse` on `Bash` -> `hooks/post-test-run.sh` (test
   detection). Parallel `hooks/post-tool-use-record.sh` runs on
   every tool result and invokes `record turn` with a
@@ -1890,4 +2091,4 @@ orchestrator (Decision D6)
 
 ---
 
-**Last updated:** 2026-05-04
+**Last updated:** 2026-05-04 (TDD goal/behavior hierarchy redesign)

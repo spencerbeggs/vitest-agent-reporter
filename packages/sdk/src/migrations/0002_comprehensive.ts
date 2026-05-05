@@ -658,30 +658,58 @@ const migration = Effect.gen(function* () {
 	`;
 	yield* sql`CREATE INDEX idx_tdd_sessions_session ON tdd_sessions(session_id, ended_at)`;
 
-	// 36. tdd_session_behaviors
+	// 36. tdd_session_goals
 	yield* sql`
-		CREATE TABLE tdd_session_behaviors (
+		CREATE TABLE tdd_session_goals (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			parent_tdd_session_id INTEGER NOT NULL REFERENCES tdd_sessions(id) ON DELETE CASCADE,
+			session_id INTEGER NOT NULL REFERENCES tdd_sessions(id) ON DELETE CASCADE,
 			ordinal INTEGER NOT NULL,
-			behavior TEXT NOT NULL,
-			suggested_test_name TEXT NOT NULL,
-			depends_on_behavior_ids TEXT,
+			goal TEXT NOT NULL,
 			status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN (
 				'pending', 'in_progress', 'done', 'abandoned'
 			)),
-			child_tdd_session_id INTEGER REFERENCES tdd_sessions(id) ON DELETE SET NULL,
-			UNIQUE (parent_tdd_session_id, ordinal)
+			created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+			UNIQUE (session_id, ordinal)
 		)
 	`;
-	yield* sql`CREATE INDEX idx_tdd_session_behaviors_parent ON tdd_session_behaviors(parent_tdd_session_id, ordinal)`;
+	yield* sql`CREATE INDEX idx_tdd_session_goals_session ON tdd_session_goals(session_id, id)`;
+	yield* sql`CREATE INDEX idx_tdd_session_goals_session_status ON tdd_session_goals(session_id, status)`;
 
-	// 37. tdd_phases
+	// 37. tdd_session_behaviors
+	yield* sql`
+		CREATE TABLE tdd_session_behaviors (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			goal_id INTEGER NOT NULL REFERENCES tdd_session_goals(id) ON DELETE CASCADE,
+			ordinal INTEGER NOT NULL,
+			behavior TEXT NOT NULL,
+			suggested_test_name TEXT,
+			status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN (
+				'pending', 'in_progress', 'done', 'abandoned'
+			)),
+			created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+			UNIQUE (goal_id, ordinal)
+		)
+	`;
+	yield* sql`CREATE INDEX idx_tdd_session_behaviors_goal ON tdd_session_behaviors(goal_id, id)`;
+	yield* sql`CREATE INDEX idx_tdd_session_behaviors_goal_status ON tdd_session_behaviors(goal_id, status)`;
+
+	// 38. tdd_behavior_dependencies (junction table replacing JSON depends_on_behavior_ids)
+	yield* sql`
+		CREATE TABLE tdd_behavior_dependencies (
+			behavior_id INTEGER NOT NULL REFERENCES tdd_session_behaviors(id) ON DELETE CASCADE,
+			depends_on_id INTEGER NOT NULL REFERENCES tdd_session_behaviors(id) ON DELETE CASCADE,
+			PRIMARY KEY (behavior_id, depends_on_id),
+			CHECK (behavior_id != depends_on_id)
+		)
+	`;
+	yield* sql`CREATE INDEX idx_tdd_behavior_dependencies_depends_on ON tdd_behavior_dependencies(depends_on_id)`;
+
+	// 39. tdd_phases (behavior_id CASCADE so phase history dies with the behavior)
 	yield* sql`
 		CREATE TABLE tdd_phases (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			tdd_session_id INTEGER NOT NULL REFERENCES tdd_sessions(id) ON DELETE CASCADE,
-			behavior_id INTEGER REFERENCES tdd_session_behaviors(id) ON DELETE SET NULL,
+			behavior_id INTEGER REFERENCES tdd_session_behaviors(id) ON DELETE CASCADE,
 			phase TEXT NOT NULL CHECK (phase IN (
 				'spike', 'red', 'red.triangulate', 'green', 'green.fake-it',
 				'refactor', 'extended-red', 'green-without-red'
@@ -695,11 +723,12 @@ const migration = Effect.gen(function* () {
 	yield* sql`CREATE INDEX idx_tdd_phases_tdd_session ON tdd_phases(tdd_session_id, started_at DESC)`;
 	yield* sql`CREATE INDEX idx_tdd_phases_behavior ON tdd_phases(behavior_id, started_at DESC)`;
 
-	// 38. tdd_artifacts
+	// 40. tdd_artifacts (with behavior_id for behavior-scoped queries)
 	yield* sql`
 		CREATE TABLE tdd_artifacts (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			phase_id INTEGER NOT NULL REFERENCES tdd_phases(id) ON DELETE CASCADE,
+			behavior_id INTEGER REFERENCES tdd_session_behaviors(id) ON DELETE CASCADE,
 			artifact_kind TEXT NOT NULL CHECK (artifact_kind IN (
 				'test_written', 'test_failed_run', 'code_written',
 				'test_passed_run', 'refactor', 'test_weakened'
@@ -714,6 +743,7 @@ const migration = Effect.gen(function* () {
 		)
 	`;
 	yield* sql`CREATE INDEX idx_tdd_artifacts_phase ON tdd_artifacts(phase_id, recorded_at)`;
+	yield* sql`CREATE INDEX idx_tdd_artifacts_behavior ON tdd_artifacts(behavior_id, recorded_at)`;
 
 	// 39. failure_signatures
 	yield* sql`

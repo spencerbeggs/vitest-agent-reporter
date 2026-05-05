@@ -31,7 +31,7 @@ The package family has three entry points:
 | --- | --- | --- | --- |
 | Plugin | (library import) | `vitest-agent-plugin` | Vitest plugin producing SQLite-persisted test data |
 | CLI | `vitest-agent` | `vitest-agent-cli` | Query test status, coverage, history, trends from the terminal |
-| MCP Server | `vitest-agent-mcp` | `vitest-agent-mcp` | 41 tools over stdio for LLM agent integration |
+| MCP Server | `vitest-agent-mcp` | `vitest-agent-mcp` | 50 tools over stdio for LLM agent integration |
 
 All three share the Effect service architecture and the same SQLite database in `vitest-agent-sdk` (`DataReader`, `DataStore`, `OutputRenderer`, output pipeline, formatters, etc.). The database location is derived from your root workspace's `package.json` `name` under `$XDG_DATA_HOME/vitest-agent/`.
 
@@ -86,11 +86,11 @@ Changes to the compiled packages take effect immediately on the next tool call �
 
 A restart is only required when changing hook **registration** (adding, removing, or renaming hooks in `plugin/hooks/hooks.json` or `plugin/.claude-plugin/plugin.json`), since Claude Code reads those at startup. When in doubt, reboot.
 
-## Sample agent prompts
+### Sample agent prompts
 
 Once the plugin is active, these prompts exercise the MCP tools, the CLI integration, and the TDD orchestrator. Run `pnpm run test` first so the database has data to query.
 
-### Query test status and coverage
+#### Query test status and coverage
 
 ```text
 What's the current test status for this project? Summarize pass rates, any
@@ -107,7 +107,7 @@ Have any tests been flaky or persistently failing recently? Pull the failure
 history and highlight anything that's shown up more than once.
 ```
 
-### Run specific tests
+#### Run specific tests
 
 ```text
 Run the playground test suite and give me a breakdown of what's covered
@@ -123,7 +123,7 @@ Run the full test suite, then show me the coverage table for the playground
 package specifically.
 ```
 
-### TDD orchestrator — fix a real problem
+#### TDD orchestrator — fix a real problem
 
 ```text
 The playground/src/notebook.ts module has at least one method that throws a
@@ -137,6 +137,29 @@ Use the TDD orchestrator to improve coverage in the playground package.
 Start with the functions that have zero coverage, write failing tests first,
 then implement fixes one at a time until the aspirational targets are met.
 ```
+
+### Claude Channels Support
+
+The Claude Code plugin has experimental support for [mcp push events](https://code.claude.com/docs/en/channels). If you want to try this locally add a `.mcp.json` to the project root:
+
+```json
+{
+ "mcpServers": {
+  "plugin:vitest-agent:mcp": {
+   "command": "pnpm",
+   "args": ["exec", "vitest-agent-mcp"]
+  }
+ }
+}
+```
+
+Then you can will run Claude with the `--dangerously-load-development-channels` flag and authorize the channel.
+
+```bash
+claude --debug --plugin-dir ./plugin --dangerously-load-development-channels server:plugin:vitest-agent:mcp
+```
+
+The plugin works the same without this flag, but has better observability between the main and agent and the tdd orchestrator. NOTE: The config in the root `.mcp.json` file take precidence over the plugin when you have both enabled.
 
 ## Package documentation
 

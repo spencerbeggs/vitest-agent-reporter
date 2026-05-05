@@ -2,7 +2,7 @@ import { publicProcedure } from "../context.js";
 
 const HELP_TEXT = `# vitest-agent MCP Tools
 
-> 41 tools total.
+> 42 tools total.
 
 ## General
 
@@ -91,8 +91,18 @@ Scopes: \`run_tests({})\` all tests, \`run_tests({ project: "name" })\` by proje
 - tdd_session_start — open a TDD session for a goal (idempotent on sessionId+goal)
 - tdd_session_end — close a TDD session with succeeded/blocked/abandoned (idempotent on tddSessionId+outcome)
 - tdd_session_resume — markdown digest of an open session for resume context
-- decompose_goal_into_behaviors — split a goal into a backlog (idempotent on tddSessionId+goal)
-- tdd_phase_transition_request — request a phase transition with cited artifact (validates D2 binding rules)
+- tdd_phase_transition_request — request a phase transition with cited artifact (validates D2 binding rules; auto-promotes behavior pending → in_progress on accept)
+- tdd_goal_create — create a goal under a TDD session (idempotent on sessionId+goal)
+- tdd_goal_get — read one goal with its nested behaviors
+- tdd_goal_update — update a goal's text and/or status (lifecycle: pending → in_progress → done | abandoned)
+- tdd_goal_delete — hard-delete a goal (cascades; reserved for cleanup of mistakes)
+- tdd_goal_list — list goals for a session with nested behaviors
+- tdd_behavior_create — create a behavior under a goal (idempotent on goalId+behavior; optional dependsOnBehaviorIds)
+- tdd_behavior_get — read one behavior with parent goal summary and dependencies
+- tdd_behavior_update — update a behavior's text, status, or dependency set
+- tdd_behavior_delete — hard-delete a behavior (cascades; reserved for cleanup of mistakes)
+- tdd_behavior_list — list behaviors by goal or session (discriminated input)
+- tdd_progress_push — push a TDD progress event to the main agent via Claude Code channels (best-effort; no-op when channels are inactive)
 
 ## Workspace history (final)
 

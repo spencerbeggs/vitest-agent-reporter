@@ -1,9 +1,10 @@
 import { Effect, Option, Schema } from "effect";
 import { DataReader } from "vitest-agent-sdk";
+import { CoercedNumber } from "../coerce-schema.js";
 import { publicProcedure } from "../context.js";
 
 export const tddSessionGet = publicProcedure
-	.input(Schema.standardSchemaV1(Schema.Struct({ id: Schema.Number })))
+	.input(Schema.standardSchemaV1(Schema.Struct({ id: CoercedNumber })))
 	.query(async ({ ctx, input }) => {
 		return ctx.runtime.runPromise(
 			Effect.gen(function* () {
@@ -36,6 +37,19 @@ export const tddSessionGet = publicProcedure
 						lines.push(
 							`- **${a.artifactKind}** [id=${a.id}, phase=${a.phaseId}] at=${a.recordedAt}${a.testRunId !== null ? ` run=${a.testRunId}` : ""}`,
 						);
+					}
+				}
+				if (s.goals.length > 0) {
+					lines.push("", "## Goals and Behaviors", "");
+					for (const g of s.goals) {
+						lines.push(`### Goal ${g.ordinal + 1}: ${g.goal} [${g.status}]`);
+						if (g.behaviors.length > 0) {
+							lines.push("");
+							for (const b of g.behaviors) {
+								lines.push(`- **${b.behavior}** [${b.status}]`);
+							}
+						}
+						lines.push("");
 					}
 				}
 				return lines.join("\n");

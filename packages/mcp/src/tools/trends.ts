@@ -1,5 +1,6 @@
 import { Effect, Option, Schema } from "effect";
 import { DataReader } from "vitest-agent-sdk";
+import { CoercedNumber } from "../coerce-schema.js";
 import { publicProcedure } from "../context.js";
 
 const SPARKLINE_CHARS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;
@@ -23,7 +24,7 @@ export const testTrends = publicProcedure
 			Schema.Struct({
 				project: Schema.String,
 				subProject: Schema.optional(Schema.String),
-				limit: Schema.optional(Schema.Number),
+				limit: Schema.optional(CoercedNumber),
 			}),
 		),
 	)

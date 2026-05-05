@@ -1,9 +1,10 @@
 import { Effect, Option, Schema } from "effect";
 import { DataReader } from "vitest-agent-sdk";
+import { CoercedNumber } from "../coerce-schema.js";
 import { publicProcedure } from "../context.js";
 
 export const sessionGet = publicProcedure
-	.input(Schema.standardSchemaV1(Schema.Struct({ id: Schema.Number })))
+	.input(Schema.standardSchemaV1(Schema.Struct({ id: CoercedNumber })))
 	.query(async ({ ctx, input }) => {
 		return ctx.runtime.runPromise(
 			Effect.gen(function* () {

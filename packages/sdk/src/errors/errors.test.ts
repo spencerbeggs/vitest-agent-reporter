@@ -7,6 +7,13 @@
 import { describe, expect, it } from "vitest";
 import { DataStoreError, extractSqlReason } from "./DataStoreError.js";
 import { DiscoveryError } from "./DiscoveryError.js";
+import {
+	BehaviorNotFoundError,
+	GoalNotFoundError,
+	IllegalStatusTransitionError,
+	TddSessionAlreadyEndedError,
+	TddSessionNotFoundError,
+} from "./TddErrors.js";
 
 describe("DiscoveryError", () => {
 	it("constructs with glob operation", () => {
@@ -107,5 +114,104 @@ describe("extractSqlReason", () => {
 		const err: { message: string; self?: unknown } = { message: "" };
 		err.self = err;
 		expect(extractSqlReason(err)).toBe("[object Object]");
+	});
+});
+
+describe("GoalNotFoundError", () => {
+	it("is a tagged error carrying id and reason with derived message", () => {
+		const err = new GoalNotFoundError({ id: 7, reason: "session has no goals yet" });
+		expect(err._tag).toBe("GoalNotFoundError");
+		expect(err.id).toBe(7);
+		expect(err.reason).toBe("session has no goals yet");
+		expect(err.message).toBe("[goal not_found id=7] session has no goals yet");
+		expect(err).toBeInstanceOf(Error);
+	});
+});
+
+describe("BehaviorNotFoundError", () => {
+	it("is a tagged error carrying id and reason with derived message", () => {
+		const err = new BehaviorNotFoundError({ id: 12, reason: "behavior was deleted" });
+		expect(err._tag).toBe("BehaviorNotFoundError");
+		expect(err.id).toBe(12);
+		expect(err.reason).toBe("behavior was deleted");
+		expect(err.message).toBe("[behavior not_found id=12] behavior was deleted");
+		expect(err).toBeInstanceOf(Error);
+	});
+});
+
+describe("TddSessionNotFoundError", () => {
+	it("is a tagged error carrying id and reason with derived message", () => {
+		const err = new TddSessionNotFoundError({ id: 3, reason: "no tdd session for this id" });
+		expect(err._tag).toBe("TddSessionNotFoundError");
+		expect(err.id).toBe(3);
+		expect(err.reason).toBe("no tdd session for this id");
+		expect(err.message).toBe("[tdd_session not_found id=3] no tdd session for this id");
+		expect(err).toBeInstanceOf(Error);
+	});
+});
+
+describe("TddSessionAlreadyEndedError", () => {
+	it("is a tagged error carrying outcome and endedAt with derived message", () => {
+		const err = new TddSessionAlreadyEndedError({
+			id: 5,
+			endedAt: "2026-04-29T00:01:00Z",
+			outcome: "succeeded",
+		});
+		expect(err._tag).toBe("TddSessionAlreadyEndedError");
+		expect(err.id).toBe(5);
+		expect(err.outcome).toBe("succeeded");
+		expect(err.endedAt).toBe("2026-04-29T00:01:00Z");
+		expect(err.message).toBe("[tdd_session ended id=5] outcome=succeeded endedAt=2026-04-29T00:01:00Z");
+	});
+
+	it("accepts blocked and abandoned outcomes", () => {
+		const blocked = new TddSessionAlreadyEndedError({
+			id: 5,
+			endedAt: "2026-04-29T00:01:00Z",
+			outcome: "blocked",
+		});
+		const abandoned = new TddSessionAlreadyEndedError({
+			id: 5,
+			endedAt: "2026-04-29T00:01:00Z",
+			outcome: "abandoned",
+		});
+		expect(blocked.outcome).toBe("blocked");
+		expect(abandoned.outcome).toBe("abandoned");
+	});
+});
+
+describe("IllegalStatusTransitionError", () => {
+	it("derives a message from entity, id, from→to, and reason", () => {
+		const err = new IllegalStatusTransitionError({
+			entity: "goal",
+			id: 3,
+			from: "done",
+			to: "pending",
+			reason: "cannot revert a completed goal",
+		});
+		expect(err._tag).toBe("IllegalStatusTransitionError");
+		expect(err.entity).toBe("goal");
+		expect(err.from).toBe("done");
+		expect(err.to).toBe("pending");
+		expect(err.message).toBe("[goal illegal_transition id=3] done → pending: cannot revert a completed goal");
+	});
+
+	it("supports behavior and session entities", () => {
+		const beh = new IllegalStatusTransitionError({
+			entity: "behavior",
+			id: 12,
+			from: "abandoned",
+			to: "in_progress",
+			reason: "abandoned is terminal",
+		});
+		const sess = new IllegalStatusTransitionError({
+			entity: "session",
+			id: 5,
+			from: "ended",
+			to: "in_progress",
+			reason: "session already ended",
+		});
+		expect(beh.entity).toBe("behavior");
+		expect(sess.entity).toBe("session");
 	});
 });

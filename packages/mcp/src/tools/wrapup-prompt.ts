@@ -1,12 +1,13 @@
 import { Effect, Schema } from "effect";
 import { formatWrapupEffect } from "vitest-agent-sdk";
+import { CoercedNumber } from "../coerce-schema.js";
 import { publicProcedure } from "../context.js";
 
 export const wrapupPrompt = publicProcedure
 	.input(
 		Schema.standardSchemaV1(
 			Schema.Struct({
-				sessionId: Schema.optional(Schema.Number),
+				sessionId: Schema.optional(CoercedNumber),
 				ccSessionId: Schema.optional(Schema.String),
 				kind: Schema.optional(Schema.Literal("stop", "session_end", "pre_compact", "tdd_handoff", "user_prompt_nudge")),
 				userPromptHint: Schema.optional(Schema.String),

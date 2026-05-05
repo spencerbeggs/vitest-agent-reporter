@@ -2,10 +2,11 @@
 set -euo pipefail
 INPUT=$(cat)
 SERVER=$(echo "$INPUT" | jq -r '.mcp_server_name // empty')
-# Accept "plugin:vitest-agent:vitest-reporter" (fully-qualified by CC)
-# or the bare "vitest-reporter" for resilience.
+# Accept "plugin:vitest-agent:mcp" (fully-qualified by CC) or the bare
+# "mcp" key for resilience. Also accept the legacy "vitest-reporter"
+# name in case an older plugin version is loaded.
 case "$SERVER" in
-  *":vitest-reporter" | "vitest-reporter") ;;
+  *":mcp" | "mcp" | *":vitest-reporter" | "vitest-reporter") ;;
   *) echo '{}'; exit 0 ;;
 esac
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')

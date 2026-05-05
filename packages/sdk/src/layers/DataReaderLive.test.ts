@@ -1603,4 +1603,308 @@ describe("DataReaderLive", () => {
 			}
 		});
 	});
+
+	describe("getGoalById", () => {
+		const seedSessionWithGoals = (ccSessionId: string) =>
+			Effect.gen(function* () {
+				const ds = yield* DataStore;
+				const sessionId = yield* ds.writeSession({
+					cc_session_id: ccSessionId,
+					project: "demo",
+					cwd: "/tmp/demo",
+					agent_kind: "subagent",
+					started_at: "2026-04-29T00:00:00Z",
+				});
+				const tddId = yield* ds.writeTddSession({ sessionId, goal: "obj", startedAt: "2026-04-29T00:00:01Z" });
+				return tddId;
+			});
+
+		it("returns Some with nested behaviors", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const reader = yield* DataReader;
+					const tddId = yield* seedSessionWithGoals("cc-rd-goal-1");
+					const goal = yield* ds.createGoal({ sessionId: tddId, goal: "G" });
+					yield* ds.createBehavior({ goalId: goal.id, behavior: "b1" });
+					yield* ds.createBehavior({ goalId: goal.id, behavior: "b2" });
+					return yield* reader.getGoalById(goal.id);
+				}),
+			);
+			expect(Option.isSome(result)).toBe(true);
+			if (Option.isSome(result)) {
+				expect(result.value.goal).toBe("G");
+				expect(result.value.behaviors).toHaveLength(2);
+				expect(result.value.behaviors.map((b) => b.behavior)).toEqual(["b1", "b2"]);
+			}
+		});
+
+		it("returns None for unknown id", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const reader = yield* DataReader;
+					return yield* reader.getGoalById(99999);
+				}),
+			);
+			expect(Option.isNone(result)).toBe(true);
+		});
+	});
+
+	describe("getGoalsBySession", () => {
+		it("returns goals ordered by ordinal with nested behaviors", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const reader = yield* DataReader;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-rd-goals-list",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({ sessionId, goal: "obj", startedAt: "2026-04-29T00:00:01Z" });
+					const g1 = yield* ds.createGoal({ sessionId: tddId, goal: "first" });
+					const g2 = yield* ds.createGoal({ sessionId: tddId, goal: "second" });
+					yield* ds.createBehavior({ goalId: g1.id, behavior: "g1.b1" });
+					yield* ds.createBehavior({ goalId: g2.id, behavior: "g2.b1" });
+					yield* ds.createBehavior({ goalId: g1.id, behavior: "g1.b2" });
+					return yield* reader.getGoalsBySession(tddId);
+				}),
+			);
+			expect(result.map((g) => g.goal)).toEqual(["first", "second"]);
+			expect(result[0]?.behaviors.map((b) => b.behavior)).toEqual(["g1.b1", "g1.b2"]);
+			expect(result[1]?.behaviors.map((b) => b.behavior)).toEqual(["g2.b1"]);
+		});
+
+		it("returns empty array when session has no goals", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const reader = yield* DataReader;
+					return yield* reader.getGoalsBySession(99999);
+				}),
+			);
+			expect(result).toEqual([]);
+		});
+	});
+
+	describe("getBehaviorById", () => {
+		it("returns Some with parentGoal summary and dependencies", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const reader = yield* DataReader;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-rd-beh-1",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({ sessionId, goal: "obj", startedAt: "2026-04-29T00:00:01Z" });
+					const goal = yield* ds.createGoal({ sessionId: tddId, goal: "G" });
+					const dep = yield* ds.createBehavior({ goalId: goal.id, behavior: "dep" });
+					const target = yield* ds.createBehavior({
+						goalId: goal.id,
+						behavior: "target",
+						dependsOnBehaviorIds: [dep.id],
+					});
+					return yield* reader.getBehaviorById(target.id);
+				}),
+			);
+			expect(Option.isSome(result)).toBe(true);
+			if (Option.isSome(result)) {
+				expect(result.value.behavior).toBe("target");
+				expect(result.value.parentGoal.goal).toBe("G");
+				expect(result.value.parentGoal.status).toBe("pending");
+				expect(result.value.dependencies).toHaveLength(1);
+				expect(result.value.dependencies[0]?.behavior).toBe("dep");
+			}
+		});
+
+		it("returns None for unknown id", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const reader = yield* DataReader;
+					return yield* reader.getBehaviorById(99999);
+				}),
+			);
+			expect(Option.isNone(result)).toBe(true);
+		});
+	});
+
+	describe("getBehaviorsByGoal", () => {
+		it("returns behaviors ordered by ordinal", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const reader = yield* DataReader;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-rd-bbg",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({ sessionId, goal: "obj", startedAt: "2026-04-29T00:00:01Z" });
+					const goal = yield* ds.createGoal({ sessionId: tddId, goal: "g" });
+					yield* ds.createBehavior({ goalId: goal.id, behavior: "x" });
+					yield* ds.createBehavior({ goalId: goal.id, behavior: "y" });
+					return yield* reader.getBehaviorsByGoal(goal.id);
+				}),
+			);
+			expect(result.map((b) => b.behavior)).toEqual(["x", "y"]);
+		});
+
+		it("returns empty array for unknown goal id", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const reader = yield* DataReader;
+					return yield* reader.getBehaviorsByGoal(99999);
+				}),
+			);
+			expect(result).toEqual([]);
+		});
+	});
+
+	describe("getBehaviorsBySession", () => {
+		it("returns all behaviors across goals", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const reader = yield* DataReader;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-rd-bbs",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({ sessionId, goal: "obj", startedAt: "2026-04-29T00:00:01Z" });
+					const g1 = yield* ds.createGoal({ sessionId: tddId, goal: "g1" });
+					const g2 = yield* ds.createGoal({ sessionId: tddId, goal: "g2" });
+					yield* ds.createBehavior({ goalId: g1.id, behavior: "a" });
+					yield* ds.createBehavior({ goalId: g2.id, behavior: "b" });
+					return yield* reader.getBehaviorsBySession(tddId);
+				}),
+			);
+			expect(result.map((b) => b.behavior).sort()).toEqual(["a", "b"]);
+		});
+
+		it("returns empty array for session with no behaviors", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const reader = yield* DataReader;
+					return yield* reader.getBehaviorsBySession(99999);
+				}),
+			);
+			expect(result).toEqual([]);
+		});
+	});
+
+	describe("getBehaviorDependencies", () => {
+		it("returns behaviors that the target depends on", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const reader = yield* DataReader;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-rd-deps",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({ sessionId, goal: "obj", startedAt: "2026-04-29T00:00:01Z" });
+					const goal = yield* ds.createGoal({ sessionId: tddId, goal: "g" });
+					const a = yield* ds.createBehavior({ goalId: goal.id, behavior: "a" });
+					const b = yield* ds.createBehavior({ goalId: goal.id, behavior: "b" });
+					const target = yield* ds.createBehavior({
+						goalId: goal.id,
+						behavior: "target",
+						dependsOnBehaviorIds: [a.id, b.id],
+					});
+					return yield* reader.getBehaviorDependencies(target.id);
+				}),
+			);
+			expect(result.map((b) => b.behavior).sort()).toEqual(["a", "b"]);
+		});
+
+		it("returns empty array when no dependencies are recorded", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const reader = yield* DataReader;
+					return yield* reader.getBehaviorDependencies(99999);
+				}),
+			);
+			expect(result).toEqual([]);
+		});
+	});
+
+	describe("resolveGoalIdForBehavior", () => {
+		it("returns Some<goalId> for an existing behavior", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const reader = yield* DataReader;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-rd-resolve",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({ sessionId, goal: "obj", startedAt: "2026-04-29T00:00:01Z" });
+					const goal = yield* ds.createGoal({ sessionId: tddId, goal: "g" });
+					const beh = yield* ds.createBehavior({ goalId: goal.id, behavior: "b" });
+					const opt = yield* reader.resolveGoalIdForBehavior(beh.id);
+					return { opt, goalId: goal.id };
+				}),
+			);
+			expect(Option.isSome(result.opt)).toBe(true);
+			if (Option.isSome(result.opt)) {
+				expect(result.opt.value).toBe(result.goalId);
+			}
+		});
+
+		it("returns None for unknown behavior id", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const reader = yield* DataReader;
+					return yield* reader.resolveGoalIdForBehavior(99999);
+				}),
+			);
+			expect(Option.isNone(result)).toBe(true);
+		});
+	});
+
+	describe("getTddSessionById nested goals", () => {
+		it("includes goals with nested behaviors in TddSessionDetail", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const ds = yield* DataStore;
+					const reader = yield* DataReader;
+					const sessionId = yield* ds.writeSession({
+						cc_session_id: "cc-rd-tree",
+						project: "demo",
+						cwd: "/tmp/demo",
+						agent_kind: "subagent",
+						started_at: "2026-04-29T00:00:00Z",
+					});
+					const tddId = yield* ds.writeTddSession({ sessionId, goal: "obj", startedAt: "2026-04-29T00:00:01Z" });
+					const g1 = yield* ds.createGoal({ sessionId: tddId, goal: "g1" });
+					const g2 = yield* ds.createGoal({ sessionId: tddId, goal: "g2" });
+					yield* ds.createBehavior({ goalId: g1.id, behavior: "g1.b1" });
+					yield* ds.createBehavior({ goalId: g2.id, behavior: "g2.b1" });
+					return yield* reader.getTddSessionById(tddId);
+				}),
+			);
+			expect(Option.isSome(result)).toBe(true);
+			if (Option.isSome(result)) {
+				expect(result.value.goals.map((g) => g.goal)).toEqual(["g1", "g2"]);
+				expect(result.value.goals[0]?.behaviors.map((b) => b.behavior)).toEqual(["g1.b1"]);
+				expect(result.value.goals[1]?.behaviors.map((b) => b.behavior)).toEqual(["g2.b1"]);
+			}
+		});
+	});
 });

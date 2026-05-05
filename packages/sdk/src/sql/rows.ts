@@ -321,15 +321,28 @@ export const TddSessionRow = Schema.Struct({
 	summary_note_id: Schema.NullOr(Schema.Number),
 });
 
+export const TddSessionGoalRow = Schema.Struct({
+	id: Schema.Number,
+	session_id: Schema.Number,
+	ordinal: Schema.Number,
+	goal: Schema.String,
+	status: Schema.String,
+	created_at: Schema.String,
+});
+
 export const TddSessionBehaviorRow = Schema.Struct({
 	id: Schema.Number,
-	parent_tdd_session_id: Schema.Number,
+	goal_id: Schema.Number,
 	ordinal: Schema.Number,
 	behavior: Schema.String,
-	suggested_test_name: Schema.String,
-	depends_on_behavior_ids: Schema.NullOr(Schema.String),
+	suggested_test_name: Schema.NullOr(Schema.String),
 	status: Schema.String,
-	child_tdd_session_id: Schema.NullOr(Schema.Number),
+	created_at: Schema.String,
+});
+
+export const TddBehaviorDependencyRow = Schema.Struct({
+	behavior_id: Schema.Number,
+	depends_on_id: Schema.Number,
 });
 
 export const TddPhaseRow = Schema.Struct({

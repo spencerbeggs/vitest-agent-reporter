@@ -3,8 +3,8 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-05-03
-last-synced: 2026-05-03
+updated: 2026-05-04
+last-synced: 2026-05-04
 completeness: 95
 # Note: doc set lives at .claude/design/vitest-agent/ as of branch
 # refactor/2-0-0-package-rename. Frontmatter `module` retains the
@@ -55,7 +55,7 @@ schema/data-layer/contract surface:
 | `vitest-agent-plugin` | `packages/plugin/` | The Vitest plugin + the internal `AgentReporter` Vitest-API class + `ReporterLive` + `CoverageAnalyzer` + reporter-side utilities (`build-reporter-kit`, `route-rendered-output`, `process-failure`, `capture-env`, `capture-settings`, `resolve-thresholds`, `strip-console-reporters`). Owns the Vitest lifecycle, persistence, classification, baselines, and trends. Delegates rendering to a user-supplied `VitestAgentReporterFactory` (defaults to `defaultReporter` from `vitest-agent-reporter`). Declares `vitest-agent-reporter`, `vitest-agent-cli`, and `vitest-agent-mcp` as required `peerDependencies`. No bin entries. |
 | `vitest-agent-reporter` | `packages/reporter/` | Named `VitestAgentReporterFactory` implementations only — no Vitest-API code. Exports `defaultReporter` (env-aware composition that picks a primary reporter from `kit.config.format` and adds `githubSummaryReporter` as a sidecar under GitHub Actions) plus the focused single-formatter factories `markdownReporter`, `terminalReporter`, `jsonReporter`, `silentReporter`, `ciAnnotationsReporter`, and `githubSummaryReporter`. Each named reporter wraps exactly one shared `Formatter`. Depends on shared. No bin entries. |
 | `vitest-agent-cli` | `packages/cli/` | `vitest-agent` bin (`@effect/cli`-based) with `status`, `overview`, `coverage`, `history`, `trends`, `cache` (incl. `prune`), `doctor`, `record` (with `turn`, `session-start`, `session-end`, `tdd-artifact`, `run-workspace-changes` actions), `triage`, and `wrapup` subcommands. Owns `CliLive`. |
-| `vitest-agent-mcp` | `packages/mcp/` | `vitest-agent-mcp` bin (`@modelcontextprotocol/sdk` + tRPC) exposing 41 tools to LLM agents. Owns the tRPC idempotency middleware and `McpLive`. |
+| `vitest-agent-mcp` | `packages/mcp/` | `vitest-agent-mcp` bin (`@modelcontextprotocol/sdk` + tRPC) exposing 50 tools to LLM agents (including the 10 goal/behavior CRUD tools added in 2.0). Owns the tRPC idempotency middleware and `McpLive`. |
 
 Examples live under `examples/*` (included as a sixth Vitest project for
 integration coverage). The `plugin/` directory is the file-based
@@ -99,7 +99,7 @@ Claude Code plugin and is NOT a pnpm workspace.
   trends with a 50-entry sliding window, and tiered console output
   (green/yellow/red) keyed to run health.
 - **SQLite persistence + Effect services + output pipeline** -- a
-  41-table normalized SQLite database via `@effect/sql-sqlite-node`,
+  43-table normalized SQLite database via `@effect/sql-sqlite-node`,
   Effect services for all I/O (DataStore, DataReader, etc.) with
   live and test layers, and a 5-stage output pipeline
   (EnvironmentDetector -> ExecutorResolver -> FormatSelector ->
@@ -111,22 +111,32 @@ Claude Code plugin and is NOT a pnpm workspace.
   `turns` capture user prompts, tool calls, tool results, file
   edits, hook fires, notes, and hypotheses (validated against the
   `TurnPayload` Effect Schema discriminated union). TDD lifecycle
-  state lives in `tdd_sessions`, `tdd_session_behaviors`,
-  `tdd_phases`, and `tdd_artifacts`, with phase transitions gated
-  by the pure `validatePhaseTransition` evidence-binding validator.
-- **MCP server and Claude Code plugin** -- 41 MCP tools via tRPC
+  state lives in `tdd_sessions`, `tdd_session_goals` (2.0),
+  `tdd_session_behaviors` (reshaped in 2.0),
+  `tdd_behavior_dependencies` (2.0 junction table), `tdd_phases`,
+  and `tdd_artifacts`, organized as a three-tier
+  Objective→Goal→Behavior hierarchy. Phase transitions are gated by
+  the pure `validatePhaseTransition` evidence-binding validator;
+  `tdd_phase_transition_request` adds goal/behavior membership
+  pre-checks in 2.0 and auto-promotes behavior status on accept.
+- **MCP server and Claude Code plugin** -- 50 MCP tools via tRPC
   router with stdio transport, including read-only query tools
   (status/overview/coverage/history/trends/errors/etc.), discovery
   tools (project/test/module/suite/settings listing), note CRUD,
   session/turn/TDD/hypothesis reads, the orientation triage brief,
-  the wrap-up prompt, hypothesis writes, TDD lifecycle writes, and
+  the wrap-up prompt, hypothesis writes, TDD session lifecycle
+  writes, the 10 goal/behavior CRUD tools added in 2.0, and
   workspace commit history. The file-based Claude Code plugin at
   `plugin/` ships a PM-detect-and-spawn loader, lifecycle hooks
   (session/turn capture, interpretive nudges, TDD orchestrator
   scoping, anti-pattern detection, git-commit recording), the TDD
   orchestrator subagent definition (`plugin/agents/tdd-orchestrator.md`),
-  the `/tdd <goal>` slash command, sub-skill primitives, and a
-  `PreToolUse` hook that auto-allows all 41 MCP tools.
+  the `/tdd <goal>` slash command, sub-skill primitives, and two
+  `PreToolUse` hooks: `pre-tool-use-mcp.sh` auto-allows the
+  non-destructive MCP tools, and `pre-tool-use-tdd-restricted.sh`
+  (2.0) denies `tdd_goal_delete` / `tdd_behavior_delete` /
+  `tdd_artifact_record` for the orchestrator subagent
+  specifically.
 
 The repository is a pnpm monorepo with five publishable workspaces
 under `packages/` (`sdk`, `plugin`, `reporter`, `cli`, `mcp`) plus
@@ -186,7 +196,7 @@ contains the Claude Code plugin (NOT a pnpm workspace). The root
 - **SQLite-first persistence** -- all test data stored in a
   normalized SQLite database (`data.db`) using
   `@effect/sql-sqlite-node` with migration-based schema management.
-  41 tables plus `notes_fts` for FTS5 note search.
+  43 tables plus `notes_fts` for FTS5 note search.
 - **Process-level migration coordination** --
   `ensureMigrated(dbPath)` serializes SQLite migrations across
   reporter instances in the same process via a `globalThis`-keyed
@@ -231,13 +241,15 @@ contains the Claude Code plugin (NOT a pnpm workspace). The root
 - **Duck-type istanbul** -- structural interface avoids hard peer
   dependency; works with both `v8` and `istanbul` coverage
   providers.
-- **MCP-first agent integration** -- the MCP server exposes 41 tools
+- **MCP-first agent integration** -- the MCP server exposes 50 tools
   via tRPC router, giving agents structured access to test data,
   coverage, history, trends, errors, per-file coverage, individual
   test details, note management, discovery queries, session/TDD/
   hypothesis read paths, the orientation triage brief, the wrap-up
-  prompt, hypothesis writes, TDD lifecycle writes, and workspace
-  commit history -- all without parsing CLI output.
+  prompt, hypothesis writes, TDD session lifecycle writes, the 10
+  goal/behavior CRUD tools added in 2.0 (the three-tier
+  Objective→Goal→Behavior hierarchy), and workspace commit history
+  -- all without parsing CLI output.
 - **Hook-driven session/turn capture** -- shell hooks under
   `plugin/hooks/` (SessionStart, UserPromptSubmit, PreToolUse,
   PostToolUse, Stop, SessionEnd, PreCompact, SubagentStart,
@@ -280,11 +292,13 @@ contains the Claude Code plugin (NOT a pnpm workspace). The root
 - **MCP idempotency** -- a tRPC idempotency middleware wraps
   selected mutation tools so duplicate calls (from a flaky agent
   retry) replay the cached response with `_idempotentReplay: true`
-  rather than double-writing. Five tools are registered for replay:
-  `hypothesis_record`, `hypothesis_validate`, `tdd_session_start`,
-  `tdd_session_end`, `decompose_goal_into_behaviors`.
-  `tdd_phase_transition_request` is intentionally excluded because
-  its accept/deny is a function of mutable artifact-log state.
+  rather than double-writing. Six tools are registered for replay
+  (2.0 update): `hypothesis_record`, `hypothesis_validate`,
+  `tdd_session_start`, `tdd_session_end`, `tdd_goal_create`, and
+  `tdd_behavior_create`. `decompose_goal_into_behaviors` was
+  removed alongside the tool. `tdd_phase_transition_request` is
+  intentionally excluded because its accept/deny is a function of
+  mutable artifact-log state.
 
 ---
 
@@ -425,7 +439,7 @@ The most important components, with their canonical locations. See
 | `record` CLI subcommand | `packages/cli/src/commands/record.ts`, with five lib actions: `record-turn.ts`, `record-session.ts`, `record-tdd-artifact.ts`, `record-workspace-changes.ts` |
 | Shared lib generators | `packages/sdk/src/lib/format-triage.ts`, `packages/sdk/src/lib/format-wrapup.ts` |
 | CLI subcommands | `packages/cli/src/commands/{status,overview,coverage,history,trends,cache,doctor,record,triage,wrapup}.ts` |
-| MCP tools | `packages/mcp/src/tools/` (one file per tool; the 6 note CRUD ops live in `notes.ts`, totaling 41 tools) |
+| MCP tools | `packages/mcp/src/tools/` (one file per tool; the 6 note CRUD ops live in `notes.ts`, totaling 50 tools — 41 from prior work, plus 10 new TDD goal/behavior CRUD tools added in 2.0, minus 1 removed `decompose_goal_into_behaviors`) |
 | tRPC idempotency middleware | `packages/mcp/src/middleware/idempotency.ts` (with `idempotentProcedure` + `idempotencyKeys` registry) |
 | Plugin hooks | `plugin/hooks/{session-start,user-prompt-submit-record,pre-tool-use-mcp,pre-tool-use-record,pre-tool-use-bash-tdd,post-test-run,post-tool-use-record,post-tool-use-tdd-artifact,post-tool-use-test-quality,post-tool-use-git-commit,session-end-record,stop-record,pre-compact-record,subagent-start-tdd,subagent-stop-tdd}.sh` plus `lib/match-tdd-agent.sh`, `lib/detect-pm.sh`, `lib/hook-output.sh`, and `lib/safe-mcp-vitest-agent-ops.txt` |
 | CI annotations formatter | `packages/sdk/src/formatters/ci-annotations.ts` |
