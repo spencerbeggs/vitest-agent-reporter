@@ -44,7 +44,14 @@ const INFO_PATH = join(RAW_DIR, ".upstream-info.json");
 // DENYLIST_PATHS applies anywhere in the tree (relative paths).
 const DENYLIST_FILES = new Set(["index.md", "team.md", "todo.md", "blog.md"]);
 const DENYLIST_DIRS = new Set(["blog", ".vitepress", "public"]);
-const DENYLIST_PATHS = new Set(["guide/why.md", "guide/comparisons.md", "guide/browser/why.md"]);
+const DENYLIST_PATHS = new Set([
+	"guide/why.md",
+	"guide/comparisons.md",
+	"guide/browser/why.md",
+	// Single-line code fragment with no agent value; full context lives in the
+	// parent pages (Vitest, TestProject, TestModule).
+	"api/advanced/import-example.md",
+]);
 
 function walkRaw(dir: string, base = ""): ReadonlyArray<string> {
 	const out: string[] = [];

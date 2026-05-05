@@ -83,19 +83,46 @@ Read each page's actual content (not just the title). For each:
 1. Identify the 3–5 concrete things on the page — function names, config keys, error messages, scenarios.
 2. Lead with `Use when <verb> ...` so the description reads as a triggering condition.
 3. Mention the specific identifiers an agent would search for, so substring matching surfaces the right page.
-4. Keep it to 1–2 sentences (under 250 chars when possible).
+4. Keep it to 1–2 sentences. Aim for under 250 chars and **hard-cap at 320**. If you find yourself listing 7+ identifiers in a single sentence, pick 4–5 representative members and end with `, etc.` — keyword density matters less than skim-ability past that point.
 
-Update each entry's `description` field in `packages/mcp/src/vendor/vitest-docs/manifest.json` directly. Edit the entries one at a time using `Edit`. The `[TODO: ...]` marker tells you which haven't been done yet.
+Update each entry's `description` field in `packages/mcp/src/vendor/vitest-docs/manifest.json` directly. Edit the entries one at a time using `Edit` (or batch them via `apply-manifest-patches.ts` with a JSON file). The `[TODO: ...]` marker tells you which haven't been done yet.
 
-For pages with marginal content (short stubs, redirects, deprecation notices), check whether they should actually be dropped — return to Phase 2 thinking. The user reviews any drops.
+For pages with marginal content (single-line code fragments, redirects, deprecation notices), drop them — `api/advanced/import-example.md` is the precedent. Add the relative path to `DENYLIST_PATHS` in `build-snapshot.ts` so future fetches drop it too, then remove both the file and its manifest entry.
 
-### Title quality
+### Title hierarchy
 
-The mechanical H1 extraction in Phase 3 produces reasonable titles for most pages, but check for:
+Titles appear next to descriptions in MCP `resources/list` responses; agents skim them first. Use a single shape per section so the list reads consistently:
+
+| Section | Title pattern | Examples |
+| ------- | ------------- | -------- |
+| `api/<symbol>` | bare canonical name | `test`, `expect`, `describe`, `vi`, `MockInstance` |
+| `api/advanced/<symbol>` | `<canonical> (advanced)` | `TestModule (advanced)`, `Plugin API (advanced)`, `Vitest class (advanced)` |
+| `api/browser/<symbol>` | `<descriptive> (browser API)` | `userEvent (browser API)`, `page locators (browser API)`, `vitest-browser-react (browser API)` |
+| `config/<option>` | `config.<dottedPath>` (preserve the camelCase from the H1) | `config.alias`, `config.coverage`, `config.testTimeout`, `config.browser.api` |
+| `config/browser/{playwright,preview,webdriverio}` | bare descriptive — `Configuring <Provider>` | `Configuring Playwright` |
+| `config/index` | bare descriptive — `Configuring Vitest` | `Configuring Vitest` |
+| `guide/<topic>` | bare descriptive | `Coverage`, `Debugging tests`, `Test environments`, `Snapshot testing` |
+| `guide/learn/<topic>` | `Tutorial: <topic>` | `Tutorial: writing tests`, `Tutorial: mock functions` |
+| `guide/mocking/<topic>` | `Mocking: <topic>` | `Mocking: classes`, `Mocking: file system (memfs)` |
+| `guide/browser/<topic>` | `<descriptive> (browser <qualifier>)` | `ARIA snapshots (browser, experimental)`, `Component testing (browser mode)` |
+| `guide/advanced/<topic>` | `<descriptive> (advanced)` | `Custom reporters (advanced)`, `Running tests programmatically (advanced)` |
+| `guide/examples/<topic>` | `Snippet: <topic>` | `Snippet: done callback → Promise` |
+
+`packages/mcp/lib/scripts/normalize-titles.ts` automates most of this — it produces a patch JSON for `apply-manifest-patches.ts` that prepends `config.` to all single-option config pages and applies the api/ + guide/ overrides listed inline. Re-run it after a fresh `build-snapshot.ts`, review the diff, then apply.
+
+When a page documents one specific provider, library, or plugin (e.g. `Configuring Playwright`, `Mocking: file system (memfs)`), name the dependency in the title so an agent searching for the dependency hits the page directly.
+
+The mechanical H1 extraction in Phase 3 will produce reasonable bare titles for most pages, but check for:
 
 - Overly generic titles (`Index`, `Overview`) — replace with section-aware names.
-- Vue/VitePress artifacts (`<script setup>` mentions in titles) — clean up.
+- Vue/VitePress artifacts (`<script setup>` mentions in titles, leftover `<Version>X.Y.Z</Version>` chrome) — clean up.
 - Pages where the H1 is actually a sub-section header — pick a better title from context.
+
+### Index resources (`vitest://docs/`, `vitest-agent://patterns/`)
+
+These two are registered directly in `packages/mcp/src/resources/index.ts` (not driven from the manifest). They share the same load-when discipline as page resources, but the trigger is different: **agents load an index when they don't yet know which page they want**. So the description should explicitly say "use first when ..." and explain that the index is the catalog, not a topical page. Don't write generic "Table of contents for X" descriptions — those don't tell an agent when to reach for them.
+
+When updating these, edit `index.ts` directly; they don't go through `apply-manifest-patches.ts`.
 
 ## Phase 5 — Validate and verify
 

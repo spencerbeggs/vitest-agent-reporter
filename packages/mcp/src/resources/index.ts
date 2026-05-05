@@ -65,8 +65,9 @@ export function registerAllResources(server: McpServer): void {
 		"vitest_docs_index",
 		"vitest://docs/",
 		{
-			title: "Vitest Documentation Index",
-			description: "Table of contents for the vendored vitest.dev documentation snapshot.",
+			title: "Vitest documentation: index",
+			description:
+				"Use first when you need any Vitest API, configuration, or behavioral information and aren't sure which page covers it — lists every page in the vendored snapshot grouped by section (api, config, guide) so you can pick the right `vitest://docs/<path>` URI before fetching.",
 			mimeType: "text/markdown",
 		},
 		async (uri) => {
@@ -84,7 +85,7 @@ export function registerAllResources(server: McpServer): void {
 				const pages = await listManifestPages(vendorRoot);
 				return {
 					resources: pages.map((page) => ({
-						name: `vitest_docs__${page.relativePath.replace(/\//g, "__")}`,
+						name: `vitest_docs_${page.relativePath.replace(/\//g, "_")}`,
 						uri: `vitest://docs/${page.relativePath}`,
 						title: page.title ?? page.relativePath,
 						description: page.description ?? `Vitest docs page: ${page.relativePath}`,
@@ -112,8 +113,9 @@ export function registerAllResources(server: McpServer): void {
 		"vitest_agent_patterns_index",
 		"vitest-agent://patterns/",
 		{
-			title: "vitest-agent Patterns Index",
-			description: "Table of contents for vitest-agent project's curated testing patterns.",
+			title: "vitest-agent patterns: index",
+			description:
+				"Use first when you need a curated vitest-agent pattern and want to discover what's available — lists every pattern slug with its title and one-line summary so you can pick the right `vitest-agent://patterns/<slug>` URI before fetching.",
 			mimeType: "text/markdown",
 		},
 		async (uri) => {
