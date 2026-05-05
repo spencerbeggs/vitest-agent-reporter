@@ -55,6 +55,16 @@
 				]
 			},
 			{
+				"matcher": "Read",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use-vitest-config.sh\"",
+						"timeout": 5
+					}
+				]
+			},
+			{
 				"matcher": "Bash|Edit|Write|MultiEdit",
 				"hooks": [
 					{

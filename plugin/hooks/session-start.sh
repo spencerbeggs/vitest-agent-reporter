@@ -72,6 +72,10 @@ If the user's request is ambiguous about whether it warrants TDD, ask once befor
 **This conversation's session id is \`$cc_session_id\`.** As your first MCP tool call, run \`mcp__vitest-agent_mcp__set_current_session_id({ id: \"$cc_session_id\" })\` so the MCP server's session-aware tools default to this id. (If the server was already seeded by the plugin manifest, the call is a harmless no-op.)
 
 </vitest_agent_reporter>
+
+<vitest_resources>
+MCP resources are available: \`vitest://docs/\` (Vitest upstream docs snapshot) and \`vitest-agent://patterns/\` (curated project patterns). Use \`ListMcpResourcesTool\` to explore, \`ReadMcpResourceTool\` to fetch pages — always load an index URI first. Six user-facing prompts are exposed as slash commands: \`/plugin:vitest-agent:mcp:triage\`, \`why-flaky\`, \`regression-since-pass\`, \`explain-failure\`, \`tdd-resume\`, \`wrapup\`. Load the \`vitest-context\` skill for the full navigation guide.
+</vitest_resources>
 </EXTREMELY_IMPORTANT>"
 
 #    Prefer triage when non-empty; fall back to the empty-state message.
