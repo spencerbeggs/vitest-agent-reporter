@@ -1784,6 +1784,235 @@ post-2.0. Adding the column during the in-place edit of
 is deleted (main-agent under user confirmation), all its
 evidence goes too.
 
+### Decision 35: MCP Resources and Prompts (Two URI Schemes, Framing-Only Prompts)
+
+**Context:** Through the 2.0 dogfood it became clear that the
+50-tool surface was missing two adjacent capabilities. First,
+agents kept asking "how do I assert on accumulated writes from a
+DataStore test layer?" or "what's the right way to round-trip a
+`Schema.Class`?" — questions whose answers are documentation, not
+data. Pulling those answers in via tool calls was wasteful (every
+question paid a tRPC roundtrip + zod parse) and the canonical
+answers lived in two places that the agent could not reach
+directly: the upstream Vitest documentation site (a network
+fetch away, blocked by sandbox policies in many setups) and our
+own curated guidance scattered across CLAUDE.md / design docs.
+Second, the tool surface was *low-level* — agents had to know
+which tools to compose and in what order to triage failures or
+diagnose flaky tests. There was no canonical "this is how you
+triage" or "this is how you find the regression" framing the
+client could surface in its prompt menu.
+
+The MCP spec already has the right primitives for both: resources
+(URI-addressable read-only content) and prompts (templated
+messages clients can pick from a menu). The question was
+*which* split, and *what shape* of prompts.
+
+**Decision:** add two MCP-server surfaces alongside the existing
+tRPC tool router:
+
+- **Four resources under two URI schemes.** `vitest://docs/`
+  (index) + `vitest://docs/{+path}` (page template) expose the
+  vendored upstream Vitest documentation snapshot at
+  `packages/mcp/vendor/vitest-docs/`. `vitest-agent://patterns/`
+  (index) + `vitest-agent://patterns/{slug}` (page template)
+  expose the curated patterns library at
+  `packages/mcp/patterns/`. All four return `text/markdown`
+- **Six framing-only prompts.** `triage`, `why-flaky`,
+  `regression-since-pass`, `explain-failure`, `tdd-resume`, and
+  `wrapup`. Each prompt's factory takes a small zod-validated
+  argument set and returns one or more user-role messages that
+  orient the agent toward the right tool composition — *no tool
+  data is pre-fetched on the server*
+
+The registrars (`packages/mcp/src/resources/index.ts` and
+`packages/mcp/src/prompts/index.ts`) are called from
+`server.ts` immediately before `StdioServerTransport` is
+constructed, so resources and prompts are visible on the same
+session as the tools.
+
+**(a) Why two URI schemes (vs one):**
+
+- The two schemes carry content with **different provenance**:
+  `vitest://` is vendored upstream content (a snapshot of
+  `vitest-dev/vitest`'s `docs/` tree at a pinned tag, MIT-licensed,
+  attributed in `ATTRIBUTION.md` + `manifest.json`).
+  `vitest-agent://` is content authored *for* this project
+  (curated guidance encoding our own opinions about testing
+  Effect, schemas, and reporters). Splitting the schemes makes
+  the provenance visible at glance — a client UI can render
+  vendored docs differently from curated patterns, an agent can
+  cite the right source without having to inspect path prefixes,
+  and a future "trust this source for X but not Y" policy
+  becomes expressible at the URI-scheme level
+- Cramming both content trees under one scheme (e.g.
+  `vitest-agent://docs/...` + `vitest-agent://patterns/...`)
+  would conflate authored-by-us with vendored-from-upstream.
+  Keeping them separate is cheap (two `server.registerResource`
+  calls per tree instead of two) and load-bearing for licensing
+  - provenance clarity
+
+**(b) Why vendor the Vitest docs (vs fetch on demand from
+`vitest.dev` or GitHub):**
+
+- **Zero-network determinism.** The MCP server is called from
+  agent loops that may have no network egress (sandbox policies,
+  airgapped CI, offline dev). A network-fetching resource handler
+  would intermittently fail, which agents would interpret as
+  "the docs are gone" rather than "your network is partitioned".
+  Vendoring at a pinned tag means every install ships with a
+  known-good snapshot
+- **Snapshot integrity.** `manifest.json` records the exact
+  upstream tag + commit SHA + capture timestamp + source URL,
+  and `ATTRIBUTION.md` carries the MIT license notice. Anyone
+  reading the vendored content can verify provenance without
+  trusting the build pipeline
+- **Refresh path is an explicit human action.** `pnpm run
+  update-vitest-snapshot --tag <vN.M.K>` (and the matching
+  `update-vitest-snapshot` Claude Code skill) makes "bump the
+  Vitest docs we ship" a deliberate operation that goes through
+  code review. A network-fetched resource handler would change
+  what agents see *between server starts* without any audit
+  trail
+- **Build-time cost is bounded.** The snapshot is markdown only.
+  ~10 entries per snapshot; checked-in size is small. The
+  postbuild copier (`copy-vendor-to-dist.mjs`) mirrors the
+  tree into `dist/dev/` and `dist/npm/` so runtime path
+  resolution works post-build without bundling markdown into
+  the JS
+
+**(c) Why `execFileSync` (with array args) for the snapshot
+fetcher:**
+
+- The fetcher takes a tag string from the CLI and passes it to
+  `git`. Building a shell command (e.g. `git clone ... --branch
+  ${tag} ...`) and passing it to `execSync` opens a
+  shell-injection hole at the exact boundary where the input is
+  least trusted. A malicious upstream tag like
+  `v4.0.0; rm -rf $HOME` would execute as written
+- `execFileSync("git", [..., "--branch", tag, ...], { cwd })`
+  invokes git directly without spawning a shell, so the tag is
+  treated verbatim as one argv element regardless of its
+  contents. The same applies to the `git rev-parse HEAD` and
+  `git sparse-checkout set docs` invocations
+- The script is zero-deps (only Node built-ins) so it can run
+  before the workspace's `node_modules` exists. Documented in
+  the `update-vitest-snapshot` skill alongside the rationale
+
+**(d) Why path-traversal guarding (`paths.ts`):**
+
+- The MCP server is a long-lived process and the resource URI
+  template variables come from clients. A naïve
+  `join(vendorRoot, relative)` would let
+  `vitest://docs/../../etc/passwd` escape the vendored tree on
+  any platform. `resolveResourcePath` enforces three invariants:
+  no null bytes (defense against C-string-style truncation
+  bugs), no absolute paths (which would bypass the prefix
+  entirely), and the resolved path must start with
+  `<root><sep>` (or equal `root` for empty input)
+- Tests in `paths.test.ts` cover each rejection case explicitly.
+  The reader functions (`upstream-docs.ts`, `patterns.ts`)
+  must call `resolveResourcePath` before any `readFile` — the
+  helper is the security boundary, not a performance optimization
+
+**(e) Why "framing-only" prompts (vs prompts that pre-fetch tool
+data on the server):**
+
+- Pre-fetching on the server would invert the cost model.
+  `triage` would have to call `triage_brief` server-side just to
+  emit one templated message — paying the database read and the
+  output rendering twice (once on prompt selection, once when
+  the agent then calls `triage_brief` itself for the data).
+  Framing-only prompts have *zero* server-side I/O on selection
+- Prompts that pre-fetch couple the prompt result to the
+  database state at prompt-selection time, which is one or two
+  agent turns *earlier* than when the agent actually uses the
+  data. By the time the agent reaches the relevant turn, the
+  pre-fetched data is stale
+- Framing-only prompts are composable with the existing tools.
+  The `triage` prompt orients the agent toward
+  `triage_brief` + `failure_signature_get` + `hypothesis_record`;
+  the agent then calls those tools with the right arguments at
+  the right time. The prompts don't duplicate tool data — they
+  direct the agent toward the right tools
+- Argument validation lives in the prompt (`zod` schemas), so
+  the prompt surface is type-safe even though it's content-only.
+  Failures show up at prompt selection, not several turns later
+  in tool calls
+
+**(f) Why six prompts specifically (vs more or fewer):**
+
+- The six map onto the six **canonical workflows** that surfaced
+  during the 2.0 dogfood: triaging recent failures, diagnosing
+  flakes, finding the regression, explaining a failure class,
+  resuming TDD work, and generating wrapup output. Each one had
+  agents repeatedly asking "what's the right tool composition
+  for X?", which is exactly what a prompt menu solves
+- Adding a seventh prompt is one file in `packages/mcp/src/prompts/`
+  - one entry in the registrar; the surface scales gracefully.
+  The argument schema is `zod`, the message factory is a pure
+  function, and the registrar's pattern (`if (args.x !==
+  undefined) { ... }` for optionals) is mechanical. We expect
+  the prompt set to grow as new workflow patterns emerge
+
+**(g) Why direct SDK registration (vs going through tRPC):**
+
+- tRPC is the right abstraction for the **tool** surface
+  (input validation + typed context + caller factory for
+  testing). Resources and prompts have a **different shape**:
+  resources are URI-addressable reads, prompts are templated
+  message emitters. Both are well-served by the SDK's native
+  `registerResource` / `registerPrompt` APIs, which understand
+  URI templates and argument schemas natively
+- Forcing resources through tRPC would mean inventing a
+  procedure-per-resource convention and re-implementing URI
+  template matching in the router, for no gain. Forcing prompts
+  through tRPC would lose the SDK's native argument-schema
+  support
+- The two surfaces (tools via tRPC, resources/prompts via SDK)
+  share the same `McpServer` instance, the same stdio transport,
+  and the same `ManagedRuntime` indirectly (resources/prompts
+  are content-only and don't need DataReader/DataStore yet, but
+  if a future prompt needs runtime data the registrar can
+  receive the runtime as a closure)
+
+**Trade-offs:**
+
+- The MCP package's release artifact now ships markdown trees
+  (`vendor/` + `patterns/`) alongside compiled JS. The postbuild
+  copier handles the layout, but it's an extra step in the
+  build pipeline that has to stay in sync with the source-tree
+  layout. The chosen approach (`copy-vendor-to-dist.mjs` invoked
+  via `&&` from `build:dev` / `build:prod`) is robust because
+  the build/copy pair is atomic per command — the copier never
+  runs without the build, and a build that fails halts the
+  `&&` chain before the copier creates inconsistent dist
+  output
+- Vendored snapshots get stale. We accept this: a stale snapshot
+  is still useful (most Vitest API doesn't change between minors),
+  and the explicit refresh path means staleness is visible in
+  the changelog when it matters. A network-fetching alternative
+  would be invisibly stale instead — the symptom would be
+  "agents cite outdated docs without anyone noticing"
+- The two URI schemes look like a lot of surface for two trees
+  of content. Acceptable: future trees (e.g. a `vitest-agent://
+  decisions/<id>` exposing the design-doc decisions for direct
+  agent reference) slot in without introducing a third scheme,
+  by extending the existing `vitest-agent://` namespace
+- Prompts cannot dynamically discover tools. A future need for
+  "this prompt should expand to whatever tools are currently
+  registered" would require server-side enumeration that the
+  current framing-only design doesn't support. Acceptable for
+  the launch set; if that need surfaces, prompt factories can
+  call into `server.tools` directly without breaking the
+  framing-only model for the existing six
+
+This decision sits next to Decision 19 (tRPC for MCP routing) and
+Decision 21 (`spawnSync` for `run_tests`). Decision 19 chose tRPC
+for the tool surface; Decision 35 keeps tRPC there and adds two
+non-tool surfaces via the SDK's native APIs. The two coexist
+cleanly because they address different needs.
+
 ---
 
 ## Design Patterns Used

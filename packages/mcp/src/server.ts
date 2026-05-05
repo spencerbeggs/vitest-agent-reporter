@@ -5,6 +5,8 @@ import { ChannelEvent, DataReader } from "vitest-agent-sdk";
 import { z } from "zod";
 import type { McpContext } from "./context.js";
 import { createCallerFactory } from "./context.js";
+import { registerAllPrompts } from "./prompts/index.js";
+import { registerAllResources } from "./resources/index.js";
 import { appRouter } from "./router.js";
 
 /**
@@ -1056,6 +1058,9 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 	server.server.oninitialized = () => {
 		void elicitSessionId();
 	};
+
+	registerAllResources(server);
+	registerAllPrompts(server);
 
 	const transport = new StdioServerTransport();
 	await server.connect(transport);

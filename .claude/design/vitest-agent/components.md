@@ -6,6 +6,9 @@ created: 2026-03-20
 updated: 2026-05-05
 last-synced: 2026-05-05
 completeness: 100
+# Note: 2026-05-05 sync added the MCP resources + prompts surface
+# (vitest:// + vitest-agent:// URI schemes, six framing-only
+# prompts) and the vendor-snapshot/copy-to-dist build scripts.
 related:
   - ./architecture.md
   - ./decisions.md
@@ -44,8 +47,15 @@ covers one package; load only the section you need:
   layers, formatters, errors, migrations, utilities, XDG path stack,
   and the public reporter contract types (`contracts/reporter.ts`)
 - **CLI package** -- `vitest-agent-reporter` bin and `CliLive`
-- **MCP package** -- `vitest-agent-mcp` bin, tRPC router, 41
-  tools, the tRPC idempotency middleware, and `McpLive`
+- **MCP package** -- `vitest-agent-mcp` bin, tRPC router, 50
+  tools, the tRPC idempotency middleware, the four MCP resources
+  (vendored Vitest docs + curated patterns under
+  `vitest://docs/...` and `vitest-agent://patterns/...`), the
+  six framing-only MCP prompts (`triage`, `why-flaky`,
+  `regression-since-pass`, `explain-failure`, `tdd-resume`,
+  `wrapup`), the vendor-snapshot fetch script, the
+  postbuild copier that mirrors `vendor/` + `patterns/` into
+  `dist/<env>/`, and `McpLive`
 - **Claude Code plugin** -- file-based plugin with the MCP loader,
   hooks, skills, commands, the TDD orchestrator agent definition,
   `/tdd` slash command, and 9 sub-skill primitives
@@ -1731,12 +1741,20 @@ Used by the CLI bin via `NodeRuntime.runMain`.
 ## MCP package (vitest-agent-mcp)
 
 Model Context Protocol server providing 50 tools for agent
-integration via tRPC router. Tools cover read-only queries,
-discovery, note CRUD, session/turn/TDD reads, hypothesis writes
-(via idempotency middleware), TDD lifecycle reads/writes, the 10
-goal/behavior CRUD tools introduced in 2.0, and workspace history.
-Uses `@modelcontextprotocol/sdk` with stdio transport and tRPC for
-routing.
+integration via tRPC router, plus four MCP resources under two URI
+schemes and six framing-only prompts registered directly with
+`@modelcontextprotocol/sdk` (alongside the tRPC tool router). Tools
+cover read-only queries, discovery, note CRUD, session/turn/TDD
+reads, hypothesis writes (via idempotency middleware), TDD lifecycle
+reads/writes, the 10 goal/behavior CRUD tools introduced in 2.0,
+and workspace history. Resources expose the vendored upstream Vitest
+documentation snapshot (`vitest://docs/...`) and the curated
+testing-patterns library (`vitest-agent://patterns/...`). Prompts
+emit small templated user messages that orient the agent toward the
+right tools without pre-fetching tool data on the server. Uses
+`@modelcontextprotocol/sdk` with stdio transport, tRPC for tool
+routing, and the SDK's native resource/prompt registration APIs for
+content surfaces.
 
 **npm name:** `vitest-agent-mcp`
 **bin:** `vitest-agent-mcp`
@@ -1777,10 +1795,37 @@ coordination without bundling the dependency tree.
 - `router.ts` -- tRPC router aggregating all 50 tool procedures
 - `server.ts` -- `startMcpServer()` registers all tools with the MCP
   SDK using zod input schemas (the SDK side; tRPC inputs are also
-  zod, kept in sync between the two registrations)
+  zod, kept in sync between the two registrations); also calls
+  `registerAllResources(server)` and `registerAllPrompts(server)`
+  before constructing `StdioServerTransport`
+- `resources/` -- the four MCP resources surface (covered below):
+  `index.ts` (registrar), `paths.ts` (path-traversal-safe
+  resolver), `upstream-docs.ts` / `patterns.ts` (per-scheme
+  readers), `indexes.ts` (index renderers)
+- `prompts/` -- the six framing-only MCP prompts surface (covered
+  below): `index.ts` (registrar) plus one file per prompt
+  (`triage.ts`, `why-flaky.ts`, `regression-since-pass.ts`,
+  `explain-failure.ts`, `tdd-resume.ts`, `wrapup.ts`)
 - `middleware/idempotency.ts` -- tRPC idempotency
   middleware (covered below)
 - `layers/McpLive.ts` -- composition layer (covered below)
+
+Sibling content trees colocated under the package root (copied
+into `dist/dev/` and `dist/npm/` by `scripts/copy-vendor-to-dist.mjs`
+during `build:dev` / `build:prod`):
+
+- `vendor/vitest-docs/` -- vendored upstream Vitest documentation
+  snapshot (markdown files mirroring `vitest-dev/vitest`'s
+  `docs/` directory, plus `manifest.json` carrying `tag`,
+  `commitSha`, `capturedAt`, `source`, and `ATTRIBUTION.md`).
+  Refreshed via `scripts/update-vitest-snapshot.mjs`
+- `patterns/` -- curated testing patterns library (`_meta.json`
+  index + per-pattern markdown). Three launch patterns ship in
+  2.0: `testing-effect-services-with-mock-layers`,
+  `testing-effect-schema-definitions`, and
+  `authoring-a-custom-vitest-agent-reporter`
+- `scripts/` -- zero-deps maintenance scripts (covered in **MCP
+  build scripts** below)
 
 **Dependencies:**
 
@@ -2076,6 +2121,208 @@ delivery) gets the cached result back instead of double-writing.
 `ProjectDiscoveryLive`, `OutputPipelineLive`, `SqliteClient`,
 `Migrator`, `NodeContext`, `NodeFileSystem`, and `LoggerLive(...)`.
 Used by the MCP server bin via `ManagedRuntime`.
+
+### MCP resources (4 resources, 2 URI schemes)
+
+**Locations:**
+
+- `packages/mcp/src/resources/index.ts` --
+  `registerAllResources(server)` registrar. Resolves
+  `vendorRoot` and `patternsRoot` from `import.meta.url` so the
+  same code works in tests/dev (resolves to
+  `packages/mcp/<vendor|patterns>/`) and after build (resolves
+  to `dist/<env>/<vendor|patterns>/` because
+  `copy-vendor-to-dist.mjs` mirrors both trees as siblings of
+  the compiled `resources/` directory)
+- `packages/mcp/src/resources/paths.ts` -- `resolveResourcePath`
+  helper. Rejects null bytes, absolute paths, and any resolved
+  path that does not stay within `root` (path-traversal guard).
+  Auto-appends `.md` when the input lacks an extension
+- `packages/mcp/src/resources/upstream-docs.ts` --
+  `readUpstreamDoc(vendorRoot, relative)` reader for the
+  `vitest://docs/{+path}` template
+- `packages/mcp/src/resources/patterns.ts` --
+  `readPattern(patternsRoot, slug)` reader for the
+  `vitest-agent://patterns/{slug}` template
+- `packages/mcp/src/resources/indexes.ts` --
+  `renderUpstreamIndex(vendorRoot)` and
+  `renderPatternsIndex(patternsRoot)` index renderers (consumed
+  by the index-URI handlers)
+
+**Purpose:** Surface the vendored upstream Vitest documentation
+and the curated `vitest-agent` testing patterns to MCP clients
+as first-class MCP resources, so agents can discover and read
+documentation without needing a tool roundtrip per page.
+
+**Registered resources** (all `mimeType: text/markdown`):
+
+| Name | URI | Title | Source |
+| ---- | --- | ----- | ------ |
+| `vitest_docs_index` | `vitest://docs/` | Vitest Documentation Index | `vendor/vitest-docs/` |
+| `vitest_docs_page` | `vitest://docs/{+path}` (template) | Vitest Documentation Page | `vendor/vitest-docs/{path}.md` |
+| `vitest_agent_patterns_index` | `vitest-agent://patterns/` | vitest-agent Patterns Index | `patterns/_meta.json` |
+| `vitest_agent_pattern` | `vitest-agent://patterns/{slug}` (template) | vitest-agent Pattern | `patterns/{slug}.md` |
+
+The two index resources are static URIs; the two page resources
+are `ResourceTemplate` instances passed to `server.registerResource`
+with `{ list: undefined }` so the SDK does not enumerate every page
+on `resources/list` (the index URIs already serve that role and the
+list of pages is large enough that enumeration would bloat client
+listings). Each page handler resolves the template variable, calls
+the matching reader, and returns
+`{ contents: [{ uri: uri.href, mimeType, text }] }`.
+
+**Why two URI schemes:**
+
+- `vitest://` carries the vendored upstream content -- it is a
+  snapshot of `vitest-dev/vitest`'s `docs/` tree at a pinned tag.
+  The scheme name signals provenance to clients
+- `vitest-agent://` carries content authored *for* this project
+  -- the curated pattern library encoding our own opinions about
+  testing Effect services, testing schemas, and authoring a
+  custom reporter. Splitting the schemes makes it impossible to
+  conflate vendored content with curated guidance, even at a
+  glance
+
+**Why path-traversal guarding (`paths.ts`):** the MCP server
+runs as a long-lived process and the resource URIs come from
+clients. A naïve `join(vendorRoot, relative)` would let
+`vitest://docs/../../etc/passwd` escape the vendored tree.
+`resolveResourcePath` enforces three invariants: no null bytes,
+no absolute paths, and the resolved path must start with
+`<root><sep>` (or equal `root` for empty input). Tests in
+`paths.test.ts` cover each rejection case.
+
+**Dependencies:**
+
+- Depends on: `@modelcontextprotocol/sdk` (`McpServer` +
+  `ResourceTemplate`), Node `node:fs` / `node:path` for vendor
+  reads
+- Used by: `server.ts` (`registerAllResources(server)` is
+  invoked alongside `registerAllPrompts(server)` before the
+  `StdioServerTransport` is connected)
+
+### MCP prompts (6 framing-only prompts)
+
+**Locations:**
+
+- `packages/mcp/src/prompts/index.ts` --
+  `registerAllPrompts(server)` registrar that wires each
+  prompt's argument zod schema, the matching factory function,
+  and a small `toMessages(...)` adapter. The adapter narrows
+  the user-only message shape returned by each factory to the
+  SDK-permitted `role: "user" | "assistant"` form
+- `packages/mcp/src/prompts/triage.ts` --
+  `triagePrompt({ project? })`
+- `packages/mcp/src/prompts/why-flaky.ts` --
+  `whyFlakyPrompt({ test, project? })`
+- `packages/mcp/src/prompts/regression-since-pass.ts` --
+  `regressionSincePassPrompt({ test, project? })`
+- `packages/mcp/src/prompts/explain-failure.ts` --
+  `explainFailurePrompt({ signature })`
+- `packages/mcp/src/prompts/tdd-resume.ts` --
+  `tddResumePrompt({ cc_session_id? })`
+- `packages/mcp/src/prompts/wrapup.ts` --
+  `wrapupPrompt({ kind?, since? })` plus the `WrapupKind` type
+  re-exported for the registrar's argument coercion
+
+**Purpose:** Surface canonical workflow primings as MCP prompts
+so a client can pick "Triage Recent Failures" from a menu and
+the agent receives the right framing without the user needing to
+remember which tools to compose. Each prompt emits one or more
+templated user messages; **no tool data is pre-fetched on the
+server** -- the prompt only orients the agent, and the agent
+then composes the tools (`triage_brief`, `failure_signature_get`,
+`hypothesis_record`, etc.) as needed.
+
+**Registered prompts:**
+
+| Name | Title | Args | Composes |
+| ---- | ----- | ---- | -------- |
+| `triage` | Triage Recent Failures | `project?` | `triage_brief`, `failure_signature_get`, `hypothesis_record` |
+| `why-flaky` | Diagnose a Flaky Test | `test`, `project?` | `test_history`, `failure_signature_get` |
+| `regression-since-pass` | Find What Broke a Test | `test`, `project?` | `test_history`, `commit_changes`, `turn_search` |
+| `explain-failure` | Explain a Failure Class | `signature` (16-char hex) | (synthesizes from `failure_signature_get` recurrence history) |
+| `tdd-resume` | Resume TDD Work | `cc_session_id?` | (orients toward the active TDD session and iron-law transitions) |
+| `wrapup` | Generate a Session Wrapup | `kind?`, `since?` | (mirrors what the post-hooks emit automatically) |
+
+The `wrapup` prompt's `kind` argument is a closed `z.enum([...])`
+matching the same five `WrapupKind` variants the
+`format-wrapup` library generator emits (`stop`, `session_end`,
+`pre_compact`, `tdd_handoff`, `user_prompt_nudge`); the
+registrar narrows `args.kind` to `WrapupKind` before forwarding
+to the factory.
+
+**Why "framing-only":** the prompts are not tool wrappers. A
+client that imports the `triage` prompt receives a short
+templated user message like "Orient toward triage workflow over
+the most recent test run, scoped to project X." It is the *agent*
+that then calls the tools to fetch data. This keeps the server's
+prompt surface free of latency and side effects -- prompt
+selection on the client costs zero tool roundtrips, and the
+server never reads the database while assembling a prompt
+response. It also keeps the prompts composable with the existing
+tools: the prompts don't duplicate tool data, they direct the
+agent toward the right tools.
+
+**Dependencies:**
+
+- Depends on: `@modelcontextprotocol/sdk`'s `registerPrompt` API,
+  `zod` for argument schemas
+- Used by: `server.ts` (`registerAllPrompts(server)` invoked
+  alongside `registerAllResources(server)` before the
+  `StdioServerTransport` is connected)
+
+### MCP build scripts
+
+**Locations:**
+
+- `packages/mcp/scripts/update-vitest-snapshot.mjs` -- zero-deps
+  Node script (only imports `node:child_process`,
+  `node:fs`, `node:os`, `node:path`, `node:url`) that refreshes
+  the vendored Vitest documentation snapshot. Sparse-clones
+  `vitest-dev/vitest` at the requested tag (`--depth 1
+  --filter=blob:none --sparse --branch <tag>`),
+  `sparse-checkout set docs`, walks the resulting `docs/` tree
+  for `*.md` files, empties + repopulates `vendor/vitest-docs/`,
+  rewrites `manifest.json` (`tag`, `commitSha` from
+  `git rev-parse HEAD`, `capturedAt`, `source`), and ensures
+  `ATTRIBUTION.md`. **Uses `execFileSync` with array args
+  exclusively** -- never `execSync` with a shell-interpolated
+  string -- so a malicious upstream tag like
+  `v4.0.0; rm -rf $HOME` cannot inject shell commands. The
+  script is invoked via `pnpm run update-vitest-snapshot --tag
+  <vN.M.K>` from the package root, or via the
+  `update-vitest-snapshot` Claude Code skill at
+  `plugin/skills/update-vitest-snapshot/SKILL.md`
+- `packages/mcp/scripts/copy-vendor-to-dist.mjs` -- postbuild
+  copier invoked by both `build:dev` and `build:prod` (chained
+  via `&&` in `package.json`'s `scripts`). Copies the
+  `vendor/` and `patterns/` trees as-is into `dist/dev/` and
+  `dist/npm/` so the runtime path resolution in
+  `resources/index.ts` resolves correctly post-build (the
+  compiled `resources/` directory ends up at
+  `dist/<env>/resources/`, with `vendor/` and `patterns/` as
+  siblings two levels up — the same relative layout the source
+  tree has). Skips with a warning when a target dir does not
+  exist yet (e.g. `dist/dev/` before the first `build:dev`)
+
+**Why `execFileSync` over `execSync`:** the snapshot fetcher
+takes the tag as a CLI argument and passes it to `git`. Building
+a shell command string and passing to `execSync` (`git clone ...
+--branch ${tag} ...`) opens a shell-injection hole at the exact
+boundary where the input is least trusted. `execFileSync("git",
+[..., "--branch", tag, ...], { cwd })` invokes git directly
+without spawning a shell, so `tag` is treated verbatim as one
+argv element regardless of its contents.
+
+**Why the postbuild copy step:** `rslib` only knows how to
+build TypeScript sources. The vendor tree and patterns tree are
+runtime data, not source. Bundling them through a build plugin
+would either (a) inline the markdown into the JS bundle (wasteful
+for resources clients fetch by URI) or (b) require a custom
+loader. A separate `cpSync`-based copier is the simplest
+correct option.
 
 ---
 

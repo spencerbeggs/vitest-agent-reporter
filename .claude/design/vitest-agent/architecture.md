@@ -3,8 +3,8 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-05-04
-last-synced: 2026-05-04
+updated: 2026-05-05
+last-synced: 2026-05-05
 completeness: 95
 # Note: doc set lives at .claude/design/vitest-agent/ as of branch
 # refactor/2-0-0-package-rename. Frontmatter `module` retains the
@@ -55,7 +55,7 @@ schema/data-layer/contract surface:
 | `vitest-agent-plugin` | `packages/plugin/` | The Vitest plugin + the internal `AgentReporter` Vitest-API class + `ReporterLive` + `CoverageAnalyzer` + reporter-side utilities (`build-reporter-kit`, `route-rendered-output`, `process-failure`, `capture-env`, `capture-settings`, `resolve-thresholds`, `strip-console-reporters`). Owns the Vitest lifecycle, persistence, classification, baselines, and trends. Delegates rendering to a user-supplied `VitestAgentReporterFactory` (defaults to `defaultReporter` from `vitest-agent-reporter`). Declares `vitest-agent-reporter`, `vitest-agent-cli`, and `vitest-agent-mcp` as required `peerDependencies`. No bin entries. |
 | `vitest-agent-reporter` | `packages/reporter/` | Named `VitestAgentReporterFactory` implementations only — no Vitest-API code. Exports `defaultReporter` (env-aware composition that picks a primary reporter from `kit.config.format` and adds `githubSummaryReporter` as a sidecar under GitHub Actions) plus the focused single-formatter factories `markdownReporter`, `terminalReporter`, `jsonReporter`, `silentReporter`, `ciAnnotationsReporter`, and `githubSummaryReporter`. Each named reporter wraps exactly one shared `Formatter`. Depends on shared. No bin entries. |
 | `vitest-agent-cli` | `packages/cli/` | `vitest-agent` bin (`@effect/cli`-based) with `status`, `overview`, `coverage`, `history`, `trends`, `cache` (incl. `prune`), `doctor`, `record` (with `turn`, `session-start`, `session-end`, `tdd-artifact`, `run-workspace-changes` actions), `triage`, and `wrapup` subcommands. Owns `CliLive`. |
-| `vitest-agent-mcp` | `packages/mcp/` | `vitest-agent-mcp` bin (`@modelcontextprotocol/sdk` + tRPC) exposing 50 tools to LLM agents (including the 10 goal/behavior CRUD tools added in 2.0). Owns the tRPC idempotency middleware and `McpLive`. |
+| `vitest-agent-mcp` | `packages/mcp/` | `vitest-agent-mcp` bin (`@modelcontextprotocol/sdk` + tRPC) exposing 50 tools to LLM agents (including the 10 goal/behavior CRUD tools added in 2.0), plus four MCP resources under two URI schemes (`vitest://docs/{+path}` for the vendored Vitest documentation snapshot at `packages/mcp/vendor/vitest-docs/` and `vitest-agent://patterns/{slug}` for the curated patterns library at `packages/mcp/patterns/`) and six framing-only prompts (`triage`, `why-flaky`, `regression-since-pass`, `explain-failure`, `tdd-resume`, `wrapup`). Owns the tRPC idempotency middleware, the resources/prompts registrars, the vendor snapshot fetch script, and `McpLive`. |
 
 Examples live under `examples/*` (included as a sixth Vitest project for
 integration coverage). The `plugin/` directory is the file-based
@@ -126,17 +126,40 @@ Claude Code plugin and is NOT a pnpm workspace.
   session/turn/TDD/hypothesis reads, the orientation triage brief,
   the wrap-up prompt, hypothesis writes, TDD session lifecycle
   writes, the 10 goal/behavior CRUD tools added in 2.0, and
-  workspace commit history. The file-based Claude Code plugin at
-  `plugin/` ships a PM-detect-and-spawn loader, lifecycle hooks
-  (session/turn capture, interpretive nudges, TDD orchestrator
-  scoping, anti-pattern detection, git-commit recording), the TDD
-  orchestrator subagent definition (`plugin/agents/tdd-orchestrator.md`),
-  the `/tdd <goal>` slash command, sub-skill primitives, and two
-  `PreToolUse` hooks: `pre-tool-use-mcp.sh` auto-allows the
-  non-destructive MCP tools, and `pre-tool-use-tdd-restricted.sh`
-  (2.0) denies `tdd_goal_delete` / `tdd_behavior_delete` /
-  `tdd_artifact_record` for the orchestrator subagent
-  specifically.
+  workspace commit history. The MCP server **also exposes content
+  surfaces** registered directly with `@modelcontextprotocol/sdk`
+  (alongside the tRPC tool router): four resources under two URI
+  schemes — `vitest://docs/` (index) + `vitest://docs/{+path}`
+  (page) for the vendored upstream Vitest documentation snapshot at
+  `packages/mcp/vendor/vitest-docs/`, and `vitest-agent://patterns/`
+  (index) + `vitest-agent://patterns/{slug}` (page) for the
+  curated testing patterns library at `packages/mcp/patterns/`
+  — plus six framing-only prompts (`triage`, `why-flaky`,
+  `regression-since-pass`, `explain-failure`, `tdd-resume`,
+  `wrapup`) that emit small templated user messages without
+  pre-fetching any tool data on the server. Resource and prompt
+  registrars live in `packages/mcp/src/resources/index.ts` and
+  `packages/mcp/src/prompts/index.ts`; `server.ts` calls
+  `registerAllResources(server)` and `registerAllPrompts(server)`
+  before the `StdioServerTransport` setup. Vendor + patterns trees
+  are copied into `dist/dev/` and `dist/npm/` via
+  `packages/mcp/scripts/copy-vendor-to-dist.mjs` (postbuild step
+  invoked by both `build:dev` and `build:prod`); the snapshot is
+  refreshed via `pnpm run update-vitest-snapshot --tag <vN.M.K>`
+  (zero-deps `execFileSync`-based git-clone fetcher at
+  `packages/mcp/scripts/update-vitest-snapshot.mjs`) and the
+  `update-vitest-snapshot` Claude Code skill. The file-based
+  Claude Code plugin at `plugin/` ships a PM-detect-and-spawn
+  loader, lifecycle hooks (session/turn capture, interpretive
+  nudges, TDD orchestrator scoping, anti-pattern detection,
+  git-commit recording), the TDD orchestrator subagent definition
+  (`plugin/agents/tdd-orchestrator.md`), the `/tdd <goal>` slash
+  command, sub-skill primitives (including the new
+  `update-vitest-snapshot` skill), and two `PreToolUse` hooks:
+  `pre-tool-use-mcp.sh` auto-allows the non-destructive MCP tools,
+  and `pre-tool-use-tdd-restricted.sh` (2.0) denies
+  `tdd_goal_delete` / `tdd_behavior_delete` / `tdd_artifact_record`
+  for the orchestrator subagent specifically.
 
 The repository is a pnpm monorepo with five publishable workspaces
 under `packages/` (`sdk`, `plugin`, `reporter`, `cli`, `mcp`) plus
@@ -440,6 +463,11 @@ The most important components, with their canonical locations. See
 | Shared lib generators | `packages/sdk/src/lib/format-triage.ts`, `packages/sdk/src/lib/format-wrapup.ts` |
 | CLI subcommands | `packages/cli/src/commands/{status,overview,coverage,history,trends,cache,doctor,record,triage,wrapup}.ts` |
 | MCP tools | `packages/mcp/src/tools/` (one file per tool; the 6 note CRUD ops live in `notes.ts`, totaling 50 tools — 41 from prior work, plus 10 new TDD goal/behavior CRUD tools added in 2.0, minus 1 removed `decompose_goal_into_behaviors`) |
+| MCP resources registrar | `packages/mcp/src/resources/index.ts` (`registerAllResources(server)` registers four resources: `vitest_docs_index`, `vitest_docs_page`, `vitest_agent_patterns_index`, `vitest_agent_pattern`) plus `paths.ts` (path-traversal-safe resolver), `upstream-docs.ts` / `patterns.ts` (per-scheme readers), `indexes.ts` (index renderers) |
+| MCP prompts registrar | `packages/mcp/src/prompts/index.ts` (`registerAllPrompts(server)` registers six framing-only prompts: `triage`, `why-flaky`, `regression-since-pass`, `explain-failure`, `tdd-resume`, `wrapup`; one file per prompt) |
+| Vendored Vitest docs snapshot | `packages/mcp/vendor/vitest-docs/` (10 entries including `manifest.json` with `tag` + `commitSha` + `capturedAt` and `ATTRIBUTION.md`; pinned at a specific upstream tag) |
+| Curated patterns library | `packages/mcp/patterns/` (`_meta.json` index + per-pattern markdown files; three launch patterns: `testing-effect-services-with-mock-layers`, `testing-effect-schema-definitions`, `authoring-a-custom-vitest-agent-reporter`) |
+| MCP build scripts | `packages/mcp/scripts/update-vitest-snapshot.mjs` (zero-deps `execFileSync`-based snapshot fetcher; invoked via `pnpm run update-vitest-snapshot --tag <vN.M.K>`), `packages/mcp/scripts/copy-vendor-to-dist.mjs` (postbuild copier invoked by `build:dev` and `build:prod` to mirror `vendor/` and `patterns/` into `dist/dev/` and `dist/npm/`) |
 | tRPC idempotency middleware | `packages/mcp/src/middleware/idempotency.ts` (with `idempotentProcedure` + `idempotencyKeys` registry) |
 | Plugin hooks | `plugin/hooks/{session-start,user-prompt-submit-record,pre-tool-use-mcp,pre-tool-use-record,pre-tool-use-bash-tdd,post-test-run,post-tool-use-record,post-tool-use-tdd-artifact,post-tool-use-test-quality,post-tool-use-git-commit,session-end-record,stop-record,pre-compact-record,subagent-start-tdd,subagent-stop-tdd}.sh` plus `lib/match-tdd-agent.sh`, `lib/detect-pm.sh`, `lib/hook-output.sh`, and `lib/safe-mcp-vitest-agent-ops.txt` |
 | CI annotations formatter | `packages/sdk/src/formatters/ci-annotations.ts` |
@@ -448,6 +476,7 @@ The most important components, with their canonical locations. See
 | TDD orchestrator agent | `plugin/agents/tdd-orchestrator.md` |
 | `/tdd` slash command | `plugin/commands/tdd.md` |
 | TDD sub-skill primitives | `plugin/skills/{interpret-test-failure,derive-test-name-from-behavior,derive-test-shape-from-name,verify-test-quality,run-and-classify,record-hypothesis-before-fix,commit-cycle,revert-on-extended-red,decompose-goal-into-behaviors}/SKILL.md` |
+| MCP snapshot maintenance skill | `plugin/skills/update-vitest-snapshot/SKILL.md` (guided workflow for bumping `packages/mcp/vendor/vitest-docs/` to a new upstream tag) |
 | Claude Code Plugin | `plugin/` (manifest + zero-deps PM-detect loader at `plugin/bin/mcp-server.mjs`) |
 
 ---

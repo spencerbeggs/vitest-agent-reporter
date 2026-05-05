@@ -81,13 +81,24 @@ server family for LLM coding agents. Six primary capabilities:
 6. **MCP server & Claude Code plugin** -- 50 MCP tools via tRPC router
    (shipped by `vitest-agent-mcp`), including the three-tier
    Objective→Goal→Behavior CRUD surface (10 tools) added in 2.0,
-   plus a file-based Claude Code plugin at `plugin/` with a
-   `PreToolUse` hook that auto-allows the non-destructive MCP tools
-   without per-call permission prompts. The two `tdd_*_delete` tools
-   are intentionally omitted from the auto-allow list (main-agent
-   deletes prompt for user confirmation), and a separate
-   `pre-tool-use-tdd-restricted.sh` hook denies them outright when
-   the TDD orchestrator subagent calls them.
+   plus four MCP resources under two URI schemes (`vitest://docs/`
+   and `vitest://docs/{+path}` for the vendored Vitest documentation
+   snapshot at `packages/mcp/vendor/vitest-docs/`;
+   `vitest-agent://patterns/` and `vitest-agent://patterns/{slug}`
+   for the curated patterns library at `packages/mcp/patterns/`)
+   and six framing-only prompts (`triage`, `why-flaky`,
+   `regression-since-pass`, `explain-failure`, `tdd-resume`,
+   `wrapup`) registered directly with `@modelcontextprotocol/sdk`
+   alongside the tRPC router. A file-based Claude Code plugin at
+   `plugin/` ships a `PreToolUse` hook that auto-allows the
+   non-destructive MCP tools without per-call permission prompts.
+   The two `tdd_*_delete` tools are intentionally omitted from the
+   auto-allow list (main-agent deletes prompt for user confirmation),
+   and a separate `pre-tool-use-tdd-restricted.sh` hook denies them
+   outright when the TDD orchestrator subagent calls them. The
+   plugin also ships an `update-vitest-snapshot` skill that wraps
+   `pnpm run update-vitest-snapshot --tag <vN.M.K>` for refreshing
+   the vendored documentation.
 
 Effect service architecture: I/O encapsulated in Effect services
 (DataStore, DataReader, EnvironmentDetector, ExecutorResolver,
@@ -211,13 +222,30 @@ assemblers).
 `record`, `triage`, `wrapup`),
 `lib/` (testable formatting logic), `layers/CliLive.ts`.
 
-`packages/mcp/src/` -- `bin.ts` (entry), `index.ts`, `server.ts`,
-`router.ts`, `context.ts`, `tools/` (50 tool implementations,
-including the 10 new `tdd_goal_*` / `tdd_behavior_*` CRUD tools and
-the private `_tdd-error-envelope.ts` helper that surfaces tagged
-TDD errors as success-shape responses; the 1.x
+`packages/mcp/src/` -- `bin.ts` (entry), `index.ts`, `server.ts`
+(calls `registerAllResources(server)` and
+`registerAllPrompts(server)` before constructing
+`StdioServerTransport`), `router.ts`, `context.ts`, `tools/`
+(50 tool implementations, including the 10 new `tdd_goal_*` /
+`tdd_behavior_*` CRUD tools and the private
+`_tdd-error-envelope.ts` helper that surfaces tagged TDD errors
+as success-shape responses; the 1.x
 `decompose_goal_into_behaviors` tool was removed in 2.0),
-`middleware/idempotency.ts`, `layers/McpLive.ts`.
+`resources/` (registrar + path-traversal-safe path resolver +
+two per-scheme readers + index renderers; surfaces four MCP
+resources under `vitest://docs/...` and
+`vitest-agent://patterns/...`), `prompts/` (registrar + six
+framing-only prompts), `middleware/idempotency.ts`,
+`layers/McpLive.ts`. Sibling content trees: `vendor/vitest-docs/`
+(vendored upstream documentation snapshot with
+`manifest.json` + `ATTRIBUTION.md`) and `patterns/` (curated
+patterns library, three launch patterns shipped). The
+`scripts/` directory holds zero-deps maintenance scripts:
+`update-vitest-snapshot.mjs` (sparse-clone + `execFileSync`
+fetcher, run via `pnpm run update-vitest-snapshot --tag
+<vN.M.K>`) and `copy-vendor-to-dist.mjs` (postbuild copier
+chained from `build:dev` / `build:prod`, mirrors `vendor/` and
+`patterns/` into `dist/dev/` and `dist/npm/`).
 
 `plugin/` -- `.claude-plugin/plugin.json` (manifest with inline
 `mcpServers`), `bin/mcp-server.mjs` (PM-detect + spawn loader),
@@ -226,8 +254,13 @@ TDD errors as success-shape responses; the 1.x
 denies `tdd_goal_delete`, `tdd_behavior_delete`,
 `tdd_artifact_record` for the orchestrator subagent),
 `lib/safe-mcp-vitest-agent-ops.txt`),
-`skills/` (TDD, debugging, configuration, coverage-improvement;
-`tdd/SKILL.md` owns the 2.0 channel-event handler section),
+`skills/` (TDD, debugging, configuration, coverage-improvement,
+update-vitest-snapshot;
+`tdd/SKILL.md` owns the 2.0 channel-event handler section;
+`update-vitest-snapshot/SKILL.md` is the new 2026-05-05 skill
+that wraps `pnpm run update-vitest-snapshot --tag <vN.M.K>` for
+refreshing the vendored upstream documentation snapshot at
+`packages/mcp/vendor/vitest-docs/`),
 `commands/` (setup, configure).
 
 **Spec:** [GitHub Issue #1](https://github.com/spencerbeggs/vitest-agent/issues/1)

@@ -61,10 +61,7 @@ npm. If the MCP bin is missing, the loader prints PM-specific
 install instructions and exits non-zero. See
 [Prerequisites](#prerequisites) below.
 
-The server exposes 50 tools. Use the `help` tool for the full list
-with parameters, or see
-[docs/mcp.md](https://github.com/spencerbeggs/vitest-agent-reporter/blob/main/docs/mcp.md)
-for the complete reference.
+The server exposes 52 tools, four resources (vendored Vitest docs at `vitest://docs/...` and curated testing patterns at `vitest-agent://patterns/...`) and six framing-only prompts for common workflows. Use the `help` tool for the full tool list with parameters, or see [docs/mcp.md](https://github.com/spencerbeggs/vitest-agent-reporter/blob/main/docs/mcp.md) for the complete reference.
 
 | Category | Tools |
 | --- | --- |
@@ -104,6 +101,7 @@ Skills are invoked via `/skill <name>` in Claude Code.
 | `debugging` | Systematic failure diagnosis using `test_history`, `test_errors`, `test_for_file` |
 | `coverage-improvement` | Systematic coverage improvement using `file_coverage`, `test_for_file`, `test_trends` |
 | `configuration` | Plugin setup and `AgentPlugin` option reference |
+| `update-vitest-snapshot` | Bump the vendored Vitest documentation snapshot to a new upstream tag |
 
 ### Commands
 

@@ -3,12 +3,12 @@ status: current
 module: vitest-agent-reporter
 category: architecture
 created: 2026-03-20
-updated: 2026-05-04
-last-synced: 2026-05-04
+updated: 2026-05-05
+last-synced: 2026-05-05
 completeness: 95
 related:
-  - vitest-agent-reporter/architecture.md
-  - vitest-agent-reporter/components.md
+  - ./architecture.md
+  - ./components.md
 dependencies: []
 ---
 
@@ -168,10 +168,32 @@ packages/
                 directly by hook scripts)
     src/
       bin.ts, index.ts, context.ts, router.ts, server.ts
+                                  -- server.ts calls
+                                     registerAllResources(server) and
+                                     registerAllPrompts(server)
+                                     before constructing
+                                     StdioServerTransport
       layers/      -- McpLive(dbPath, logLevel?, logFile?)
       middleware/  -- idempotency.ts (idempotentProcedure drop-in
                       for publicProcedure + idempotencyKeys
                       registry)
+      resources/   -- index.ts (registerAllResources registrar
+                      wiring four MCP resources under two URI
+                      schemes), paths.ts (path-traversal-safe
+                      resolveResourcePath helper -- rejects null
+                      bytes, absolute paths, and paths that escape
+                      the vendored root), upstream-docs.ts
+                      (vitest:// reader), patterns.ts
+                      (vitest-agent:// reader), indexes.ts
+                      (renderUpstreamIndex / renderPatternsIndex
+                      for the two index URIs)
+      prompts/     -- index.ts (registerAllPrompts registrar
+                      wiring six framing-only prompts) plus one
+                      file per prompt: triage.ts, why-flaky.ts,
+                      regression-since-pass.ts, explain-failure.ts,
+                      tdd-resume.ts, wrapup.ts (the wrapup factory
+                      also re-exports the WrapupKind union the
+                      registrar coerces args.kind through)
       tools/       -- 50 tool implementations: help, status,
                       overview, coverage, history, trends,
                       errors, test-for-file, test-get, test-list,
@@ -200,6 +222,38 @@ packages/
                       decompose-goal-into-behaviors tool was
                       deleted (server-side splitting is gone;
                       decomposition is now LLM-driven)
+    vendor/
+      vitest-docs/  -- vendored upstream Vitest documentation
+                       snapshot (markdown files mirroring
+                       vitest-dev/vitest's docs/ tree, plus
+                       manifest.json carrying `tag`, `commitSha`,
+                       `capturedAt`, `source`, and ATTRIBUTION.md).
+                       Pinned at a specific upstream tag; refreshed
+                       via scripts/update-vitest-snapshot.mjs.
+                       Surfaced through the `vitest://docs/` and
+                       `vitest://docs/{+path}` MCP resources
+    patterns/      -- curated testing-patterns library (`_meta.json`
+                      index + per-pattern markdown files). Three
+                      launch patterns:
+                      testing-effect-services-with-mock-layers,
+                      testing-effect-schema-definitions,
+                      authoring-a-custom-vitest-agent-reporter.
+                      Surfaced through the `vitest-agent://patterns/`
+                      and `vitest-agent://patterns/{slug}` MCP
+                      resources
+    scripts/       -- zero-deps maintenance scripts (Node only,
+                      no build):
+                      update-vitest-snapshot.mjs (sparse-clones
+                        vitest-dev/vitest at a tag via execFileSync
+                        with array args -- never shell-interpolated
+                        -- and rewrites vendor/vitest-docs/.
+                        Invoked via
+                        `pnpm run update-vitest-snapshot --tag <vN.M.K>`),
+                      copy-vendor-to-dist.mjs (postbuild copier
+                        invoked by build:dev and build:prod;
+                        mirrors vendor/ + patterns/ into dist/dev/
+                        and dist/npm/ so runtime path resolution in
+                        resources/index.ts works post-build)
 
 examples/
   basic/     -- minimal example app (5th Vitest project)
@@ -253,7 +307,12 @@ plugin/      -- file-based Claude Code plugin (NOT a pnpm workspace)
                   ~15-tool tools: array, 9 inline sub-skill
                   primitives)
   skills/      -- tdd, debugging, configuration,
-                  coverage-improvement;
+                  coverage-improvement,
+                  update-vitest-snapshot (guided workflow for
+                  bumping packages/mcp/vendor/vitest-docs/ to a
+                  new upstream tag; wraps the
+                  pnpm run update-vitest-snapshot --tag <vN.M.K>
+                  invocation);
                   tdd-primitives/<9 dirs>/SKILL.md
                   (interpret-test-failure,
                   derive-test-name-from-behavior,
@@ -1917,6 +1976,19 @@ the 2.0 three-tier hierarchy, and the workspace history tool
 removed in 2.0; orchestrators decompose via LLM reasoning and create
 each goal/behavior individually.
 
+**MCP resources and prompts (also via stdio):** in addition to the
+50 tools, agents can read four resources (`vitest://docs/` and
+`vitest://docs/{+path}` for the vendored upstream Vitest
+documentation snapshot at `packages/mcp/vendor/vitest-docs/`,
+`vitest-agent://patterns/` and `vitest-agent://patterns/{slug}`
+for the curated patterns library at `packages/mcp/patterns/`) and
+invoke six framing-only prompts (`triage`, `why-flaky`,
+`regression-since-pass`, `explain-failure`, `tdd-resume`,
+`wrapup`) that emit small templated user messages orienting the
+agent toward the right tool composition. Resources and prompts
+are registered directly with `@modelcontextprotocol/sdk` (not via
+the tRPC router), see Integration 6 for details.
+
 **CLI pattern:** Run `vitest-agent-reporter status` for quick overview,
 `vitest-agent-reporter overview` for test landscape, or
 `vitest-agent-reporter coverage` for gap analysis. All commands support
@@ -1976,6 +2048,50 @@ DataStore, ProjectDiscovery, and OutputRenderer services
 `bin/mcp-server.mjs` loader spawns `vitest-agent-mcp`
 through the user's package manager (Flow 5). See Decision 30 for the
 loader design.
+
+**Content surfaces:** beyond the tRPC tool router, the MCP server
+exposes four resources and six prompts via the
+`@modelcontextprotocol/sdk` native `registerResource` /
+`registerPrompt` APIs (see `packages/mcp/src/server.ts`'s calls to
+`registerAllResources(server)` and `registerAllPrompts(server)`):
+
+- **Resources:**
+  `vitest://docs/` (index of the vendored Vitest documentation
+  snapshot at `packages/mcp/vendor/vitest-docs/`),
+  `vitest://docs/{+path}` (a single page from the snapshot, e.g.
+  `vitest://docs/api/mock`),
+  `vitest-agent://patterns/` (index of the curated patterns
+  library at `packages/mcp/patterns/`), and
+  `vitest-agent://patterns/{slug}` (a single pattern; three launch
+  patterns ship in 2.0). The resource readers in
+  `packages/mcp/src/resources/{upstream-docs,patterns}.ts` use
+  `paths.ts`'s `resolveResourcePath` to reject path-traversal
+  attempts before reading from the vendor/patterns trees.
+- **Prompts** (framing-only — no tool data is pre-fetched on the
+  server): `triage`, `why-flaky`, `regression-since-pass`,
+  `explain-failure`, `tdd-resume`, `wrapup`. Each prompt's
+  argument schema is a small `z.object`, and each prompt factory
+  returns one or more user-role messages that orient the agent
+  toward the right tools. The agent calls the actual tools
+  (`triage_brief`, `failure_signature_get`, `test_history`,
+  `commit_changes`, `turn_search`, etc.) after receiving the
+  prompt.
+
+The vendored snapshot at `packages/mcp/vendor/vitest-docs/` carries
+a `manifest.json` (`tag`, `commitSha`, `capturedAt`, `source`) and
+an `ATTRIBUTION.md` so consumers can verify provenance. The
+snapshot is refreshed via `pnpm run update-vitest-snapshot --tag
+<vN.M.K>` (in `packages/mcp/`) or the `update-vitest-snapshot`
+Claude Code skill at `plugin/skills/update-vitest-snapshot/SKILL.md`.
+The fetcher uses `execFileSync` with array arguments — never
+`execSync` with a shell-interpolated string — so a malicious
+upstream tag cannot inject shell commands. Both the `vendor/` tree
+and the `patterns/` tree are mirrored into `dist/dev/` and
+`dist/npm/` by the postbuild script
+`packages/mcp/scripts/copy-vendor-to-dist.mjs` (chained via
+`&&` from `build:dev` and `build:prod` in
+`packages/mcp/package.json`) so the runtime path resolution in
+`resources/index.ts` works post-build.
 
 ### Integration 7: Claude Code Plugin
 
@@ -2080,9 +2196,12 @@ envelope `agent_type` field equals the agent's `name:` value (so
 `"TDD Orchestrator"`). The W2 hooks match via `lib/match-tdd-agent.sh`,
 which accepts both the human name and the legacy slug
 
-**Skills:** TDD, debugging, configuration, coverage-improvement
-(markdown files); `tdd-primitives/<9 dirs>/SKILL.md` --
-9 standalone sub-skill primitives reusable outside the TDD
+**Skills:** TDD, debugging, configuration, coverage-improvement,
+update-vitest-snapshot (the new 2026-05-05 skill that wraps
+`pnpm run update-vitest-snapshot --tag <vN.M.K>` for refreshing
+the vendored upstream Vitest documentation snapshot at
+`packages/mcp/vendor/vitest-docs/`); `tdd-primitives/<9 dirs>/SKILL.md`
+-- 9 standalone sub-skill primitives reusable outside the TDD
 orchestrator (Decision D6)
 
 **Commands:** setup.md, configure.md, tdd.md
@@ -2091,4 +2210,6 @@ orchestrator (Decision D6)
 
 ---
 
-**Last updated:** 2026-05-04 (TDD goal/behavior hierarchy redesign)
+**Last updated:** 2026-05-05 (MCP resources + prompts surface;
+vendored Vitest docs snapshot; curated patterns library;
+update-vitest-snapshot skill + script)
