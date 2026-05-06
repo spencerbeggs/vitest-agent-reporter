@@ -1,6 +1,6 @@
 ---
 name: debugging
-description: Guide debugging test failures using vitest-agent-reporter MCP tools. Use when tests are failing, investigating flaky tests, or diagnosing persistent failures.
+description: Guide debugging test failures using vitest-agent MCP tools. Use when tests are failing, investigating flaky tests, or diagnosing persistent failures.
 ---
 
 # Debugging Test Failures

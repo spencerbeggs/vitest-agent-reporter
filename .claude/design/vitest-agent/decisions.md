@@ -349,25 +349,24 @@ stderr and returns. After the migration completes, normal reads/writes
 work under WAL + `busy_timeout`. The fix lives at the call site — the
 migrator's transaction boundaries are not ours to rewrite.
 
-### Decision 30: Plugin MCP Loader as PM-Detect + Spawn
+### Decision 30: Plugin MCP Loader as PM-Detect + Exec
 
-`plugin/bin/mcp-server.mjs` is a zero-deps PM-detect + spawn script:
+`plugin/bin/start-mcp.sh` is a zero-deps POSIX shell PM-detect + exec loader:
 
-1. Resolve `projectDir` from `process.env.CLAUDE_PROJECT_DIR ||
-   process.cwd()`.
+1. Resolve `projectDir` from `CLAUDE_PROJECT_DIR` (or `pwd`).
 2. Detect the user's package manager via `packageManager` field in
    `<projectDir>/package.json`, then by lockfile presence
    (`pnpm-lock.yaml` → pnpm, `bun.lock`/`bun.lockb` → bun, `yarn.lock`
    → yarn, `package-lock.json` → npm). Default `npm`.
-3. Spawn `<pm-exec> vitest-agent-mcp` with `stdio: "inherit"`,
-   `cwd: projectDir`, and `env: { ...process.env,
-   VITEST_AGENT_PROJECT_DIR: projectDir }`. PM commands are `pnpm exec`,
-   `npx --no-install`, `yarn run`, `bun x`.
-4. On `child.error`, print PM-specific install instructions and exit 1.
-5. On `child.exit`, forward the code or re-raise the signal.
+3. `exec`-replace the shell with `<pm-exec> vitest-agent-mcp`, exporting
+   `VITEST_AGENT_REPORTER_PROJECT_DIR=projectDir`. PM commands are
+   `pnpm exec`, `npx --no-install`, `yarn run`, `bun x`.
+4. Print PM-specific install instructions and exit 1 if the bin is missing.
 
-The script imports only `node:child_process`, `node:fs`, and
-`node:path` — it must run before the user has installed anything.
+The `exec` is load-bearing — after startup, Claude Code's direct child is
+the PM process; there is no shell wrapper. A Node.js fallback loader
+(`start-mcp.mjs`) exists for debugging but is not the active loader unless
+`plugin.json` is changed to reference it.
 
 **Why this shape:** the MCP server is its own package
 (`vitest-agent-mcp`) with its own bin. The user's PM already knows how
@@ -378,7 +377,7 @@ PM-level error with PM-native install instructions, not "couldn't find
 silently downloading from the registry and exceeding Claude Code's MCP
 startup window.
 
-**`VITEST_AGENT_PROJECT_DIR` env passthrough:** the spawned MCP
+**`VITEST_AGENT_REPORTER_PROJECT_DIR` env passthrough:** the spawned MCP
 subprocess uses this env var as the highest-precedence source for
 `projectDir`. Claude Code sets `CLAUDE_PROJECT_DIR` for hook scripts
 but does not reliably propagate it to MCP server subprocesses; this

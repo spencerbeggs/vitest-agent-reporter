@@ -27,8 +27,9 @@ plugin/
 │   └── tdd.md           # /tdd slash command
 ├── hooks/
 │   ├── hooks.json       # Hook registrations (matchers, event bindings)
-│   ├── lib/             # Shared helpers: detect-pm.sh, hook-output.sh, match-tdd-agent.sh,
-│   │                    #   safe-mcp-vitest-agent-ops.txt (PreToolUse allowlist)
+│   ├── fixtures/        # Synthetic JSON payloads for manual hook invocation (README inside)
+│   ├── lib/             # Shared helpers: detect-pm.sh, hook-debug.sh, hook-output.sh,
+│   │                    #   match-tdd-agent.sh, safe-mcp-vitest-agent-ops.txt (PreToolUse allowlist)
 │   └── *.sh             # Hook scripts (see Hooks below)
 └── skills/              # Sub-skill primitives (one directory per skill, each with SKILL.md)
     ├── commit-cycle/
@@ -79,7 +80,9 @@ Hook scripts in `hooks/` are POSIX shell. All source shared helpers from `hooks/
 
 The allowlist for `pre-tool-use-mcp.sh` lives at `hooks/lib/safe-mcp-vitest-agent-ops.txt`. Add new non-destructive MCP tools here when they are deployed. Omit delete tools — those require explicit user confirmation from the main agent.
 
-`match-tdd-agent.sh` (`hooks/lib/`) provides `is_tdd_agent()` which matches `"vitest-agent:tdd-task"` (the form CC sends in hook payloads). The `plugin:vitest-agent:tdd-task` and `tdd-task` forms are retained defensively but have not been observed in practice.
+`match-tdd-agent.sh` (`hooks/lib/`) provides `is_tdd_agent()` which matches `"vitest-agent:tdd-task"` — the only form CC sends in hook payloads. The legacy `plugin:vitest-agent:tdd-task` and bare `tdd-task` forms were removed after being confirmed never observed in practice.
+
+`hook-debug.sh` (`hooks/lib/`) provides two logging functions sourced by every hook: `hook_error` always writes to `/tmp/vitest-agent-hook-errors.log` (overrideable via `VITEST_AGENT_HOOK_ERROR_LOG`); `hook_debug` writes to `/tmp/vitest-agent-hook-debug.log` only when `VITEST_AGENT_HOOK_DEBUG=1` is set. Recording and artifact hooks use a capture-and-log pattern for CLI failures — `|| true` is no longer used to suppress errors silently.
 
 ## Agents
 

@@ -11,6 +11,10 @@ set -e
 
 # shellcheck source=lib/hook-output.sh
 . "$(dirname "$0")/lib/hook-output.sh"
+# shellcheck source=lib/hook-debug.sh
+. "$(dirname "$0")/lib/hook-debug.sh"
+
+_HOOK="subagent-start-tdd"
 
 hook_json=$(cat)
 
@@ -46,16 +50,19 @@ pm_exec=$(detect_pm_exec "$cwd")
 project=$(jq -r '.name // "unknown"' < "$cwd/package.json" 2>/dev/null || echo "unknown")
 started_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-cd "$cwd" >/dev/null && $pm_exec vitest-agent record session-start \
+hook_debug "$_HOOK" "INPUT session_id=$cc_session_id parent=$parent_cc_session_id synthetic_key=$subagent_session_key cwd=$cwd pm_exec=$pm_exec"
+
+_session_out=$(cd "$cwd" && $pm_exec vitest-agent record session-start \
 	--cc-session-id "$subagent_session_key" \
 	--project "$project" \
 	--cwd "$cwd" \
 	--agent-kind subagent \
 	--agent-type tdd-task \
 	${parent_cc_session_id:+--parent-cc-session-id "$cc_session_id"} \
-	--started-at "$started_at" \
-	>/dev/null 2>&1 \
-	|| true
+	--started-at "$started_at" 2>&1) || {
+	hook_error "$_HOOK" "record session-start rc=$? synthetic_key=$subagent_session_key: $_session_out"
+}
+hook_debug "$_HOOK" "record session-start: $_session_out"
 
 emit_noop
 exit 0

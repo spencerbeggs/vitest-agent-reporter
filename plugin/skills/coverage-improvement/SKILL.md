@@ -1,6 +1,6 @@
 ---
 name: coverage-improvement
-description: Guide systematic coverage improvement using vitest-agent-reporter MCP tools. Use when improving code coverage, targeting uncovered lines, or working toward coverage targets.
+description: Guide systematic coverage improvement using vitest-agent MCP tools. Use when improving code coverage, targeting uncovered lines, or working toward coverage targets.
 ---
 
 # Improving Code Coverage

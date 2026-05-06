@@ -1,10 +1,10 @@
 ---
-description: View or modify vitest-agent-reporter settings
+description: View or modify vitest-agent-plugin settings
 disable-model-invocation: true
 argument-hint: "[setting] [value]"
 ---
 
-# Configure vitest-agent-reporter
+# Configure vitest-agent-plugin
 
 View or modify the reporter configuration.
 

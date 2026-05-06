@@ -195,17 +195,16 @@ Owned by the file-based Claude Code plugin at `plugin/`. See
 [./components/plugin-claude.md](./components/plugin-claude.md) and
 [./decisions.md](./decisions.md) D30.
 
-- `plugin/bin/mcp-server.mjs` (zero-deps) reads
-  `process.env.CLAUDE_PROJECT_DIR ?? process.cwd()`.
+- `plugin/bin/start-mcp.sh` (zero-deps POSIX shell) reads
+  `CLAUDE_PROJECT_DIR` (or falls back to `pwd`).
 - Detect PM: `packageManager` field in root `package.json`, else lockfile
   (`pnpm-lock.yaml`, `bun.lock`, `bun.lockb`, `yarn.lock`,
   `package-lock.json`), else default `npm`.
-- Spawn `<pm-exec> vitest-agent-mcp` (`pnpm exec`, `npx --no-install`,
-  `yarn run`, or `bun x`) with `stdio: "inherit"`, `cwd: projectDir`, and
-  `env.VITEST_AGENT_PROJECT_DIR = projectDir` so the spawned bin sees the
-  right project root (Flow 4).
-- Forward exit code; re-raise termination signals; print PM-specific install
-  instructions on non-zero exit.
+- `exec`-replaces itself with `<pm-exec> vitest-agent-mcp` (`pnpm exec`,
+  `npx --no-install`, `yarn run`, or `bun x`) with `VITEST_AGENT_REPORTER_PROJECT_DIR`
+  set so the spawned bin sees the right project root (Flow 4).
+- After exec, Claude Code's direct child is the PM process; no wrapper hangs around.
+  Print PM-specific install instructions and exit non-zero if the bin is missing.
 
 The loader is a thin spawner because Claude Code's MCP integration runs the
 configured command as a child process and the plugin can't assume the user

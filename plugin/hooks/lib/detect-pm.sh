@@ -1,7 +1,7 @@
 #!/bin/bash
 # detect-pm.sh — shared package-manager detection for record-* hooks.
 #
-# Mirrors the JS detector in plugin/bin/mcp-server.mjs so the hook surface
+# Mirrors the PM detection in plugin/bin/start-mcp.sh so the hook surface
 # stays consistent for npm/pnpm/yarn/bun users (Decision 30).
 #
 # Usage:
