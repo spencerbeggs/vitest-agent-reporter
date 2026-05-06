@@ -285,6 +285,15 @@ lib/
 
 ## Design references
 
-@../../.claude/design/vitest-agent/components.md
-@../../.claude/design/vitest-agent/decisions.md
-@../../.claude/design/vitest-agent/data-structures.md
+- `.claude/design/vitest-agent/components/mcp.md`
+  Load when working on tool implementations, the tRPC router, resources,
+  prompts, or the vendor-snapshot pipeline.
+- `.claude/design/vitest-agent/data-flows.md`
+  Load when tracing MCP runtime flows (Flow 4: tRPC tool dispatch over
+  `ManagedRuntime`; Flow 7: TDD goal/behavior + phase-transition flow).
+- `.claude/design/vitest-agent/schemas.md`
+  Load when working with tRPC tool input/output shapes, the idempotency
+  registry, or the TDD goal/behavior tables.
+- `.claude/design/vitest-agent/decisions.md`
+  Load for rationale (especially D19 tRPC routing, D35 resources and
+  prompts, and the idempotency middleware).
