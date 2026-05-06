@@ -279,7 +279,7 @@ After rebuilding (`pnpm ci:build`), bump the `--noop` counter in `plugin.json`'s
 }
 ```
 
-The `--noop` arg is forwarded to the MCP binary, which ignores unknown flags, so it is a harmless signal for Claude Code only. A baseline value (`--noop=1`) is intentionally committed in `plugin.json`; increment relative to whatever is currently in the file. Revert to the committed baseline before committing your changes.
+The `--noop` arg is forwarded to the MCP binary, which ignores unknown flags, so it is a harmless signal for Claude Code only. `--noop=1` is the committed baseline and stays in the file permanently — changing the value is what cues Claude Code to boot a fresh MCP instance on `/reload-plugins`. After confirming the restart, revert the value back to `--noop=1` before pushing.
 
 ### Confirming an MCP restart
 
