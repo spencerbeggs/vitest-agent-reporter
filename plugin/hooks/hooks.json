@@ -168,9 +168,9 @@
 		],
 		"Elicitation": [
 			{
+				"matcher": "*",
 				"hooks": [
 					{
-						"matcher": "*",
 						"type": "command",
 						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/elicitation-session-id.sh\"",
 						"timeout": 5
@@ -180,9 +180,9 @@
 		],
 		"ElicitationResult": [
 			{
+				"matcher": "*",
 				"hooks": [
 					{
-						"matcher": "*",
 						"type": "command",
 						"command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/elicitation-result-record.sh\"",
 						"timeout": 5

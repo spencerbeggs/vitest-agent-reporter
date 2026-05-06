@@ -1,18 +1,17 @@
 ---
 name: configuration
-description: Guide vitest-agent-reporter configuration including thresholds, targets, output format, and plugin options. Use when setting up or modifying the reporter configuration.
+description: Guide vitest-agent-plugin configuration including thresholds, targets, output format, and plugin options. Use when setting up or modifying the plugin configuration.
 disable-model-invocation: true
 ---
 
-# Vitest Agent Reporter Configuration
+# Vitest Agent Plugin Configuration
 
 ## Plugin Options (vitest.config.ts)
 
-The reporter is configured via the `AgentPlugin` in your Vitest
-config:
+The plugin is configured via `AgentPlugin` in your Vitest config:
 
 ```typescript
-import { AgentPlugin } from "vitest-agent-reporter";
+import { AgentPlugin } from "vitest-agent-plugin";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({

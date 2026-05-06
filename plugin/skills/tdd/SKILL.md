@@ -9,7 +9,14 @@ Three MCP calls are required protocol. Skipping any one of them is a named viola
 
 ## For the main agent: dispatch the tdd-task agent
 
-If you are the main agent: dispatch the `plugin:vitest-agent:tdd-task` subagent. Pass the `goal` and your current `ccSessionId` explicitly in the launch prompt. Do not attempt TDD yourself — the tdd-task agent carries the required MCP tools and skill context for evidence-based phase transitions.
+If you are the main agent, complete these steps before spawning:
+
+1. Call `session_list({ agentKind: "main", limit: 1 })` — capture the `cc_session_id` field from the first row as `ccSessionId`. (The DB value comes directly from the SessionStart hook payload and is immune to in-memory contamination from prior subagent runs. Do **not** use `get_current_session_id()` — that in-memory ref can be stale if a prior subagent called `set_current_session_id` with its own key.)
+2. Call `TaskCreate({ subject: "TDD Session: <objective>", description: "Behavior tasks will appear as the orchestrator decomposes the goal." })` — capture the returned task ID as `parentTaskId`.
+3. Initialize: `goalById = new Map()` (keyed by goal ID, each entry `{ ordinal, taskId? }`), `behaviorById = new Map()` (keyed by behavior ID, each entry `{ goalOrdinal, behaviorOrdinal, taskId }`).
+4. Spawn `vitest-agent:tdd-task` **in the background**, passing `goal`, `ccSessionId`, and `parentTaskId` in the launch prompt.
+
+Do not attempt TDD yourself — the tdd-task agent carries the required MCP tools and skill context for evidence-based phase transitions.
 
 ### Channel-event handling (main agent)
 
@@ -28,9 +35,9 @@ Event handlers:
 | `goals_ready` | Record each `{id, ordinal, goal}` in `goalById`. No tasks yet — wait for `behaviors_ready` so the rendered labels carry both goal and behavior ordinals. |
 | `goal_added` | Append the new goal to `goalById` (mid-session addition after the initial batch). |
 | `goal_started` | No-op (the goal's behaviors will start producing `behavior_started` events). |
-| `behaviors_ready` | For each behavior under the named `goalId`, `TaskCreate({ content: "[G<goalOrdinal+1>.B<behaviorOrdinal+1>] <behavior>", status: "pending", parentTaskId })`. Store the returned task id in `behaviorById`. |
-| `behavior_added` | `TaskCreate` a single sibling labeled `[G<n>.B<m>] <behavior>` and store its id. |
-| `behavior_started` | `TaskUpdate({ id: <behavior taskId>, status: "in_progress" })`. |
+| `behaviors_ready` | Record each behavior's ordinals in `behaviorById` (`{ goalOrdinal, behaviorOrdinal }`). **No tasks yet** — `TaskCreate` is deferred to `behavior_started` so that abandoned sessions (which fire `behaviors_ready` but never `behavior_started`) don't leave orphaned pending tasks in the panel. |
+| `behavior_added` | Append `{ goalOrdinal, behaviorOrdinal }` to `behaviorById`. No task yet. |
+| `behavior_started` | `TaskCreate({ subject: "[G<n>.B<m>] <behavior>", description: "...", activeForm: "Running behavior" })` — capture the returned task id and store it in `behaviorById`. Then immediately `TaskUpdate({ id: <taskId>, status: "in_progress" })`. |
 | `phase_transition` | `TaskUpdate({ id: <behavior taskId>, content: "[G<n>.B<m>] <behavior> · <toPhase>" })` so the user sees the current phase inline on the task label. |
 | `behavior_completed` | `TaskUpdate({ id: <behavior taskId>, status: "completed" })`. |
 | `behavior_abandoned` | `TaskUpdate({ id: <behavior taskId>, status: "cancelled" })`; surface the `reason` to the user as context. |

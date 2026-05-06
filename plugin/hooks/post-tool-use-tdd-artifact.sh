@@ -11,6 +11,10 @@ set -e
 
 # shellcheck source=lib/hook-output.sh
 . "$(dirname "$0")/lib/hook-output.sh"
+# shellcheck source=lib/hook-debug.sh
+. "$(dirname "$0")/lib/hook-debug.sh"
+
+_HOOK="post-tool-use-tdd-artifact"
 
 hook_json=$(cat)
 
@@ -26,6 +30,8 @@ cc_session_id=$(echo "$hook_json" | jq -r '.session_id // ""')
 cwd=$(echo "$hook_json" | jq -r '.cwd // ""')
 tool_name=$(echo "$hook_json" | jq -r '.tool_name // ""')
 
+hook_debug "$_HOOK" "INPUT session_id=$cc_session_id tool=$tool_name cwd=$cwd"
+
 if [ -z "$cc_session_id" ] || [ -z "$cwd" ]; then
 	emit_noop
 	exit 0
@@ -34,6 +40,8 @@ fi
 # shellcheck source=lib/detect-pm.sh
 . "$(dirname "$0")/lib/detect-pm.sh"
 pm_exec=$(detect_pm_exec "$cwd")
+
+hook_debug "$_HOOK" "pm_exec=$pm_exec"
 
 recorded_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
@@ -49,24 +57,28 @@ case "$tool_name" in
 				kind="test_failed_run"
 			fi
 			# Backfill test_cases.created_turn_id (BUG-2) and get latest test
-			# case id for this session (BUG-1) in one call. Ignore errors.
+			# case id for this session (BUG-1) in one call.
 			test_case_id_arg=""
-			turns_out=$(cd "$cwd" >/dev/null && $pm_exec vitest-agent record test-case-turns \
-				--cc-session-id "$cc_session_id" 2>/dev/null || echo "")
-			if [ -n "$turns_out" ]; then
-				latest_id=$(echo "$turns_out" | jq -r '.latestTestCaseId // empty' 2>/dev/null || echo "")
+			_turns_out=$(cd "$cwd" && $pm_exec vitest-agent record test-case-turns \
+				--cc-session-id "$cc_session_id" 2>&1) || {
+				hook_error "$_HOOK" "record test-case-turns rc=$? cc=$cc_session_id: $_turns_out"
+			}
+			hook_debug "$_HOOK" "record test-case-turns: $_turns_out"
+			if [ -n "$_turns_out" ]; then
+				latest_id=$(echo "$_turns_out" | jq -r '.latestTestCaseId // empty' 2>/dev/null || echo "")
 				if [ -n "$latest_id" ] && [ "$latest_id" != "null" ]; then
 					test_case_id_arg="--test-case-id $latest_id"
 				fi
 			fi
 			# shellcheck disable=SC2086
-			cd "$cwd" >/dev/null && $pm_exec vitest-agent record tdd-artifact \
+			_artifact_out=$(cd "$cwd" && $pm_exec vitest-agent record tdd-artifact \
 				--cc-session-id "$cc_session_id" \
 				--artifact-kind "$kind" \
 				--recorded-at "$recorded_at" \
-				$test_case_id_arg \
-				>/dev/null 2>&1 \
-				|| true
+				$test_case_id_arg 2>&1) || {
+				hook_error "$_HOOK" "record tdd-artifact kind=$kind rc=$? cc=$cc_session_id: $_artifact_out"
+			}
+			hook_debug "$_HOOK" "record tdd-artifact kind=$kind: $_artifact_out"
 		fi
 		;;
 	mcp__plugin_vitest-agent_mcp__run_tests | mcp__vitest-agent_mcp__run_tests)
@@ -117,22 +129,26 @@ case "$tool_name" in
 			# case id for this session (BUG-1). For MCP run_tests, post-test-run.sh
 			# does NOT fire, so this is the only opportunity to backfill.
 			test_case_id_arg=""
-			turns_out=$(cd "$cwd" >/dev/null && $pm_exec vitest-agent record test-case-turns \
-				--cc-session-id "$cc_session_id" 2>/dev/null || echo "")
-			if [ -n "$turns_out" ]; then
-				latest_id=$(echo "$turns_out" | jq -r '.latestTestCaseId // empty' 2>/dev/null || echo "")
+			_turns_out=$(cd "$cwd" && $pm_exec vitest-agent record test-case-turns \
+				--cc-session-id "$cc_session_id" 2>&1) || {
+				hook_error "$_HOOK" "record test-case-turns rc=$? cc=$cc_session_id: $_turns_out"
+			}
+			hook_debug "$_HOOK" "record test-case-turns: $_turns_out"
+			if [ -n "$_turns_out" ]; then
+				latest_id=$(echo "$_turns_out" | jq -r '.latestTestCaseId // empty' 2>/dev/null || echo "")
 				if [ -n "$latest_id" ] && [ "$latest_id" != "null" ]; then
 					test_case_id_arg="--test-case-id $latest_id"
 				fi
 			fi
 			# shellcheck disable=SC2086
-			cd "$cwd" >/dev/null && $pm_exec vitest-agent record tdd-artifact \
+			_artifact_out=$(cd "$cwd" && $pm_exec vitest-agent record tdd-artifact \
 				--cc-session-id "$cc_session_id" \
 				--artifact-kind "$kind" \
 				--recorded-at "$recorded_at" \
-				$test_case_id_arg \
-				>/dev/null 2>&1 \
-				|| true
+				$test_case_id_arg 2>&1) || {
+				hook_error "$_HOOK" "record tdd-artifact kind=$kind rc=$? cc=$cc_session_id: $_artifact_out"
+			}
+			hook_debug "$_HOOK" "record tdd-artifact kind=$kind: $_artifact_out"
 		fi
 		;;
 	Edit|Write|MultiEdit)
@@ -149,13 +165,14 @@ case "$tool_name" in
 				kind="code_written"
 				;;
 		esac
-		cd "$cwd" >/dev/null && $pm_exec vitest-agent record tdd-artifact \
+		_artifact_out=$(cd "$cwd" && $pm_exec vitest-agent record tdd-artifact \
 			--cc-session-id "$cc_session_id" \
 			--artifact-kind "$kind" \
 			--file-path "$file_path" \
-			--recorded-at "$recorded_at" \
-			>/dev/null 2>&1 \
-			|| true
+			--recorded-at "$recorded_at" 2>&1) || {
+			hook_error "$_HOOK" "record tdd-artifact kind=$kind rc=$? cc=$cc_session_id file=$file_path: $_artifact_out"
+		}
+		hook_debug "$_HOOK" "record tdd-artifact kind=$kind file=$file_path: $_artifact_out"
 		;;
 esac
 

@@ -41,9 +41,10 @@ examples/
 
 plugin/        file-based Claude Code plugin (NOT a pnpm workspace)
   .claude-plugin/plugin.json    inline mcpServers config
-  bin/mcp-server.mjs            zero-deps PM-detect + spawn loader
-  hooks/                        shell scripts + hooks.json
-  agents/tdd-orchestrator.md    subagent definition
+  bin/start-mcp.sh              zero-deps POSIX shell PM-detect + exec loader
+  bin/start-mcp.mjs             Node.js fallback loader (not active by default)
+  hooks/                        shell scripts + hooks.json + fixtures/ + lib/
+  agents/tdd-task.md            tdd-task subagent definition
   skills/                       plugin-shipped skills
   commands/                     slash commands
 
@@ -184,8 +185,8 @@ empty string, so `(project, NULL)` and `(project, '')` are different rows.
 The CLI overview and history commands need to output correct run commands.
 Canonical detection logic lives in `packages/sdk/src/utils/detect-pm.ts`
 behind a `FileSystemAdapter` interface for testability. The plugin's
-`bin/mcp-server.mjs` ships a zero-deps inline copy with the same detection
-order:
+`bin/start-mcp.sh` (and `hooks/lib/detect-pm.sh`) ship zero-deps copies
+with the same detection order:
 
 1. Check `packageManager` field in root `package.json`
 2. Fall back to lockfile detection (`pnpm-lock.yaml`, `bun.lock`,

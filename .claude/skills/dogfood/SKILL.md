@@ -57,7 +57,11 @@ No user discussion. Pick, write, dispatch, verify.
 
 No handoff file. Dispatches the tdd-task agent with a fixed prompt that walks the TDD session machinery end-to-end. The source file `playground/src/lifecycle.ts` has a deliberate off-by-one bug (`return a + b + 1`); the orchestrator writes a test that exposes it, fixes the source, and closes the session. After each run the main agent reverts `lifecycle.ts` to restore the defect.
 
-### Dispatch prompt (send verbatim — do not add framing or meta-commentary)
+### Dispatch
+
+Complete the standard pre-dispatch setup above (session_list main → TaskCreate → initialize maps), then dispatch with `run_in_background: true`. Prepend `ccSessionId` and `parentTaskId` to the prompt, then append the verbatim block below without modification.
+
+### Verbatim prompt (append after ccSessionId/parentTaskId lines — do not add other framing)
 
 ````text
 Run a TDD lifecycle simulation to exercise the session machinery from start to finish. This is not a real coding task — use dummy goal and behavior labels throughout. You will write a temporary test file and fix a deliberately broken source file.
@@ -101,7 +105,7 @@ Report: for each phase-transition call (steps 6 and 11), state whether it was gr
 
 ### Lifecycle-specific verification (use instead of the standard seven-step audit)
 
-Run these five checks after the orchestrator returns.
+Run these five checks after the background completion notification arrives.
 
 1. **`tdd_session_get(<id>)`** — `ended` must be non-null (session closed). Phase ledger must have at least one entry. Goal and behavior must both show `completed`.
 2. **`acceptance_metrics({})`** — `phase_evidence_integrity` must be 100%. Any value below 100% means a phase transition was accepted without valid evidence binding.
@@ -127,13 +131,21 @@ If any check fails, append findings to `docs/superpowers/dogfood/lifecycle-check
 
 ## Dispatching
 
-Use the Task tool with `subagent_type: "plugin:vitest-agent:tdd-task"`. The dispatch prompt contains **only** the contents of the handoff's `# Task for the TDD orchestrator` section — never the frontmatter, never the `# What the orchestrator MUST NOT know` section, never the verification checklist, never the cheatsheet.
+Before spawning, complete the standard pre-dispatch setup (mirrors the `tdd` skill):
 
-Capture the dispatched session id immediately by querying for the most recently created subagent session:
+1. Call `session_list({ agentKind: "main", limit: 1 })` — capture the `cc_session_id` field from the first row as `ccSessionId`. Do **not** use `get_current_session_id()` — that in-memory ref can be stale after a prior subagent overwrote it.
+2. Call `TaskCreate({ subject: "TDD Session: <objective>", description: "Behavior tasks will appear as the orchestrator decomposes the goal." })` — capture the returned task ID as `parentTaskId`.
+3. Initialize: `goalById = new Map()`, `behaviorById = new Map()`.
+
+Dispatch with **`run_in_background: true`** and `subagent_type: "vitest-agent:tdd-task"`. Pass `ccSessionId` and `parentTaskId` in the launch prompt alongside the task. The dispatch prompt body contains **only** the contents of the handoff's `# Task for the TDD orchestrator` section — never the frontmatter, never the `# What the orchestrator MUST NOT know` section, never the verification checklist, never the cheatsheet.
+
+Immediately after dispatching (the background call returns before the agent completes), capture the session id:
 
 ```text
 mcp__plugin_vitest-agent_mcp__session_list({ agentKind: "subagent", limit: 1 })
 ```
+
+While the agent runs, channel events arrive as `<channel source="plugin:vitest-agent:mcp">` system reminders. Process each one immediately per the event-handler table in `plugin/skills/tdd/SKILL.md` — this produces live task-panel updates during the run, not a batch flush at the end.
 
 The returned `id` is the numeric DB id you pass to `tdd_session_get(<id>)` (or `tdd_session_resume(<id>)` for a status summary) below. The `cc_session_id` on the same row is what you pass to session-aware tools like `turn_search`.
 

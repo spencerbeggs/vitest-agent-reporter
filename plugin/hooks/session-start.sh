@@ -9,6 +9,10 @@ set -euo pipefail
 
 # shellcheck source=lib/hook-output.sh
 . "$(dirname "$0")/lib/hook-output.sh"
+# shellcheck source=lib/hook-debug.sh
+. "$(dirname "$0")/lib/hook-debug.sh"
+
+_HOOK="session-start"
 
 # Read and discard the JSON envelope to avoid broken-pipe; we re-read
 # session_id and cwd below.
@@ -42,15 +46,19 @@ fi
 project=$(jq -r '.name // "unknown"' < "$PROJECT_DIR/package.json" 2>/dev/null || echo "unknown")
 started_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-cd "$PROJECT_DIR" >/dev/null && $pm_exec vitest-agent record session-start \
+hook_debug "$_HOOK" "INPUT session_id=$cc_session_id PROJECT_DIR=$PROJECT_DIR pm_exec=$pm_exec"
+
+# shellcheck disable=SC2086
+_session_out=$(cd "$PROJECT_DIR" && $pm_exec vitest-agent record session-start \
 	--cc-session-id "$cc_session_id" \
 	--project "$project" \
 	--cwd "$PROJECT_DIR" \
 	--agent-kind main \
 	--started-at "$started_at" \
-	$triage_flag \
-	>/dev/null 2>&1 \
-	|| true
+	$triage_flag 2>&1) || {
+	hook_error "$_HOOK" "record session-start rc=$? cc=$cc_session_id PROJECT_DIR=$PROJECT_DIR: $_session_out"
+}
+hook_debug "$_HOOK" "record session-start: $_session_out"
 
 # 4. Build the additionalContext markdown.
 #

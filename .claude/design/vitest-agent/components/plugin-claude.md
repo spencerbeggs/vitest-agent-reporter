@@ -149,12 +149,25 @@ categories:
 
 The match-tdd-agent helper at `hooks/lib/match-tdd-agent.sh` is the load-bearing
 piece for orchestrator scoping. Claude Code emits the subagent identity in the
-hook envelope's `agent_type` field, but the exact value depends on how the
-plugin is namespaced — Claude Code currently sends `"vitest-agent:tdd-task"`,
-the legacy `"plugin:vitest-agent:tdd-task"` and bare `"tdd-task"` forms are
-retained defensively. All orchestrator-scoped hooks gate through the shared
-`is_tdd_agent` function so the matching logic lives in one place. If Claude
-Code's identity format changes, this is the only file that needs updating.
+hook envelope's `agent_type` field — Claude Code currently sends the value
+`"vitest-agent:tdd-task"`, and that is the only form matched. Legacy forms
+(`"plugin:vitest-agent:tdd-task"`, bare `"tdd-task"`) were removed after they
+were confirmed never observed in practice. All orchestrator-scoped hooks gate
+through the shared `is_tdd_agent` function so the matching logic lives in one
+place. If Claude Code's identity format changes, this is the only file that
+needs updating.
+
+Hook scripts source a shared logging helper at `hooks/lib/hook-debug.sh` that
+provides two logging functions. `hook_error` always appends to
+`/tmp/vitest-agent-hook-errors.log` (overrideable via
+`VITEST_AGENT_HOOK_ERROR_LOG`); CLI failures in recording and artifact hooks
+write here instead of being silently swallowed. `hook_debug` appends to
+`/tmp/vitest-agent-hook-debug.log` (overrideable via
+`VITEST_AGENT_HOOK_DEBUG_LOG`) but only when `VITEST_AGENT_HOOK_DEBUG=1` is
+set. Recording and artifact hooks use a structured capture-and-log pattern: CLI
+output is captured, exit status is tested, and failures call `hook_error` before
+the hook exits — the previous pattern of appending `|| true` to silence errors
+is gone.
 
 The allowlist file at `hooks/lib/safe-mcp-vitest-agent-ops.txt` is plain text:
 one operation suffix per line, blank lines and `#` comments stripped before
@@ -246,6 +259,14 @@ context (session-start triage, MCP tool reference) compensates for this by
 giving every dispatch the same baseline awareness of the project's test
 state.
 
+**Pre-dispatch sequence.** Before spawning the orchestrator, the main agent
+calls `session_list({ agentKind: "main", limit: 1 })` to capture the
+`cc_session_id` from the DB row — not `get_current_session_id()`, which can
+hold a stale in-memory reference if a prior subagent called
+`set_current_session_id` with its own key. The agent then calls `TaskCreate` to
+create the parent `TDD Session: <objective>` task and initializes the
+`goalById` and `behaviorById` state maps before spawning.
+
 **Channel-event flow.** When the orchestrator hits a lifecycle transition
 (goal/behavior created, started, phase changed, completed, abandoned, blocked,
 session complete), it calls `tdd_progress_push` with a typed payload. The MCP
@@ -261,6 +282,14 @@ cannot push the wrong tree coordinates — even if the orchestrator's mental
 model of the goal/behavior hierarchy drifts, the MCP server resolves
 coordinates from the database. Resolution is best-effort; malformed JSON or
 DB read failures fall through with the original payload.
+
+**`behaviors_ready` deferral.** When the main agent receives a `behaviors_ready`
+channel event, it records each behavior's ordinals in `behaviorById` but does
+**not** call `TaskCreate` yet. Task creation is deferred to `behavior_started`
+so that abandoned sessions — which fire `behaviors_ready` but never
+`behavior_started` — do not leave orphaned pending tasks in the task panel.
+This is why the `tdd` skill's event-handler table specifies "No tasks yet" for
+both `behaviors_ready` and `behavior_added`.
 
 The `tools[]` enumeration on the orchestrator is documentation, not
 enforcement. The runtime gate that prevents `tdd_goal_delete` and

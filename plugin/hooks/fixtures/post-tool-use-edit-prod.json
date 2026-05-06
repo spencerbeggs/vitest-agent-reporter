@@ -1,0 +1,15 @@
+{
+	"session_id": "SESSION_ID",
+	"agent_type": "vitest-agent:tdd-task",
+	"cwd": "/Users/spencer/workspaces/spencerbeggs/vitest-agent",
+	"tool_name": "Edit",
+	"tool_use_id": "toolu_fixture_edit_prod_001",
+	"tool_input": {
+		"file_path": "/Users/spencer/workspaces/spencerbeggs/vitest-agent/playground/src/lifecycle.ts",
+		"old_string": "return a + b + 1;",
+		"new_string": "return a + b;"
+	},
+	"tool_response": {
+		"success": true
+	}
+}

@@ -5,6 +5,10 @@ set -e
 
 # shellcheck source=lib/hook-output.sh
 . "$(dirname "$0")/lib/hook-output.sh"
+# shellcheck source=lib/hook-debug.sh
+. "$(dirname "$0")/lib/hook-debug.sh"
+
+_HOOK="post-tool-use-record"
 
 hook_json=$(cat)
 
@@ -17,6 +21,8 @@ success=$(jq -r '
 	| if . == null then "true" elif . == true then "true" else "false" end
 ' <<< "$hook_json")
 
+hook_debug "$_HOOK" "INPUT session_id=$cc_session_id tool=$tool_name cwd=$cwd"
+
 if [ -z "$cc_session_id" ] || [ -z "$cwd" ] || [ -z "$tool_name" ]; then
 	emit_noop
 	exit 0
@@ -26,6 +32,8 @@ fi
 . "$(dirname "$0")/lib/detect-pm.sh"
 pm_exec=$(detect_pm_exec "$cwd")
 
+hook_debug "$_HOOK" "pm_exec=$pm_exec"
+
 # 1. Always emit a tool_result turn.
 result_payload=$(jq -nc \
 	--arg tn "$tool_name" \
@@ -33,11 +41,12 @@ result_payload=$(jq -nc \
 	--argjson ok "$success" \
 	'{type: "tool_result", tool_name: $tn, success: $ok} + (if $tuid != "" then {tool_use_id: $tuid} else {} end)')
 
-cd "$cwd" >/dev/null && $pm_exec vitest-agent record turn \
+_turn_out=$(cd "$cwd" && $pm_exec vitest-agent record turn \
 	--cc-session-id "$cc_session_id" \
-	"$result_payload" \
-	>/dev/null 2>&1 \
-	|| true
+	"$result_payload" 2>&1) || {
+	hook_error "$_HOOK" "record turn tool_result rc=$? cc=$cc_session_id tool=$tool_name: $_turn_out"
+}
+hook_debug "$_HOOK" "record turn tool_result: $_turn_out"
 
 # 2. For Edit/Write/MultiEdit, additionally emit a file_edit turn.
 case "$tool_name" in
@@ -56,11 +65,12 @@ case "$tool_name" in
 			--arg fp "$file_path" \
 			--arg ek "$edit_kind" \
 			'{type: "file_edit", file_path: $fp, edit_kind: $ek}')
-		cd "$cwd" >/dev/null && $pm_exec vitest-agent record turn \
+		_edit_out=$(cd "$cwd" && $pm_exec vitest-agent record turn \
 			--cc-session-id "$cc_session_id" \
-			"$edit_payload" \
-			>/dev/null 2>&1 \
-			|| true
+			"$edit_payload" 2>&1) || {
+			hook_error "$_HOOK" "record turn file_edit rc=$? cc=$cc_session_id file=$file_path: $_edit_out"
+		}
+		hook_debug "$_HOOK" "record turn file_edit file=$file_path: $_edit_out"
 		;;
 esac
 
