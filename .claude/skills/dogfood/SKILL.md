@@ -1,7 +1,7 @@
 ---
 name: dogfood
 description: Use when starting a dogfood session for the vitest-agent plugin in this repo, when continuing one from an existing handoff at docs/superpowers/dogfood/<chain>/, or after the TDD orchestrator subagent completes a dogfood task. Repo-internal — does not apply to projects that consume vitest-agent as a dependency.
-argument-hint: [--start | --from <path>]
+argument-hint: [--start | --random | --lifecycle | --from <path>]
 disable-model-invocation: true
 allowed-tools: Read Write Edit Bash Glob Grep Task mcp__plugin_vitest-agent_mcp__*
 ---
@@ -37,7 +37,78 @@ Parse `$ARGUMENTS`:
 
 - **No args** → show the current state above and the four-option menu. If there are open handoffs, suggest `/dogfood --from <path>` for the most recent.
 - **`--start`** → new chain. See "Starting a chain" below.
+- **`--random`** → pick a task from the cheatsheet and dispatch without user discussion. See "Random chain" below.
+- **`--lifecycle`** → dispatch the tdd-task agent with a fixed lifecycle-simulation prompt. No handoff file. See "Lifecycle test" below.
 - **`--from <path>`** → continue from a specific handoff after a reboot. See "Continuing from a handoff" below.
+
+## Random chain (`--random`)
+
+No user discussion. Pick, write, dispatch, verify.
+
+1. Read `.claude/playground-cheatsheet.md`.
+2. Pick one defect. Prefer 0%-function-coverage gaps (untested functions: `isPrime`, `isPalindrome`, `Cache.has`) — they produce the cleanest red-phase signal. Fall back to edge-case/behavior defects (`average([])`, `Cache.size()` TTL, `Notebook.averageWordCount()`) if all untested functions are already covered.
+3. Derive a chain slug and title from the chosen defect (e.g. `is-prime-coverage`, `cache-has-coverage`, `average-empty-array`).
+4. Write the handoff at `docs/superpowers/dogfood/<chain-slug>/01-<title-slug>.md` and `findings.md` using the same templates as `--start`. Set `what_were_testing` to one sentence describing the behavioral observation (e.g. "tdd-task writes a failing test, fixes the defect, and commits before closing the session").
+5. Dispatch (see "Dispatching"). The sanitized orchestrator prompt must describe the gap as a natural task — no mention of the cheatsheet, no hints about what the meta-goal is. A plain framing like "The playground package has some untested code paths. Use TDD to add tests for the missing coverage and fix any defects the tests expose." is appropriate; you may be more specific about the targeted gap but never reveal the meta-goal or cheatsheet structure.
+6. Capture the session id and run the seven-step verification (see "Verification") immediately after the tdd-task agent completes.
+7. Present the four-option menu.
+
+## Lifecycle test (`--lifecycle`)
+
+No handoff file. Dispatches the tdd-task agent with a fixed prompt that walks the TDD session machinery end-to-end. The source file `playground/src/lifecycle.ts` has a deliberate off-by-one bug (`return a + b + 1`); the orchestrator writes a test that exposes it, fixes the source, and closes the session. After each run the main agent reverts `lifecycle.ts` to restore the defect.
+
+### Dispatch prompt (send verbatim — do not add framing or meta-commentary)
+
+````text
+Run a TDD lifecycle simulation to exercise the session machinery from start to finish. This is not a real coding task — use dummy goal and behavior labels throughout. You will write a temporary test file and fix a deliberately broken source file.
+
+Steps:
+1. Call `tdd_session_start` with goal: "lifecycle-test: verify session open, transitions, and close".
+2. Create one behavior: "lifecycle-test: tdd session opens, transitions red→green, and closes cleanly".
+3. Mark the goal and behavior as in_progress.
+4. Write a new file `playground/src/lifecycle.test.ts` containing exactly:
+   ```typescript
+   import { describe, expect, it } from "vitest";
+   import { sum } from "./lifecycle.js";
+   describe("lifecycle", () => {
+     it("sum(1, 1) returns 2", () => {
+       expect(sum(1, 1)).toBe(2);
+     });
+   });
+   ```
+
+   Note: `playground/src/lifecycle.ts` already exists with a deliberate bug — do not create it. The test expectation (`toBe(2)`) is correct; the source implementation is what is broken.
+5. Run the playground tests using the `run_tests` MCP tool with a file filter:
+   `run_tests({ project: "playground", files: ["playground/src/lifecycle.test.ts"] })`
+   Confirm the test fails (`sum(1, 1)` currently returns 3, not 2, due to the bug in the source).
+6. Call `tdd_phase_transition_request` for the `red` phase, citing the test-run artifact from step 5. Record whether it was granted or denied and the exact DenialReason if denied.
+6b. After the transition is accepted, call `tdd_progress_push` with the spike→red phase event: `tdd_progress_push({ payload: JSON.stringify({ type: "phase_transition", sessionId: <tddSessionId>, goalId: <goalId>, behaviorId: <behaviorId>, from: "spike", to: "red" }) })`. Do this before proceeding to step 7.
+7. **Critical — re-author the test in the red phase:** delete `playground/src/lifecycle.test.ts` and immediately rewrite it with the same content as step 4. The red→green gate requires `test_case_authored_in_session = true`, meaning the `test_written` artifact must fall inside the red phase window. Writing the file in step 4 authors it in spike; deleting and rewriting here moves the authorship into red.
+8. Run the playground tests again using `run_tests` with the same file filter:
+   `run_tests({ project: "playground", files: ["playground/src/lifecycle.test.ts"] })`
+   Confirm the test still fails (the source bug has not been fixed yet).
+9. Fix the bug in `playground/src/lifecycle.ts`: change `return a + b + 1` to `return a + b`.
+10. Run the playground tests again using `run_tests` with the same file filter:
+    `run_tests({ project: "playground", files: ["playground/src/lifecycle.test.ts"] })`
+    Confirm all tests pass.
+11. Call `tdd_phase_transition_request` for the `green` phase, citing the `test_failed_run` artifact from step 8 (not the passing run from step 10 — `red→green` requires proof that the test was failing before the fix). Record the outcome.
+12. Mark the behavior as completed (status: completed). Mark the goal as completed (status: completed).
+13. Call `tdd_session_end`.
+14. Delete `playground/src/lifecycle.test.ts` to leave the playground clean. Do NOT delete or revert `playground/src/lifecycle.ts`.
+
+Report: for each phase-transition call (steps 6 and 11), state whether it was granted or denied and (if denied) the exact DenialReason string.
+````
+
+### Lifecycle-specific verification (use instead of the standard seven-step audit)
+
+Run these five checks after the orchestrator returns.
+
+1. **`tdd_session_get(<id>)`** — `ended` must be non-null (session closed). Phase ledger must have at least one entry. Goal and behavior must both show `completed`.
+2. **`acceptance_metrics({})`** — `phase_evidence_integrity` must be 100%. Any value below 100% means a phase transition was accepted without valid evidence binding.
+3. **`session_list({ agentKind: "subagent", limit: 1 })`** — a subagent row must appear with a key in the format `<parent-cc-id>-subagent-<ts>-<pid>`. If absent, the SubagentStart hook did not fire or `is_tdd_agent` failed to match the agent_type CC sent.
+4. **Restore the playground defect:** `git checkout playground/src/lifecycle.ts` — reverts `lifecycle.ts` to `return a + b + 1` so the next lifecycle run starts from a broken state. If the orchestrator committed the fix, also run `git reset HEAD~1` first (or `git revert HEAD` if the branch has been pushed).
+
+If any check fails, append findings to `docs/superpowers/dogfood/lifecycle-check/findings.md` (create it if it doesn't exist) and present the four-option menu.
 
 ## Starting a chain (`--start`)
 
@@ -56,7 +127,7 @@ Parse `$ARGUMENTS`:
 
 ## Dispatching
 
-Use the Task tool with `subagent_type: "vitest-agent:TDD Orchestrator"`. The dispatch prompt contains **only** the contents of the handoff's `# Task for the TDD orchestrator` section — never the frontmatter, never the `# What the orchestrator MUST NOT know` section, never the verification checklist, never the cheatsheet.
+Use the Task tool with `subagent_type: "plugin:vitest-agent:tdd-task"`. The dispatch prompt contains **only** the contents of the handoff's `# Task for the TDD orchestrator` section — never the frontmatter, never the `# What the orchestrator MUST NOT know` section, never the verification checklist, never the cheatsheet.
 
 Capture the dispatched session id immediately by querying for the most recently created subagent session:
 

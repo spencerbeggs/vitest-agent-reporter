@@ -1,5 +1,5 @@
 #!/bin/bash
-# SubagentStop hook scoped to tdd-orchestrator: generate the structured
+# SubagentStop hook scoped to tdd-task: generate the structured
 # handoff message via wrapup --kind=tdd_handoff and store it as a note
 # turn on the parent session for the parent agent's next Stop-hook
 # injection.
@@ -14,7 +14,7 @@ hook_json=$(cat)
 agent_type=$(echo "$hook_json" | jq -r '.agent_type // ""')
 # shellcheck source=lib/match-tdd-agent.sh
 . "$(dirname "$0")/lib/match-tdd-agent.sh"
-if ! is_tdd_orchestrator "$agent_type"; then
+if ! is_tdd_agent "$agent_type"; then
 	emit_noop
 	exit 0
 fi
@@ -31,12 +31,11 @@ fi
 . "$(dirname "$0")/lib/detect-pm.sh"
 pm_exec=$(detect_pm_exec "$cwd")
 
-# Subagents share the parent's cc_session_id (Claude Code does not emit
-# a distinct subagent id), and sessions.cc_session_id is UNIQUE, so
-# subagent-start-tdd.sh never inserts a separate subagent row. Closing
-# by cc_session_id here would clobber the still-active parent's row.
-# Subagent lifetime is captured implicitly via hook_fire turns on the
-# parent session.
+# subagent-start-tdd.sh inserts a subagent row under a synthetic key
+# ("<cc_session_id>-subagent-<ts>-<pid>"), not the real cc_session_id.
+# The wrapup CLI here uses the real cc_session_id so it can locate the
+# session's TDD data. There is no session-end write — the synthetic row
+# stays open and its lifetime is inferred from the start timestamp.
 
 # Generate the handoff message using the wrapup CLI in tdd_handoff mode.
 handoff=$(cd "$cwd" && $pm_exec vitest-agent wrapup \
