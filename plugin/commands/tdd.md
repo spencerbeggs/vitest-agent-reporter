@@ -17,7 +17,7 @@ Before spawning the orchestrator, look up the current session id:
 1. Call `get_current_session_id({})` to retrieve the current Claude Code session ID.
 2. Note the returned `currentSessionId`.
 
-Then spawn the `tdd-orchestrator` subagent **in the background** (`run_in_background: true`) with a prompt that includes:
+Then spawn the `plugin:vitest-agent:tdd-task` subagent **in the background** (`run_in_background: true`) with a prompt that includes:
 
 - The goal: `{{ goal }}`
 - The resolved `ccSessionId` from step 2

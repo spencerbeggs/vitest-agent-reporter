@@ -1,6 +1,6 @@
 #!/bin/bash
 # PostToolUse hook on Edit/Write/MultiEdit to test files
-# (matcher: agent_type=tdd-orchestrator).
+# (matcher: agent_type=tdd-task).
 #
 # Detects escape-hatch tokens in the new file content and records a
 # tdd_artifacts(kind='test_weakened') when they appear. Specifically
@@ -24,7 +24,7 @@ hook_json=$(cat)
 agent_type=$(echo "$hook_json" | jq -r '.agent_type // ""')
 # shellcheck source=lib/match-tdd-agent.sh
 . "$(dirname "$0")/lib/match-tdd-agent.sh"
-if ! is_tdd_orchestrator "$agent_type"; then
+if ! is_tdd_agent "$agent_type"; then
 	emit_noop
 	exit 0
 fi

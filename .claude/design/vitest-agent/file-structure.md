@@ -1,0 +1,198 @@
+---
+status: current
+module: vitest-agent-reporter
+category: architecture
+created: 2026-05-06
+updated: 2026-05-06
+last-synced: 2026-05-06
+completeness: 90
+related:
+  - ./architecture.md
+  - ./data-structures.md
+  - ./schemas.md
+  - ./data-flows.md
+  - ./decisions.md
+  - ./components/sdk.md
+dependencies: []
+---
+
+# File Structure — vitest-agent
+
+Repo navigation, the XDG data-path resolution stack, and per-Vitest-project
+keying inside the database. For per-package detail (services, utilities, the
+reporter contract) see [./components/](./components/).
+
+## Repo layout
+
+Source lives in five pnpm workspaces under `packages/`, plus the file-based
+Claude Code plugin at `plugin/` (NOT a workspace) and the `examples/`
+integration target.
+
+```text
+packages/
+  sdk/         vitest-agent-sdk (no internal deps)
+  plugin/      vitest-agent-plugin (depends on sdk; reporter+cli+mcp peer)
+  reporter/    vitest-agent-reporter (depends on sdk; named factories)
+  cli/         vitest-agent-cli (bin: vitest-agent)
+  mcp/         vitest-agent-mcp (bin: vitest-agent-mcp; spawned by plugin)
+
+examples/
+  basic/       minimal example app (5th Vitest project)
+
+plugin/        file-based Claude Code plugin (NOT a pnpm workspace)
+  .claude-plugin/plugin.json    inline mcpServers config
+  bin/mcp-server.mjs            zero-deps PM-detect + spawn loader
+  hooks/                        shell scripts + hooks.json
+  agents/tdd-orchestrator.md    subagent definition
+  skills/                       plugin-shipped skills
+  commands/                     slash commands
+
+.claude/       project-local Claude Code config (NOT shipped with plugin)
+  skills/                       project-local skills
+  design/                       design docs (this directory)
+  plans/                        implementation plans
+```
+
+Each `packages/<name>/` follows the standard layout: `src/` for source
+(co-located with `*.test.ts`), `lib/` for build/maintenance scripts where
+applicable, `dist/dev/` and `dist/npm/` produced by `@savvy-web/rslib-builder`.
+
+The `mcp` package additionally vendors content under `src/`:
+
+- `src/vendor/vitest-docs/` — vendored upstream Vitest documentation
+  snapshot, surfaced via `vitest://docs/` MCP resources. Located under
+  `src/` so turbo's build cache invalidates on edits and refreshes show up
+  as build-affecting.
+- `src/patterns/` — curated testing-patterns library, surfaced via
+  `vitest-agent://patterns/` MCP resources.
+
+Both trees mirror to `dist/<env>/vendor/` and `dist/<env>/patterns/` at
+build time via rslib's `copyPatterns` config in `rslib.config.ts` — no
+separate postbuild script.
+
+The `mcp/lib/scripts/` directory holds the Effect-based maintenance scripts
+that refresh the vendored docs snapshot:
+`fetch-upstream-docs.ts`, `build-snapshot.ts`, `validate-snapshot.ts`. They
+preserve the `execFileSync`-with-array-args discipline for git invocations
+so a malicious upstream tag cannot inject shell commands.
+
+For per-package source breakdown see the corresponding
+[./components/*.md](./components/) file.
+
+## Test files
+
+Test files are co-located with their sources at
+`packages/<name>/src/**/*.test.ts`. See
+[./testing-strategy.md](./testing-strategy.md) for testing patterns and per-
+project counts.
+
+## Data path
+
+The SQLite database lives at a deterministic XDG-derived location keyed by
+the workspace's identity, not its filesystem path. See
+[./decisions.md](./decisions.md) D31 for the resolution-precedence rationale
+and [./components/sdk.md](./components/sdk.md) for the
+`packages/sdk/src/utils/resolve-data-path.ts` implementation.
+
+```text
+$XDG_DATA_HOME/vitest-agent/<workspaceKey>/data.db
+```
+
+On systems without `XDG_DATA_HOME` set, falls back to:
+
+```text
+~/.local/share/vitest-agent/<workspaceKey>/data.db
+```
+
+`<workspaceKey>` is derived from the root `package.json` `name` via
+`normalizeWorkspaceKey`:
+
+| Root `package.json` `name` | `<workspaceKey>` |
+| --- | --- |
+| `my-app` | `my-app` |
+| `@org/pkg` | `@org__pkg` |
+| `weird name with spaces!` | `weird_name_with_spaces_` |
+
+`AppDirs.ensureData` from `xdg-effect` creates the directory if missing so
+better-sqlite3 can open the DB without separately mkdir'ing the parent.
+
+### Resolution precedence
+
+`resolveDataPath(projectDir, options?)` consults these sources in order
+(highest-precedence first):
+
+1. **`options.cacheDir`** (programmatic override) — the plugin's
+   `reporter.cacheDir` option flows through here. Returns
+   `<cacheDir>/data.db` after `mkdirSync(cacheDir, { recursive: true })`.
+   Skips the heavy XDG/workspace layer stack.
+2. **`cacheDir` from `vitest-agent.config.toml`** — same shape:
+   `<cacheDir>/data.db` after `mkdirSync`.
+3. **`projectKey` from the same config TOML** — used as the
+   `<workspaceKey>` segment under the XDG data root. Normalized via
+   `normalizeWorkspaceKey`.
+4. **Workspace name from root `package.json`** — resolved via
+   `WorkspaceDiscovery` from `workspaces-effect`, then normalized.
+5. **Fail with `WorkspaceRootNotFoundError`** if no root workspace is
+   discoverable.
+
+**No silent fallback to a path hash.** Silent fallbacks are the bug class
+2.0 leaves behind. If the system can't decide where the DB belongs, it must
+fail loudly so the user can fix the workspace identity.
+
+### `vitest-agent.config.toml`
+
+The optional config is loaded by `ConfigLive(projectDir)` via
+`config-file-effect`'s `FirstMatch` strategy. The resolver chain:
+
+1. `WorkspaceRoot` (the pnpm/npm/yarn workspace root)
+2. `GitRoot` (the git repo root)
+3. `UpwardWalk` (walks upward from `projectDir`)
+
+The first file found wins. Both fields are optional:
+
+```toml
+# vitest-agent.config.toml
+
+# Override the entire data directory. Highest precedence after the
+# programmatic `reporter.cacheDir` plugin option.
+cacheDir = "/abs/path/to/cache"
+
+# Override just the workspace key segment under the XDG data dir.
+# Use this when two unrelated projects share a package.json `name`
+# (collision case) or when you want a stable key independent of name
+# changes.
+projectKey = "my-app"
+```
+
+## `splitProject()` keying
+
+The DB is one-per-workspace. Vitest sub-projects (the `projects` array
+inside `vitest.config.ts`) are differentiated **within** that DB via the
+`(project, subProject)` columns and the `splitProject()` utility (see
+[./decisions.md](./decisions.md) D23):
+
+- `"my-app:unit"` → `{ project: "my-app", subProject: "unit" }`
+- `"core"` → `{ project: "core", subProject: null }`
+- `""` or `undefined` → `{ project: "default", subProject: null }`
+
+The `:` separator is the convention; absent it the whole string is the
+project and `subProject` is `null`. A null `subProject` is distinct from an
+empty string, so `(project, NULL)` and `(project, '')` are different rows.
+
+## Package manager detection
+
+The CLI overview and history commands need to output correct run commands.
+Canonical detection logic lives in `packages/sdk/src/utils/detect-pm.ts`
+behind a `FileSystemAdapter` interface for testability. The plugin's
+`bin/mcp-server.mjs` ships a zero-deps inline copy with the same detection
+order:
+
+1. Check `packageManager` field in root `package.json`
+2. Fall back to lockfile detection (`pnpm-lock.yaml`, `bun.lock`,
+   `bun.lockb`, `yarn.lock`, `package-lock.json`)
+3. Default to `npx` (in the shared utility) or `npm` (in the loader)
+
+Two copies exist because the plugin loader cannot import from
+`vitest-agent-sdk` — it runs before the user's npm packages are guaranteed
+to be installed. The detection order is identical so the two copies do not
+drift in observable behavior.

@@ -1,7 +1,7 @@
 #!/bin/bash
-# PreToolUse hook for the TDD orchestrator subagent — restricted Bash.
+# PreToolUse hook for the tdd-task subagent — restricted Bash.
 #
-# Matches on agent_type='tdd-orchestrator'. Blocks the W2 restricted
+# Matches on agent_type='tdd-task'. Blocks the W2 restricted
 # command list (--update, -u, --reporter=silent, --bail, -t,
 # --testNamePattern) plus anti-patterns 5-7 from the spec
 # (coverage.exclude / setupFiles / globalSetup / *.snap edits).
@@ -19,10 +19,10 @@ hook_json=$(cat)
 
 agent_type=$(echo "$hook_json" | jq -r '.agent_type // .matcher.agent_type // ""')
 
-# Only restrict inside the TDD orchestrator.
+# Only restrict inside the tdd-task agent.
 # shellcheck source=lib/match-tdd-agent.sh
 . "$(dirname "$0")/lib/match-tdd-agent.sh"
-if ! is_tdd_orchestrator "$agent_type"; then
+if ! is_tdd_agent "$agent_type"; then
 	emit_noop
 	exit 0
 fi
@@ -49,7 +49,7 @@ if [ "$tool_name" = "Bash" ]; then
 	)
 	for pattern in "${forbidden_patterns[@]}"; do
 		if [[ "$command" =~ $pattern ]]; then
-			emit_deny "TDD orchestrator may not use $pattern (matched in: $command). Run tests via the run_tests MCP tool instead."
+			emit_deny "tdd-task agent may not use $pattern (matched in: $command). Run tests via the run_tests MCP tool instead."
 			exit 0
 		fi
 	done
@@ -114,7 +114,7 @@ fi
 
 # Snapshot files
 if [[ "$file_path" =~ \.snap$ ]]; then
-	emit_deny "TDD orchestrator may not edit snapshot files: $file_path. Snapshot mutations hide test changes."
+	emit_deny "tdd-task agent may not edit snapshot files: $file_path. Snapshot mutations hide test changes."
 	exit 0
 fi
 
@@ -123,7 +123,7 @@ case "$file_path" in
 	*vitest.config.*|*vitest.workspace.*|*vite.config.*)
 		new_content=$(echo "$hook_json" | jq -r '.tool_input.content // .tool_input.new_string // ""')
 		if [ -n "$new_content" ] && (echo "$new_content" | grep -E -q 'coverage\.exclude|setupFiles|globalSetup'); then
-			emit_deny "TDD orchestrator may not edit coverage.exclude / setupFiles / globalSetup in $file_path. These are signal-suppression vectors."
+			emit_deny "tdd-task agent may not edit coverage.exclude / setupFiles / globalSetup in $file_path. These are signal-suppression vectors."
 			exit 0
 		fi
 		;;

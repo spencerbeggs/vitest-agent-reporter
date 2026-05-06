@@ -1,10 +1,10 @@
 #!/bin/bash
-# PreToolUse hook for the TDD orchestrator subagent — restricted MCP tools.
+# PreToolUse hook for the tdd-task subagent — restricted MCP tools.
 #
-# Defense-in-depth for the orchestrator's `tools:` array. Even if the
-# orchestrator's tool registry drifts (or the agent attempts a tool not
+# Defense-in-depth for the tdd-task agent's `tools:` array. Even if the
+# agent's tool registry drifts (or the agent attempts a tool not
 # listed in its frontmatter), this hook explicitly denies destructive
-# MCP calls so the safety property "orchestrator never deletes goals,
+# MCP calls so the safety property "tdd-task never deletes goals,
 # behaviors, or its own evidence" stays load-bearing.
 #
 # Denied tools (matched on operation suffix; both bare and plugin-
@@ -30,7 +30,7 @@ agent_type=$(echo "$hook_json" | jq -r '.agent_type // .matcher.agent_type // ""
 
 # shellcheck source=lib/match-tdd-agent.sh
 . "$(dirname "$0")/lib/match-tdd-agent.sh"
-if ! is_tdd_orchestrator "$agent_type"; then
+if ! is_tdd_agent "$agent_type"; then
 	emit_noop
 	exit 0
 fi
@@ -39,15 +39,15 @@ tool_name=$(echo "$hook_json" | jq -r '.tool_name // ""')
 
 case "$tool_name" in
 	mcp__plugin_vitest-agent_mcp__tdd_goal_delete | mcp__vitest-agent_mcp__tdd_goal_delete)
-		emit_deny "TDD orchestrator may not call tdd_goal_delete. Use tdd_goal_update({status:'abandoned'}) to drop a goal; deletes are reserved for the main agent and require explicit user confirmation. If you created a goal by mistake, ask the user to delete it via the main agent."
+		emit_deny "tdd-task agent may not call tdd_goal_delete. Use tdd_goal_update({status:'abandoned'}) to drop a goal; deletes are reserved for the main agent and require explicit user confirmation. If you created a goal by mistake, ask the user to delete it via the main agent."
 		exit 0
 		;;
 	mcp__plugin_vitest-agent_mcp__tdd_behavior_delete | mcp__vitest-agent_mcp__tdd_behavior_delete)
-		emit_deny "TDD orchestrator may not call tdd_behavior_delete. Use tdd_behavior_update({status:'abandoned'}) to drop a behavior; deletes are reserved for the main agent and require explicit user confirmation. If you created a behavior by mistake, ask the user to delete it via the main agent."
+		emit_deny "tdd-task agent may not call tdd_behavior_delete. Use tdd_behavior_update({status:'abandoned'}) to drop a behavior; deletes are reserved for the main agent and require explicit user confirmation. If you created a behavior by mistake, ask the user to delete it via the main agent."
 		exit 0
 		;;
 	mcp__plugin_vitest-agent_mcp__tdd_artifact_record | mcp__vitest-agent_mcp__tdd_artifact_record)
-		emit_deny "TDD orchestrator may not record artifacts directly. Per Decision D7, artifacts are written by the post-tool-use hooks observing your test runs and edits. Run the test (e.g. via run_tests) or make the file edit, and the hook will record the matching tdd_artifacts row."
+		emit_deny "tdd-task agent may not record artifacts directly. Per Decision D7, artifacts are written by the post-tool-use hooks observing your test runs and edits. Run the test (e.g. via run_tests) or make the file edit, and the hook will record the matching tdd_artifacts row."
 		exit 0
 		;;
 esac

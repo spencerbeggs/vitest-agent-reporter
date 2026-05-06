@@ -7,9 +7,9 @@ description: Use when starting any TDD cycle, before writing any test file, edit
 
 Three MCP calls are required protocol. Skipping any one of them is a named violation that corrupts the session record and all downstream metrics.
 
-## For the main agent: dispatch the orchestrator
+## For the main agent: dispatch the tdd-task agent
 
-If you are the main agent: dispatch the TDD Orchestrator subagent. Pass the `goal` and your current `ccSessionId` explicitly in the launch prompt. Do not attempt TDD yourself — the orchestrator carries the required MCP tools and skill context for evidence-based phase transitions.
+If you are the main agent: dispatch the `plugin:vitest-agent:tdd-task` subagent. Pass the `goal` and your current `ccSessionId` explicitly in the launch prompt. Do not attempt TDD yourself — the tdd-task agent carries the required MCP tools and skill context for evidence-based phase transitions.
 
 ### Channel-event handling (main agent)
 

@@ -1052,6 +1052,14 @@ export async function startMcpServer(ctx: McpContext): Promise<void> {
 		async (args) => jsonResult(await caller.set_current_session_id({ id: args.id })),
 	);
 
+	server.registerTool(
+		"ping",
+		{
+			description: "Ping the MCP server — returns 'pong'. Used to verify hot-patch reload.",
+		},
+		async () => textResult(await caller.ping()),
+	);
+
 	// Best-effort early seeding: fires after the MCP handshake completes.
 	// The hook system may not be ready this early; get_current_session_id
 	// serves as the reliable fallback if this no-ops.

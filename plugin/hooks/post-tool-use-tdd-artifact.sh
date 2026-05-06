@@ -1,5 +1,5 @@
 #!/bin/bash
-# PostToolUse hook (matcher: agent_type=tdd-orchestrator). Records
+# PostToolUse hook (matcher: agent_type=tdd-task). Records
 # tdd_artifacts rows reflecting what the orchestrator just did:
 #  - Bash test run -> test_passed_run / test_failed_run
 #  - Edit/Write to *.test.* -> test_written
@@ -17,7 +17,7 @@ hook_json=$(cat)
 agent_type=$(echo "$hook_json" | jq -r '.agent_type // ""')
 # shellcheck source=lib/match-tdd-agent.sh
 . "$(dirname "$0")/lib/match-tdd-agent.sh"
-if ! is_tdd_orchestrator "$agent_type"; then
+if ! is_tdd_agent "$agent_type"; then
 	emit_noop
 	exit 0
 fi

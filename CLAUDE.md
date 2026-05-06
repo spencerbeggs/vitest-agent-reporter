@@ -22,98 +22,90 @@ workspace). Root-level configs (`turbo.json`, `biome.jsonc`, etc.) apply
 to all workspaces. To scope commands to a specific package, use
 `--filter='./packages/<name>'`.
 
-### Package boundaries and dependency direction
-
-- `vitest-agent-sdk` -- carries everything multiple runtime
-  packages need: Effect schemas, SQLite migrations + data layer
-  (`DataStore` / `DataReader` and their live layers), output pipeline
-  services and formatters, path resolution (`resolveDataPath`,
-  workspace-key resolver, config-file loader), errors, public
-  reporter contract types (`ReporterKit`, `VitestAgentReporterFactory`,
-  etc.), and supporting utilities. Has no dependency on the other four
-  packages.
-- `vitest-agent-plugin` -- imports from `-sdk`. Owns `AgentPlugin`,
-  the internal `AgentReporter` Vitest-API class, `CoverageAnalyzer`
-  (the only service that needs Vitest's istanbul `CoverageMap`),
-  `ReporterLive`, and reporter-side utilities (`build-reporter-kit`,
-  `route-rendered-output`, `process-failure`, etc.). Declares
-  `vitest-agent-reporter`, `vitest-agent-cli`, and `vitest-agent-mcp`
-  as **required** peerDependencies (`peerDependenciesMeta.optional: false`).
-- `vitest-agent-reporter` -- imports from `-sdk`. Owns named
-  `VitestAgentReporterFactory` implementations only (`defaultReporter`,
-  `markdownReporter`, `terminalReporter`, `jsonReporter`,
-  `silentReporter`, `ciAnnotationsReporter`, `githubSummaryReporter`).
-  No Vitest-API code.
-- `vitest-agent-cli` -- imports from `-sdk`. Owns the
-  `@effect/cli` commands and `CliLive`.
-- `vitest-agent-mcp` -- imports from `-sdk`. Owns the MCP
-  server, tRPC router, 50 tools, and `McpLive`.
-
-The five packages release in lockstep; plugin, reporter, cli, and mcp
-pin `-sdk` at `workspace:*` and plugin pins reporter/cli/mcp at
+The five packages release in lockstep; `vitest-agent-plugin` declares
+`vitest-agent-reporter`, `vitest-agent-cli`, and `vitest-agent-mcp` as
+required `peerDependencies`, and all five pin `vitest-agent-sdk` at
 `workspace:*`.
+
+**Legacy naming — watch out.** This whole system was originally a single
+package called `vitest-agent-reporter` (pre-2.0). The 2.0 split kept that
+name for the renderer-only package at `packages/reporter/`, while the
+plugin lifecycle that used to live alongside the reporter now lives in
+`vitest-agent-plugin` at `packages/plugin/`. Doc comments, tests, and
+internal references throughout the codebase still occasionally use
+`vitest-agent-reporter` in the legacy sense (meaning the whole system)
+when they should say `vitest-agent-plugin`. When you encounter a
+`vitest-agent-reporter` reference in prose or comments, check whether
+it actually means the modern renderer package or whether it's a
+dangling reference to what is now `vitest-agent-plugin`. Update as you
+go.
 
 ## Project Status
 
-`vitest-agent` 2.0 is a Vitest reporter, plugin, CLI, and MCP
-server family for LLM coding agents. Six primary capabilities:
+`vitest-agent` 2.0 is a Vitest reporter, plugin, CLI, and MCP server family
+for LLM coding agents. Six primary capabilities:
 
-1. **`AgentReporter`** -- Vitest Reporter (>= 4.1.0) producing formatted
-   output via pluggable formatters, persistent data to SQLite (`data.db`),
-   and optional GFM (GitHub Actions). `onInit` is async (resolves the
-   XDG-based `dbPath` and ensures the parent directory exists before any
-   write happens).
-2. **`AgentPlugin`** -- Vitest plugin that injects `AgentReporter` with
-   four-environment detection (`agent-shell`/`terminal`/`ci-github`/
-   `ci-generic`), reporter chain management, cache directory resolution,
-   and coverage threshold/target extraction.
-3. **`vitest-agent` CLI** -- `@effect/cli`-based bin (shipped by
-   the `vitest-agent-cli` package) with `status`, `overview`,
-   `coverage`, `history`, `trends`, `cache`, and `doctor` subcommands.
-   All commands support `--format`.
-4. **Suggested actions & failure history** -- actionable suggestions in
-   console output, per-test failure persistence across runs, and test
-   classification (`stable`, `new-failure`, `persistent`, `flaky`,
-   `recovered`) for regression vs flake detection.
-5. **Coverage thresholds, baselines, and trends** -- Vitest-native
-   `coverageThresholds` format, aspirational `coverageTargets`, and
-   auto-ratcheting baselines with per-project trend tracking.
-6. **MCP server & Claude Code plugin** -- 50 MCP tools via tRPC router
-   (shipped by `vitest-agent-mcp`), including the three-tier
-   Objective→Goal→Behavior CRUD surface (10 tools) added in 2.0,
-   plus four MCP resources under two URI schemes (`vitest://docs/`
-   and `vitest://docs/{+path}` for the vendored Vitest documentation
-   snapshot at `packages/mcp/src/vendor/vitest-docs/`;
-   `vitest-agent://patterns/` and `vitest-agent://patterns/{slug}`
-   for the curated patterns library at `packages/mcp/src/patterns/`)
-   and six framing-only prompts (`triage`, `why-flaky`,
-   `regression-since-pass`, `explain-failure`, `tdd-resume`,
-   `wrapup`) registered directly with `@modelcontextprotocol/sdk`
-   alongside the tRPC router. A file-based Claude Code plugin at
-   `plugin/` ships a `PreToolUse` hook that auto-allows the
-   non-destructive MCP tools without per-call permission prompts.
-   The two `tdd_*_delete` tools are intentionally omitted from the
-   auto-allow list (main-agent deletes prompt for user confirmation),
-   and a separate `pre-tool-use-tdd-restricted.sh` hook denies them
-   outright when the TDD orchestrator subagent calls them.
-   Refreshing the vendored documentation is a repo-internal
-   workflow driven by the project-local
-   `.claude/skills/update-vitest-snapshot/SKILL.md` skill — a
-   five-phase fetch → prune → scaffold → enrich → validate flow with
-   explicit user checkpoints, backed by Effect-based TypeScript
-   scripts at `packages/mcp/lib/scripts/` (`fetch-upstream-docs.ts`,
-   `build-snapshot.ts`, `validate-snapshot.ts`).
+1. **`AgentPlugin` + `AgentReporter`** -- Vitest plugin (>= 4.1.0) with
+   four-environment detection, reporter chain management, coverage threshold
+   extraction, and pluggable rendering via `VitestAgentReporterFactory`.
+2. **`vitest-agent` CLI** -- `@effect/cli`-based bin with `status`,
+   `overview`, `coverage`, `history`, `trends`, `cache`, `doctor`, `record`,
+   `triage`, and `wrapup` subcommands. All commands support `--format`.
+3. **Suggested actions & failure history** -- actionable suggestions in
+   console output, per-test failure persistence, and test classification
+   (`stable`, `new-failure`, `persistent`, `flaky`, `recovered`).
+4. **Coverage thresholds, baselines, and trends** -- Vitest-native
+   `coverageThresholds`, aspirational `coverageTargets`, and auto-ratcheting
+   baselines with per-project trend tracking.
+5. **MCP server** -- 50 MCP tools via tRPC router, three-tier
+   Objective→Goal→Behavior TDD hierarchy (10 CRUD tools), four MCP resources
+   under two URI schemes (`vitest://docs/` and `vitest-agent://patterns/`),
+   and six framing-only prompts.
+6. **Claude Code plugin** -- file-based plugin at `plugin/` distributed via
+   the Claude marketplace as `vitest-agent@spencerbeggs`. Ships a PM-detect
+   spawn loader, lifecycle hooks, the `tdd-task` subagent (`context:fork`),
+   `/tdd` slash command, and 14 sub-skill primitives. The plugin is the
+   primary AI integration surface — the npm packages collect and store data;
+   the plugin turns that data into agent behavior.
 
-Effect service architecture: I/O encapsulated in Effect services
-(DataStore, DataReader, EnvironmentDetector, ExecutorResolver,
-FormatSelector, DetailResolver, OutputRenderer, ProjectDiscovery,
-HistoryTracker in `-sdk`; CoverageAnalyzer in the plugin package)
-with live and test layer implementations. All data structures use Effect
-Schema definitions with `typeof Schema.Type` for TypeScript types.
-Schemas are part of the public API and are re-exported from
-`vitest-agent-sdk` for consumer use.
+Effect service architecture: I/O encapsulated in Effect services with live
+and test layer implementations. All data structures use Effect Schema
+definitions. Schemas are re-exported from `vitest-agent-sdk` for consumer use.
 
-### Database location
+**For architecture details (progressive loading — load only what you need):**
+
+- `.claude/design/vitest-agent/architecture.md`
+  Load when you need a system overview, package diagram, or to find which
+  sub-doc covers a topic. This is the hub.
+- `.claude/design/vitest-agent/components/<package>.md`
+  Per-package deep dives (`sdk.md`, `plugin.md`, `reporter.md`, `cli.md`,
+  `mcp.md`, `plugin-claude.md`). Load only the file for the package you
+  are touching.
+- `.claude/design/vitest-agent/schemas.md`
+  Load when working with TypeScript types, Effect Schema definitions, or
+  the SQLite tables.
+- `.claude/design/vitest-agent/data-flows.md`
+  Load when tracing one of the seven runtime flows (test run, CLI query,
+  MCP tool call, TDD session, etc.).
+- `.claude/design/vitest-agent/file-structure.md`
+  Load when working on the repo layout, XDG path resolution, `splitProject()`,
+  or PM detection.
+- `.claude/design/vitest-agent/decisions.md`
+  Load when you need to understand "why" a design choice was made. Retired
+  decisions live in `decisions-retired.md`.
+- `.claude/design/vitest-agent/testing-strategy.md`
+  Load when writing tests or reviewing testing patterns and coverage.
+
+**For Claude Code plugin details:**
+
+- `.claude/design/vitest-agent/components/plugin-claude.md`
+  Load for the design doc covering hooks, the tdd-task agent, skills,
+  commands, the MCP loader, and the dogfood workflow.
+- `plugin/CLAUDE.md`
+  Load for the file-based plugin's directory layout and quick-reference
+  tables (hooks, skills, commands, hot-reload cost matrix).
+
+## Database Location
 
 The SQLite `data.db` lives at a deterministic XDG-derived path:
 
@@ -122,250 +114,50 @@ $XDG_DATA_HOME/vitest-agent/<workspaceKey>/data.db
 ```
 
 `<workspaceKey>` is the root `package.json` `name`, normalized for
-filesystem safety (`@org/pkg` -> `@org__pkg`). On systems without
-`XDG_DATA_HOME`, the path falls back to
-`~/.local/share/vitest-agent/<workspaceKey>/data.db` per
-`xdg-effect` `AppDirs` semantics. The directory is created on demand
-via `appDirs.ensureData`.
+filesystem safety (`@org/pkg` -> `@org__pkg`). Falls back to
+`~/.local/share/vitest-agent/<workspaceKey>/data.db` when `XDG_DATA_HOME`
+is unset.
 
 Resolution precedence (highest first):
 
 1. Programmatic `reporterOptions.cacheDir` option.
-2. `cacheDir` field in `vitest-agent.config.toml` at the
-   workspace root.
-3. `projectKey` field in `vitest-agent.config.toml` (used as
-   the `<workspaceKey>` segment under XDG).
+2. `cacheDir` field in `vitest-agent.config.toml` at the workspace root.
+3. `projectKey` field in `vitest-agent.config.toml`.
 4. Normalized workspace `name` (default).
 
-If no workspace `name` is found and no `projectKey` override is set,
-resolution fails loudly with a `WorkspaceRootNotFoundError` rather than
-silently falling back to a path hash. **No backward-compat migration of
-1.x JSON or `node_modules/.vite/...` databases** -- this is a 2.0
-breaking change documented in the changeset and changelog.
-
-### Optional config file
-
-`vitest-agent.config.toml` at the workspace root supports two
-optional fields:
-
-```toml
-# Override the entire data directory (highest precedence after
-# the programmatic option).
-cacheDir = "/abs/path/to/data-dir"
-
-# Override the workspace key segment under XDG. Use this when two
-# unrelated projects share a package.json name on one machine.
-projectKey = "my-stable-key"
-```
-
-Loaded via `config-file-effect`'s resolver chain (workspace root ->
-git root -> upward walk).
-
-### Plugin MCP loader
-
-`plugin/bin/mcp-server.mjs` is now a zero-deps Node script that:
-
-1. Resolves `projectDir` from `CLAUDE_PROJECT_DIR` (falling back to
-   `process.cwd()`).
-2. Detects the user's package manager via `packageManager` field +
-   lockfile inspection (npm, pnpm, yarn, bun).
-3. Spawns `<pm exec> vitest-agent-mcp` with `stdio: 'inherit'`
-   and `cwd: projectDir`. Forwards exit code and signals.
-4. Exports `VITEST_AGENT_REPORTER_PROJECT_DIR=<projectDir>` to the child
-   so the MCP server uses the correct workspace root for path
-   resolution (Claude Code does not reliably propagate
-   `CLAUDE_PROJECT_DIR` to MCP subprocesses).
-5. On failure, prints PM-specific install instructions to stderr.
-
-The agent's required peerDependency on `vitest-agent-mcp`
-plus this loader replaces the old Decision 29 `file://` dynamic-import
-plus `node_modules` walk approach.
-
-### Source layout (per package)
-
-`packages/sdk/src/` -- `services/` (Effect tags), `layers/` (live +
-test, including `LoggerLive`, `ConfigLive`, `PathResolutionLive`,
-`OutputPipelineLive`), `schemas/` (Effect Schema definitions;
-`schemas/turns/` holds the seven `TurnPayload` discriminated-union
-payloads; `schemas/Tdd.ts` and `schemas/ChannelEvent.ts` carry the
-2.0 goal/behavior shapes and the 13-variant progress event union),
-`contracts/reporter.ts` (public `ReporterKit` / `VitestAgentReporterFactory`
-contract types), `utils/` (pure functions, including `resolve-data-path`,
-`resolve-workspace-key`, `normalize-workspace-key`, `ensure-migrated`,
-`function-boundary` (acorn AST walk),
-`failure-signature` (deterministic 16-char sha256 hash), and
-`validate-phase-transition` (TDD evidence-binding rules; the
-`DenialReason` union was extended in 2.0 with `wrong_source_phase`
-(blocks `spike→green` and `refactor→green` — the red phase must be
-entered explicitly first) and the four `tdd_phase_transition_request`
-goal/behavior pre-check literals (`goal_not_found`,
-`goal_not_in_progress`, `behavior_not_found`, `behavior_not_in_goal`))),
-`errors/` (tagged errors, including `TddErrors.ts` with
-`GoalNotFoundError`, `BehaviorNotFoundError`,
-`TddSessionNotFoundError`, `TddSessionAlreadyEndedError`,
-`IllegalStatusTransitionError`), `formatters/` (markdown, gfm, json,
-silent, ci-annotations), `migrations/` (5 migrations; `0002_comprehensive`
-is the last drop-and-recreate, modified in place for 2.0 to add the
-goal/behavior hierarchy; 43 tables total), `sql/` (row types +
-assemblers).
-
-`packages/plugin/src/` -- `plugin.ts` (`AgentPlugin`),
-`reporter.ts` (internal `AgentReporter` Vitest-API class),
-`services/CoverageAnalyzer.ts`, `layers/CoverageAnalyzerLive.ts`,
-`layers/ReporterLive.ts`, `utils/` (`build-reporter-kit`,
-`route-rendered-output`, `process-failure`, `capture-env`,
-`capture-settings`, `resolve-thresholds`, `strip-console-reporters`).
-
-`packages/reporter/src/` -- `default.ts` (`defaultReporter`),
-`markdown.ts`, `terminal.ts`, `json.ts`, `silent.ts`,
-`ci-annotations.ts`, `github-summary.ts` (named factory files),
-`_kit-context.ts` (private `FormatterContext` builder).
-
-`packages/cli/src/` -- `bin.ts` (entry), `commands/` (`status`,
-`overview`, `coverage`, `history`, `trends`, `cache`, `doctor`,
-`record`, `triage`, `wrapup`),
-`lib/` (testable formatting logic), `layers/CliLive.ts`.
-
-`packages/mcp/src/` -- `bin.ts` (entry), `index.ts`, `server.ts`
-(calls `registerAllResources(server)` and
-`registerAllPrompts(server)` before constructing
-`StdioServerTransport`), `router.ts`, `context.ts`, `tools/`
-(50 tool implementations, including the 10 new `tdd_goal_*` /
-`tdd_behavior_*` CRUD tools and the private
-`_tdd-error-envelope.ts` helper that surfaces tagged TDD errors
-as success-shape responses; the 1.x
-`decompose_goal_into_behaviors` tool was removed in 2.0),
-`resources/` (registrar + path-traversal-safe path resolver +
-two per-scheme readers + index renderers + `manifest-schema.ts`
-defining the per-page metadata Effect Schema; surfaces four MCP
-resources under `vitest://docs/...` and
-`vitest-agent://patterns/...`), `prompts/` (registrar + six
-framing-only prompts), `middleware/idempotency.ts`,
-`layers/McpLive.ts`. Sibling content trees, now colocated under
-`src/`: `src/vendor/vitest-docs/` (vendored upstream documentation
-snapshot with `manifest.json` carrying per-page metadata
-(`title`, `description`) consumed by the `vitest_docs_page`
-ResourceTemplate's `list` callback so MCP clients see real titles
-and "load when" descriptions for every page) and `src/patterns/`
-(curated patterns library, three launch patterns shipped). Both
-trees are mirrored into `dist/dev/` and `dist/npm/` by rslib's
-`copyPatterns` declaration in `rslib.config.ts` (no postbuild
-copier script). Maintenance lives at `packages/mcp/lib/scripts/`
-as Effect-based TypeScript: `fetch-upstream-docs.ts` (sparse-clones
-`vitest-dev/vitest` at a tag into the gitignored
-`packages/mcp/lib/vitest-docs-raw/`, records `.upstream-info.json`
-validated against an Effect Schema), `build-snapshot.ts` (applies
-denylist, strips VitePress frontmatter, derives titles, scaffolds
-`src/vendor/vitest-docs/` + `manifest.json` with `[TODO: ...]`
-description placeholders), and `validate-snapshot.ts` (refuses
-TODO-marked descriptions, enforces minimum length, ensures
-file/manifest correspondence). Run via
-`pnpm exec tsx packages/mcp/lib/scripts/<name>.ts`. The repo
-convention: `lib/` is for tooling that reuses workspace
-dependencies and `src/` code; turbo treats `lib/` changes as
-build-invalidating.
-
-`plugin/` -- `.claude-plugin/plugin.json` (manifest with inline
-`mcpServers`), `bin/mcp-server.mjs` (PM-detect + spawn loader),
-`hooks/` (`session-start.sh`, `post-test-run.sh`,
-`pre-tool-use-mcp.sh`, `pre-tool-use-tdd-restricted.sh` (2.0;
-denies `tdd_goal_delete`, `tdd_behavior_delete`,
-`tdd_artifact_record` for the orchestrator subagent),
-`lib/safe-mcp-vitest-agent-ops.txt`),
-`skills/` (TDD, debugging, configuration, coverage-improvement;
-`tdd/SKILL.md` owns the 2.0 channel-event handler section. The
-`update-vitest-snapshot` skill is **not** shipped with the plugin
-— it lives at `.claude/skills/update-vitest-snapshot/SKILL.md`
-as a repo-internal workflow because it is tightly coupled to this
-repo's structure (paths, scripts, build pipeline) and never
-applied to plugin consumers),
-`commands/` (setup, configure).
-
-**Spec:** [GitHub Issue #1](https://github.com/spencerbeggs/vitest-agent/issues/1)
-
-**For architecture details (progressive loading -- load only what you need):**
-
-- `@./.claude/design/vitest-agent/architecture.md`
-  Hub document with overview, diagram, and component summary.
-- `@./.claude/design/vitest-agent/components.md`
-  Load when working on specific components, need API details or interfaces.
-- `@./.claude/design/vitest-agent/decisions.md`
-  Load when you need to understand "why" a design choice was made.
-- `@./.claude/design/vitest-agent/data-structures.md`
-  Load when working with schemas, cache format, output, or data flow.
-- `@./.claude/design/vitest-agent/testing-strategy.md`
-  Load when writing tests or reviewing testing patterns and coverage.
+Fails loudly with `WorkspaceRootNotFoundError` if no identity is resolvable.
+No silent fallback to a path hash.
 
 ## Build Pipeline
 
 This project uses
 [@savvy-web/rslib-builder](https://github.com/savvy-web/rslib-builder) to
-produce dual build outputs via [Rslib](https://rslib.rs/) for each of the
-five packages:
+produce dual build outputs via [Rslib](https://rslib.rs/) for each package:
 
 | Output | Directory | Purpose |
 | ------ | --------- | ------- |
 | Development | `packages/<name>/dist/dev/` | Local development with source maps |
 | Production | `packages/<name>/dist/npm/` | Published to npm and GitHub Packages |
 
-The root `pnpm run build` script currently builds the reporter package
-only (`turbo run build:dev build:prod --filter='./packages/reporter'`).
-To build a different package, use `turbo run build:dev build:prod
---filter='./packages/<name>'`.
+Each source `package.json` is marked `"private": true` — **this is
+intentional and correct**. The rslib-builder `transform()` callback rewrites
+`exports`, sets `private: false`, and strips devDependencies on publish. Never
+manually set `"private": false` in a source `package.json`.
 
-### How `private: true` Works
+Turbo orchestration: `types:check` runs first, then `build:dev` and
+`build:prod` both depend on it. Cache excludes `*.md`, `.changeset/**`,
+`.claude/**`, `.github/**`.
 
-Each source `package.json` is marked `"private": true` -- **this is
-intentional and correct**. During the build, rslib-builder reads the
-`publishConfig` field and transforms the output `package.json`:
+### Savvy-Web Tool References
 
-- Sets `"private": false` based on `publishConfig.access`.
-- Rewrites `exports` to point at compiled output.
-- Strips `devDependencies`, `scripts`, `publishConfig`, and
-  `devEngines`.
+| Package | Purpose | GitHub |
+| ------- | ------- | ------ |
+| rslib-builder | Build pipeline, dual output | [savvy-web/rslib-builder](https://github.com/savvy-web/rslib-builder) |
+| commitlint | Conventional commit + DCO enforcement | [savvy-web/commitlint](https://github.com/savvy-web/commitlint) |
+| changesets | Versioning, changelogs, release management | [savvy-web/changesets](https://github.com/savvy-web/changesets) |
+| lint-staged | Pre-commit file linting via Biome | [savvy-web/lint-staged](https://github.com/savvy-web/lint-staged) |
 
-Each package has its own `rslib.config.ts` `transform()` callback that
-controls what gets removed. Never manually set `"private": false` in a
-source `package.json`.
-
-### Publish Targets
-
-The `publishConfig.targets` array (identical across all five packages)
-defines where packages are published:
-
-- **GitHub Packages** -- `https://npm.pkg.github.com/` (from
-  `dist/github/`).
-- **npm registry** -- `https://registry.npmjs.org/` (from `dist/npm/`).
-
-Both targets publish with provenance attestation enabled. The five
-packages release in lockstep so the agent's required peerDependencies
-on reporter, cli, and mcp always resolve to a matching version.
-
-### Turbo Orchestration
-
-[Turbo](https://turbo.build/) manages build task dependencies and
-caching:
-
-- `types:check` runs first (no dependencies).
-- `build:dev` and `build:prod` both depend on `types:check`.
-- Cache excludes: `*.md`, `.changeset/**`, `.claude/**`, `.github/**`,
-  `.husky/**`, `.vscode/**`.
-- Environment pass-through: `GITHUB_ACTIONS`, `CI`.
-
-## Savvy-Web Tool References
-
-This template depends on several `@savvy-web/*` packages. These are in
-active development -- if behavior seems unexpected, explore both the
-GitHub docs and the installed source.
-
-| Package | Purpose | GitHub | Local Source |
-| ------- | ------- | ------ | ------------ |
-| rslib-builder | Build pipeline, dual output, package.json transform | [savvy-web/rslib-builder](https://github.com/savvy-web/rslib-builder) | `node_modules/@savvy-web/rslib-builder/` |
-| commitlint | Conventional commit + DCO enforcement | [savvy-web/commitlint](https://github.com/savvy-web/commitlint) | `node_modules/@savvy-web/commitlint/` |
-| changesets | Versioning, changelogs, release management | [savvy-web/changesets](https://github.com/savvy-web/changesets) | `node_modules/@savvy-web/changesets/` |
-| lint-staged | Pre-commit file linting via Biome | [savvy-web/lint-staged](https://github.com/savvy-web/lint-staged) | `node_modules/@savvy-web/lint-staged/` |
-
-TypeScript configuration in each package extends from rslib-builder:
+TypeScript configuration in each package extends from:
 `@savvy-web/rslib-builder/tsconfig/ecma/lib.json`.
 
 ## Commands
@@ -428,11 +220,6 @@ preset.
 | `post-checkout` | Package manager setup |
 | `post-merge` | Package manager setup |
 
-### Lint-Staged
-
-Configuration in `lib/configs/lint-staged.config.ts` uses the
-`Preset.silk()` preset from `@savvy-web/lint-staged`.
-
 ## Conventions
 
 ### Imports
@@ -456,12 +243,7 @@ All commits require:
 
 The five packages publish to both GitHub Packages and npm with
 provenance via the [@savvy-web/changesets](https://github.com/savvy-web/changesets)
-release workflow. The GitHub Action is at
-[savvy-web/workflow-release-action](https://github.com/savvy-web/workflow-release-action).
-Releases happen in lockstep -- `vitest-agent-plugin` declares
-`vitest-agent-reporter`, `vitest-agent-cli`, and `vitest-agent-mcp`
-as required peerDependencies, and all five depend on
-`vitest-agent-sdk` at the same version.
+release workflow. Releases happen in lockstep.
 
 ## Testing
 
